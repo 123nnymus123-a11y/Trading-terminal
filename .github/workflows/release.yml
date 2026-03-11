@@ -45,8 +45,6 @@ jobs:
       # ── 2. pnpm ────────────────────────────────────────────────────────────
       - name: Install pnpm
         uses: pnpm/action-setup@v4
-        with:
-          version: 9
 
       # ── 3. Node.js ─────────────────────────────────────────────────────────
       - name: Set up Node.js 20
