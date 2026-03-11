@@ -122,10 +122,22 @@ export default function Panorama() {
       .join("\n")}`;
 
     try {
-      const events = eventsRef.current.slice(0, 5);
-      if (events.length === 0) return {};
+      const sliced = events.slice(0, 5);
+      if (sliced.length === 0) return {};
+      const mappedEvents = sliced.map((e) => ({
+        id: e.id,
+        title: e.event,
+        releaseDateTime: new Date(e.time).toISOString(),
+        status: e.state as 'upcoming' | 'released',
+        importance: (e.impact === 'high' ? 3 : e.impact === 'medium' ? 2 : 1) as 1 | 2 | 3,
+        eventCategory: 'other' as const,
+        country: e.country,
+        summary: e.summary,
+      }));
       const result = await window.cockpit.economicCalendar.generateInsights({
-        events,
+        focus: 'upcoming' as const,
+        windowHours: 24,
+        events: mappedEvents,
         model: config?.model,
       }).catch(() => null);
       const summaries: Record<string, string> = {};

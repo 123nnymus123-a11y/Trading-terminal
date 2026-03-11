@@ -631,7 +631,7 @@ app.whenReady().then(async () => {
       const msg = configErr instanceof Error ? configErr.message : String(configErr);
       console.error('[main] Cloud LLM config error:', msg);
       const { dialog } = await import('electron');
-      dialog.showErrorBoxSync(
+      dialog.showErrorBox(
         'Cloud AI Configuration Error',
         `${msg}\n\nThe app will continue but AI features will not work until you fix .env.local and restart.`,
       );

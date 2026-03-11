@@ -19,7 +19,7 @@ export class SecEdgarAdapter implements IngestAdapter {
       try {
         const res = await fetch(url, {
           headers: {
-            "User-Agent": "TradingCockpitAIResearch/1.0 (support@localhost)",
+            "User-Agent": "TradingCockpitAIResearch/1.0 (support@tradingcockpit.dev)",
             "Accept": "application/atom+xml, application/xml",
           },
         });

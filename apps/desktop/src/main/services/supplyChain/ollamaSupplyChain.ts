@@ -173,41 +173,27 @@ Also provide 3-5 key insights about the supply chain health, dependencies, or st
 
 Remember: Output ONLY valid JSON, no markdown, no explanations. If you are unsure of HQ details or subsidiaries, omit those fields rather than guessing.`;
 
-  const requestBody = JSON.stringify({
-    model,
-    system: systemPrompt,
-    prompt: userPrompt,
-    stream: false,
-    format: "json",
-    options: {
-      temperature: 0.3, // Slightly higher for creativity but still structured
-    },
-  });
+  const { callCloudLlm } = await import('../llm/cloudLlmClient');
+  void model; // model param retained for API compatibility
+  const rawText = await callCloudLlm(systemPrompt, userPrompt, { temperature: 0.3 });
+  const jsonText = rawText.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
 
-  let res: Response;
+  let mindMapData: MindMapData;
   try {
-    const { callCloudLlm } = await import('../llm/cloudLlmClient');
-    void model; // model param retained for API compatibility
-    const systemPrompt = requestBody ? JSON.parse(requestBody).system ?? "" : "";
-    const userPrompt = requestBody ? JSON.parse(requestBody).prompt ?? "" : "";
-    const text = await callCloudLlm(systemPrompt, userPrompt, { temperature: 0.3 });
-    const jsonText = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
-    let mindMapData: MindMapData;
-    try {
-      mindMapData = JSON.parse(jsonText) as MindMapData;
+    mindMapData = JSON.parse(jsonText) as MindMapData;
   } catch (err) {
     // Try to extract JSON from markdown code blocks
-    const jsonMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
+    const jsonMatch = rawText.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
     if (jsonMatch && jsonMatch[1]) {
       try {
         mindMapData = JSON.parse(jsonMatch[1].trim()) as MindMapData;
       } catch (innerErr) {
         // If markdown extraction fails, try to find JSON object directly
-        const jsonStart = text.indexOf('{');
-        const jsonEnd = text.lastIndexOf('}');
+        const jsonStart = rawText.indexOf('{');
+        const jsonEnd = rawText.lastIndexOf('}');
         if (jsonStart !== -1 && jsonEnd !== -1 && jsonEnd > jsonStart) {
           try {
-            mindMapData = JSON.parse(text.substring(jsonStart, jsonEnd + 1)) as MindMapData;
+            mindMapData = JSON.parse(rawText.substring(jsonStart, jsonEnd + 1)) as MindMapData;
           } catch (extractErr) {
             throw new Error(`Failed to parse Llama response as JSON (from markdown): ${innerErr}`);
           }
@@ -217,11 +203,11 @@ Remember: Output ONLY valid JSON, no markdown, no explanations. If you are unsur
       }
     } else {
       // Try to find JSON object in the response
-      const jsonStart = text.indexOf('{');
-      const jsonEnd = text.lastIndexOf('}');
+      const jsonStart = rawText.indexOf('{');
+      const jsonEnd = rawText.lastIndexOf('}');
       if (jsonStart !== -1 && jsonEnd !== -1 && jsonEnd > jsonStart) {
         try {
-          mindMapData = JSON.parse(text.substring(jsonStart, jsonEnd + 1)) as MindMapData;
+          mindMapData = JSON.parse(rawText.substring(jsonStart, jsonEnd + 1)) as MindMapData;
         } catch (innerErr) {
           throw new Error(`Failed to parse Llama response as JSON (extracted): ${innerErr}`);
         }

@@ -584,7 +584,7 @@ export const alphaVantageAdapter: AlphaVantageAdapter = {
               id: `av-stock-${stock.symbol}-${new Date().toISOString()}`,
               title: `${stock.symbol} Trading Price`,
               country: 'US',
-              eventCategory: stock.category,
+              eventCategory: 'other' as EconomicEvent['eventCategory'],
               releaseDateTime: new Date(),
               timezone: 'America/New_York',
               actualValue: price,

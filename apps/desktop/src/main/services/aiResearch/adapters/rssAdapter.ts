@@ -16,7 +16,7 @@ export class RssIngestAdapter implements IngestAdapter {
       try {
         const res = await fetch(feedUrl, {
           headers: {
-            "User-Agent": "TradingCockpitAIResearch/1.0 (support@localhost)",
+            "User-Agent": "TradingCockpitAIResearch/1.0 (support@tradingcockpit.dev)",
             "Accept": "application/rss+xml, application/atom+xml, application/xml",
           },
         });

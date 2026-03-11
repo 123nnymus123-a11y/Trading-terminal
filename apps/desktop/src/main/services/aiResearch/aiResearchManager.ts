@@ -82,7 +82,7 @@ export class AiResearchManager {
 
   async checkRuntime() {
     console.log('[AiResearchManager] Checking cloud LLM availability...');
-    const { checkCloudLlmAvailable } = await import('../../llm/cloudLlmClient');
+    const { checkCloudLlmAvailable } = await import('../llm/cloudLlmClient');
     const result = await checkCloudLlmAvailable();
     if (result.ok) {
       console.log(`[AiResearchManager] ✓ Cloud LLM ready: ${result.model}`);
@@ -93,7 +93,7 @@ export class AiResearchManager {
   }
 
   async listLocalModels() {
-    const { listAvailableModels } = await import('../../llm/cloudLlmClient');
+    const { listAvailableModels } = await import('../llm/cloudLlmClient');
     const models = listAvailableModels().map((m) => `${m.provider}/${m.model}`);
     return { ok: true, models };
   }

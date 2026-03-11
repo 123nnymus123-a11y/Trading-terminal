@@ -7,7 +7,7 @@ const SEC_TEST_FORM4 = "https://www.sec.gov/Archives/edgar/data/320193/000032019
 const CFTC_LIVE = "https://www.cftc.gov/dea/newcot/f_disagg.txt";
 
 function userAgent(ctx: ProviderTestContext) {
-  return ctx.config.sec?.userAgent || "TradingCockpitExternalFeeds/1.0 (support@localhost)";
+  return ctx.config.sec?.userAgent || "TradingCockpitExternalFeeds/1.0 (support@tradingcockpit.dev)";
 }
 
 export async function testBlsConnection(ctx: ProviderTestContext): Promise<ProviderTestResult> {
