@@ -179,7 +179,7 @@ export default function Panorama() {
         const now = Date.now();
         const events = queryEconomicEvents({}) as SharedEconomicEvent[];
         console.log(`📊 Fetched ${events.length} economic events`);
-        
+
         const upcoming = events.filter((e) => {
           const ts = e.releaseDateTime.getTime();
           return ts >= now && ts < now + 24 * 60 * 60 * 1000;
@@ -192,7 +192,7 @@ export default function Panorama() {
 
         const selected = upcoming.length > 0 ? upcoming : recent;
         console.log(`📋 Selected ${selected.length} events for display (${upcoming.length} upcoming, ${recent.length} recent)`);
-        
+
         const mapped = selected.map(mapSharedEvent);
         const summaries = await getLlamaSummaries(mapped);
         const enriched = mapped.map((e) => {
@@ -570,8 +570,8 @@ function StrategyPulseCard({
               s.id === "vwap-mean-revert"
                 ? "VWAP MR"
                 : s.id === "trend-pullback"
-                ? "Trend Pullback"
-                : "Vol Filter";
+                  ? "Trend Pullback"
+                  : "Vol Filter";
             return (
               <div
                 key={s.id}

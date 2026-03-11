@@ -552,10 +552,10 @@ export default function SettingsLogs() {
         console.warn("[SettingsLogs] apiHub bootstrap failed", err);
       } finally {
         if (!disposed) {
-            const off = apiHubApi.onChanged?.((snapshot) => {
+          const off = apiHubApi.onChanged?.((snapshot) => {
             setApiKeys(snapshot?.records ?? []);
           });
-            unsubscribe = typeof off === "function" ? off : undefined;
+          unsubscribe = typeof off === "function" ? off : undefined;
         }
       }
     };
@@ -833,7 +833,7 @@ export default function SettingsLogs() {
   const handleModuleModeChange = useCallback(
     (module: AiStewardModule, mode: AiStewardMode) => {
       const patch: PartialModuleConfig = { [module]: { mode } };
-        stewardSetConfig({ modules: patch as any });
+      stewardSetConfig({ modules: patch as any });
     },
     [stewardSetConfig],
   );
@@ -1070,7 +1070,7 @@ export default function SettingsLogs() {
         };
 
         addApiKey(newApiKey);
-          await apiHubApi.save(newApiKey as any);
+        await apiHubApi.save(newApiKey as any);
         created.push(newApiKey);
 
         if (provider === "bls") {
