@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "useUnknownInCatchVariables": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitOverride": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+
+    "baseUrl": ".",
+    "paths": {
+      "@tc/api": ["packages/api/src/index.ts"],
+      "@tc/api/*": ["packages/api/src/*"],
+      "@tc/shared": ["packages/shared/src/index.ts"],
+      "@tc/shared/*": ["packages/shared/src/*"]
+    }
+  }
+}

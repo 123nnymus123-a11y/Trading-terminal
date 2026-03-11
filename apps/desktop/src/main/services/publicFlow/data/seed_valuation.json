@@ -1,0 +1,145 @@
+{
+  "comment": "Seed valuation data for offline development. All values are fictional and for demonstration purposes only.",
+  "tickers": {
+    "AAPL": {
+      "ticker": "AAPL",
+      "price": 175.50,
+      "eps_ttm": 6.15,
+      "fcf_per_share": 6.80,
+      "revenue_growth_yoy": 8.5
+    },
+    "MSFT": {
+      "ticker": "MSFT",
+      "price": 378.20,
+      "eps_ttm": 11.23,
+      "fcf_per_share": 9.45,
+      "revenue_growth_yoy": 12.3
+    },
+    "GOOGL": {
+      "ticker": "GOOGL",
+      "price": 142.80,
+      "eps_ttm": 5.82,
+      "fcf_per_share": 6.20,
+      "revenue_growth_yoy": 10.1
+    },
+    "AMZN": {
+      "ticker": "AMZN",
+      "price": 168.90,
+      "eps_ttm": 2.90,
+      "fcf_per_share": 3.15,
+      "revenue_growth_yoy": 15.7
+    },
+    "NVDA": {
+      "ticker": "NVDA",
+      "price": 875.30,
+      "eps_ttm": 22.87,
+      "fcf_per_share": 18.50,
+      "revenue_growth_yoy": 126.2
+    },
+    "TSLA": {
+      "ticker": "TSLA",
+      "price": 248.50,
+      "eps_ttm": 3.62,
+      "fcf_per_share": 2.10,
+      "revenue_growth_yoy": 18.8
+    },
+    "META": {
+      "ticker": "META",
+      "price": 482.60,
+      "eps_ttm": 19.35,
+      "fcf_per_share": 22.40,
+      "revenue_growth_yoy": 23.4
+    },
+    "JPM": {
+      "ticker": "JPM",
+      "price": 185.40,
+      "eps_ttm": 16.28,
+      "fcf_per_share": 14.50,
+      "revenue_growth_yoy": 5.2
+    },
+    "V": {
+      "ticker": "V",
+      "price": 278.90,
+      "eps_ttm": 9.45,
+      "fcf_per_share": 8.80,
+      "revenue_growth_yoy": 11.8
+    },
+    "WMT": {
+      "ticker": "WMT",
+      "price": 162.30,
+      "eps_ttm": 6.45,
+      "fcf_per_share": 5.20,
+      "revenue_growth_yoy": 6.7
+    },
+    "DIS": {
+      "ticker": "DIS",
+      "price": 92.80,
+      "eps_ttm": 1.28,
+      "fcf_per_share": 1.85,
+      "revenue_growth_yoy": 3.4
+    },
+    "BA": {
+      "ticker": "BA",
+      "price": 178.50,
+      "eps_ttm": -2.45,
+      "fcf_per_share": -3.20,
+      "revenue_growth_yoy": -8.2
+    },
+    "NFLX": {
+      "ticker": "NFLX",
+      "price": 642.50,
+      "eps_ttm": 15.38,
+      "fcf_per_share": 12.90,
+      "revenue_growth_yoy": 14.6
+    },
+    "INTC": {
+      "ticker": "INTC",
+      "price": 42.80,
+      "eps_ttm": 1.12,
+      "fcf_per_share": 2.45,
+      "revenue_growth_yoy": -0.9
+    },
+    "AMD": {
+      "ticker": "AMD",
+      "price": 178.40,
+      "eps_ttm": 3.85,
+      "fcf_per_share": 2.90,
+      "revenue_growth_yoy": 67.8
+    },
+    "CRM": {
+      "ticker": "CRM",
+      "price": 268.30,
+      "eps_ttm": 6.82,
+      "fcf_per_share": 8.50,
+      "revenue_growth_yoy": 11.2
+    },
+    "ORCL": {
+      "ticker": "ORCL",
+      "price": 118.70,
+      "eps_ttm": 5.23,
+      "fcf_per_share": 6.10,
+      "revenue_growth_yoy": 6.8
+    },
+    "COIN": {
+      "ticker": "COIN",
+      "price": 245.80,
+      "eps_ttm": -1.35,
+      "fcf_per_share": 0.85,
+      "revenue_growth_yoy": 142.5
+    },
+    "PLTR": {
+      "ticker": "PLTR",
+      "price": 28.45,
+      "eps_ttm": 0.38,
+      "fcf_per_share": 0.42,
+      "revenue_growth_yoy": 24.1
+    },
+    "SHOP": {
+      "ticker": "SHOP",
+      "price": 82.30,
+      "eps_ttm": 0.68,
+      "fcf_per_share": 1.15,
+      "revenue_growth_yoy": 26.3
+    }
+  }
+}

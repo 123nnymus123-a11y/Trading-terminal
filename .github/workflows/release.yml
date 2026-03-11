@@ -1,0 +1,105 @@
+name: Build & Release Windows Installer
+
+# ---------------------------------------------------------------
+# HOW TO RELEASE FOR USERS:
+#   Push a version tag:  git tag v0.0.2 && git push origin v0.0.2
+#   → Builds the installer and publishes it as a public GitHub Release.
+#   → Users go to the Releases page and click the .exe to download.
+#
+# On push to main (no tag): builds only, uploads as workflow artifact.
+# ---------------------------------------------------------------
+on:
+  push:
+    tags:
+      - "v*.*.*"
+    branches:
+      - main
+    paths:
+      - "apps/desktop/**"
+      - "packages/**"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "package.json"
+      - ".github/workflows/release.yml"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (e.g. 0.0.2) — leave blank to use package.json version"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build & Release
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      # ── 1. Checkout ────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. pnpm ────────────────────────────────────────────────────────────
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      # ── 3. Node.js ─────────────────────────────────────────────────────────
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+
+      # ── 4. Bump version if provided via manual dispatch ────────────────────
+      - name: Bump version (manual dispatch only)
+        if: github.event.inputs.version != ''
+        shell: pwsh
+        run: |
+          $v = "${{ github.event.inputs.version }}"
+          $pkg = Get-Content apps/desktop/package.json | ConvertFrom-Json
+          $pkg.version = $v
+          $pkg | ConvertTo-Json -Depth 10 | Set-Content apps/desktop/package.json
+          Write-Host "Version set to $v"
+
+      # ── 5. Install dependencies ────────────────────────────────────────────
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # ── 6. Build main process + renderer ───────────────────────────────────
+      - name: Build main process (esbuild)
+        run: node scripts/esbuild.mjs
+        working-directory: apps/desktop
+
+      - name: Build renderer (Vite)
+        run: pnpm exec vite build --config vite.renderer.config.ts
+        working-directory: apps/desktop
+
+      # ── 7. Package with electron-builder ──────────────────────────────────
+      - name: Package installer (no publish)
+        if: "!startsWith(github.ref, 'refs/tags/v') && github.event.inputs.version == ''"
+        run: pnpm exec electron-builder --win --x64 --publish never
+        working-directory: apps/desktop
+
+      - name: Package installer + publish to GitHub Releases
+        if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.version != ''
+        run: pnpm exec electron-builder --win --x64 --publish always
+        working-directory: apps/desktop
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── 8. Upload .exe as workflow artifact ────────────────────────────────
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: trading-cockpit-windows-installer
+          path: |
+            apps/desktop/release/*.exe
+            apps/desktop/release/*.blockmap
+            apps/desktop/release/latest*.yml
+          if-no-files-found: error
+          retention-days: 30
