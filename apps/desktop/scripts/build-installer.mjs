@@ -20,8 +20,28 @@ function run(cmd, args, opts = {}) {
   });
 }
 
+async function runElectronBuilder(args) {
+  // Resolve binary through pnpm workspace instead of node_modules/.bin
+  return run("pnpm", ["exec", "electron-builder", ...args], { cwd: root });
+}
+
 // Forward only the args after the script name.
 const forwarded = process.argv.slice(2);
 
-console.log("[build-installer] running electron-builder via pnpm exec...");
-await run("pnpm", ["exec", "electron-builder", ...forwarded], { cwd: root });
+if (forwarded.length > 0) {
+  console.log("[build-installer] running electron-builder via pnpm exec...");
+  await runElectronBuilder(forwarded);
+} else {
+  await runElectronBuilder([
+    "--config",
+    path.join(root, "electron-builder.config.cjs"),
+    "--win",
+    "nsis",
+  ]);
+
+  if (process.platform !== "win32") {
+    console.log("[build] Restoring native modules for host platform...");
+    await runElectronBuilder(["install-app-deps"]);
+    console.log("[build] Host native modules restored.");
+  }
+}
