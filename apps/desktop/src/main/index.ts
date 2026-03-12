@@ -204,7 +204,7 @@ async function testBackendUrl(url: string, timeoutMs: number = 3000): Promise<bo
 }
 
 /**
- * Detects which backend is available: tries localhost first, then production.
+ * Detects which backend is available: tries localhost first, then Linux server IP, then production.
  * Caches the result to avoid repeated probing.
  */
 async function detectAvailableBackendUrl(): Promise<string> {
@@ -212,16 +212,22 @@ async function detectAvailableBackendUrl(): Promise<string> {
     return detectedBackendUrl;
   }
 
-  // Try localhost first
-  const localhostReachable = await testBackendUrl(DEV_BACKEND_FALLBACK_URL);
-  if (localhostReachable) {
-    console.log('[main] detected localhost backend available');
-    detectedBackendUrl = DEV_BACKEND_FALLBACK_URL;
-    return detectedBackendUrl;
+  const candidateUrls = [
+    DEV_BACKEND_FALLBACK_URL,      // http://localhost:8787
+    'http://10.0.0.13:8787',       // Linux server IP
+    PRODUCTION_BACKEND_URL,         // http://79.76.40.72:8787
+  ];
+
+  for (const url of candidateUrls) {
+    if (await testBackendUrl(url)) {
+      console.log(`[main] detected available backend: ${url}`);
+      detectedBackendUrl = url;
+      return detectedBackendUrl;
+    }
   }
 
-  // Fall back to production
-  console.log('[main] localhost backend not available, using production backend');
+  // All failed, use production as final fallback
+  console.log('[main] all backend URLs unreachable, using production');
   detectedBackendUrl = PRODUCTION_BACKEND_URL;
   return detectedBackendUrl;
 }
