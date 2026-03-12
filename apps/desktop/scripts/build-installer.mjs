@@ -137,6 +137,8 @@ async function main() {
     path.join(root, "electron-builder.config.cjs"),
     "--win",
     "nsis",
+    "--publish",
+    "never",
   ]);
 
   // After cross-building for Windows, restore native addons for the host
