@@ -9,8 +9,13 @@ const root = path.resolve(__dirname, "..");
 
 // Resolve local binaries so they work even when not on $PATH (e.g. running
 // `node scripts/build-installer.mjs` directly on Linux).
+// On Windows, pnpm/npm place a .cmd shim in .bin; using the full absolute path
+// via cmd.exe requires the explicit .cmd extension.
 const BIN = path.join(root, "node_modules/.bin");
-const electronBuilder = path.join(BIN, "electron-builder");
+const electronBuilder = path.join(
+    BIN,
+    process.platform === "win32" ? "electron-builder.cmd" : "electron-builder",
+);
 
 // Electron major version → prebuild ABI tag used by better-sqlite3 releases.
 // Extend this table when upgrading Electron.
