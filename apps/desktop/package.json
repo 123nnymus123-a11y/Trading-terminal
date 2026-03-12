@@ -1,7 +1,7 @@
 {
   "name": "@tc/desktop",
   "private": true,
-  "version": "0.0.8",
+  "version": "0.0.9",
   "description": "Trading Cockpit Desktop Application",
   "author": "Trading Cockpit",
   "repository": {
