@@ -16,7 +16,7 @@ function run(cmd, args, opts = {}) {
     const child = spawn(cmd, args, {
       stdio: "inherit",
       shell: process.platform === "win32",
-      ...opts
+      ...opts,
     });
     child.on("exit", (code) => {
       if (code === 0) resolve();
@@ -32,7 +32,7 @@ console.log("[build] bundling main/preload with esbuild...");
 await run("node", [path.resolve(root, "scripts/esbuild.mjs")], { cwd: root });
 
 console.log("[build] building renderer with vite...");
-const viteBin = path.resolve(root, "node_modules/.bin/vite");
-await run(viteBin, ["build", "--config", rendererConfig], { cwd: root });
+// Use pnpm to resolve vite reliably across OSes and pnpm node_modules layouts.
+await run("pnpm", ["exec", "vite", "build", "--config", rendererConfig], { cwd: root });
 
 console.log("[build] done. Output in apps/desktop/dist/");
