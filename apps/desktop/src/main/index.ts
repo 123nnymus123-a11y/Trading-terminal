@@ -183,9 +183,9 @@ let detectedBackendUrl: string | null = null;
 
 /**
  * Attempts to connect to a backend URL to verify it's reachable.
- * Uses a simple HEAD request with a short timeout.
+ * Uses a simple HEAD request with configurable timeout.
  */
-async function testBackendUrl(url: string, timeoutMs: number = 3000): Promise<boolean> {
+async function testBackendUrl(url: string, timeoutMs: number = 5000): Promise<boolean> {
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -197,14 +197,16 @@ async function testBackendUrl(url: string, timeoutMs: number = 3000): Promise<bo
     
     clearTimeout(timeoutId);
     return response.ok;
-  } catch {
+  } catch (error) {
     // Any error (timeout, network, etc.) means unreachable
+    console.log(`[main] backend test failed for ${url}:`, error instanceof Error ? error.message : String(error));
     return false;
   }
 }
 
 /**
- * Detects which backend is available: tries localhost first, then Linux server IP, then production.
+ * Detects which backend is available: tries localhost first (local dev),
+ * then public IP for remote access, then falls back to production.
  * Caches the result to avoid repeated probing.
  */
 async function detectAvailableBackendUrl(): Promise<string> {
@@ -212,22 +214,25 @@ async function detectAvailableBackendUrl(): Promise<string> {
     return detectedBackendUrl;
   }
 
+  console.log('[main] probing available backends...');
+  
   const candidateUrls = [
-    DEV_BACKEND_FALLBACK_URL,      // http://localhost:8787
-    'http://10.0.0.13:8787',       // Linux server IP
-    PRODUCTION_BACKEND_URL,         // http://79.76.40.72:8787
+    DEV_BACKEND_FALLBACK_URL,      // http://localhost:8787 - local dev
+    PRODUCTION_BACKEND_URL,         // http://79.76.40.72:8787 - remote/public
+    'http://10.0.0.13:8787',       // Linux internal IP - slower for remote
   ];
 
   for (const url of candidateUrls) {
+    console.log(`[main] testing backend: ${url}`);
     if (await testBackendUrl(url)) {
-      console.log(`[main] detected available backend: ${url}`);
+      console.log(`[main] ✓ backend available: ${url}`);
       detectedBackendUrl = url;
       return detectedBackendUrl;
     }
   }
 
   // All failed, use production as final fallback
-  console.log('[main] all backend URLs unreachable, using production');
+  console.log('[main] all backend URLs failed, using production as fallback');
   detectedBackendUrl = PRODUCTION_BACKEND_URL;
   return detectedBackendUrl;
 }
