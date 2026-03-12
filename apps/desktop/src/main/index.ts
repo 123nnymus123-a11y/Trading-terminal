@@ -178,6 +178,54 @@ function ensurePersistedBackendUrl(): string {
   return PRODUCTION_BACKEND_URL;
 }
 
+// Cache for detected backend URL to avoid repeated probing
+let detectedBackendUrl: string | null = null;
+
+/**
+ * Attempts to connect to a backend URL to verify it's reachable.
+ * Uses a simple HEAD request with a short timeout.
+ */
+async function testBackendUrl(url: string, timeoutMs: number = 3000): Promise<boolean> {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    
+    const response = await fetch(url + '/health', {
+      method: 'GET',
+      signal: controller.signal,
+    });
+    
+    clearTimeout(timeoutId);
+    return response.ok;
+  } catch {
+    // Any error (timeout, network, etc.) means unreachable
+    return false;
+  }
+}
+
+/**
+ * Detects which backend is available: tries localhost first, then production.
+ * Caches the result to avoid repeated probing.
+ */
+async function detectAvailableBackendUrl(): Promise<string> {
+  if (detectedBackendUrl) {
+    return detectedBackendUrl;
+  }
+
+  // Try localhost first
+  const localhostReachable = await testBackendUrl(DEV_BACKEND_FALLBACK_URL);
+  if (localhostReachable) {
+    console.log('[main] detected localhost backend available');
+    detectedBackendUrl = DEV_BACKEND_FALLBACK_URL;
+    return detectedBackendUrl;
+  }
+
+  // Fall back to production
+  console.log('[main] localhost backend not available, using production backend');
+  detectedBackendUrl = PRODUCTION_BACKEND_URL;
+  return detectedBackendUrl;
+}
+
 // Get backend URL from environment or use default
 const getBackendUrl = (): string => {
   if (isDev) {
@@ -192,6 +240,11 @@ const getBackendUrl = (): string => {
   const persisted = getPersistedBackendUrl();
   if (persisted) {
     return persisted;
+  }
+
+  // Use detected backend URL if available, otherwise fallback to defaults
+  if (detectedBackendUrl) {
+    return detectedBackendUrl;
   }
 
   return isDev ? DEV_BACKEND_FALLBACK_URL : PRODUCTION_BACKEND_URL;
@@ -668,6 +721,10 @@ function broadcastApiHubSnapshot(snapshot: ApiHubSnapshot) {
 app.whenReady().then(async () => {
   try {
     console.log('[main] app.whenReady()');
+
+    // Detect available backend (try localhost first, fall back to production)
+    await detectAvailableBackendUrl();
+    console.log('[main] Backend URL resolved to:', getBackendUrl());
 
     // Validate Cloud LLM configuration early so errors surface before the window opens
     try {
