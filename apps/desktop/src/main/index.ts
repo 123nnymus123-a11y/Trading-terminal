@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, protocol } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, protocol } from 'electron';
 import { config as loadEnv } from 'dotenv';
 import { getDb } from './persistence/db';
 import {
@@ -12,6 +12,7 @@ import { CongressRepo } from './persistence/congressRepo';
 import { getCongressDataService } from './services/congress/congressDataService';
 import { scanCongressAiIntel } from './services/congress/aiCongressIntel';
 import { setSecret, getSecret, deleteSecret } from './secrets';
+import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
 import { EventBus } from './streaming/eventBus';
@@ -46,15 +47,62 @@ import type { ApiHubSnapshot, ApiCredentialRecord } from '../shared/apiHub';
 const PRODUCTION_BACKEND_URL = 'http://79.76.40.72:8787';
 const DEV_BACKEND_FALLBACK_URL = 'http://localhost:8787';
 
+function getFatalLogPath(): string {
+  const candidates = [
+    (() => {
+      try {
+        return path.join(app.getPath('userData'), 'startup-crash.log');
+      } catch {
+        return null;
+      }
+    })(),
+    path.join(os.tmpdir(), 'trading-cockpit-startup-crash.log'),
+    path.resolve(process.cwd(), 'trading-cockpit-startup-crash.log'),
+  ].filter((value): value is string => Boolean(value));
+
+  return candidates[0] ?? 'trading-cockpit-startup-crash.log';
+}
+
+function formatFatal(reason: unknown): string {
+  if (reason instanceof Error) {
+    return `${reason.name}: ${reason.message}\n${reason.stack ?? ''}`;
+  }
+  return String(reason);
+}
+
+function reportFatalAndExit(kind: 'uncaughtException' | 'unhandledRejection', reason: unknown): never {
+  const detail = formatFatal(reason);
+  const crashLogPath = getFatalLogPath();
+  const payload = `[${new Date().toISOString()}] ${kind}\n${detail}\n\n`;
+
+  console.error(`[main] ${kind}:`, reason);
+
+  try {
+    fs.mkdirSync(path.dirname(crashLogPath), { recursive: true });
+    fs.appendFileSync(crashLogPath, payload, 'utf8');
+  } catch (error) {
+    console.error('[main] failed to write startup crash log', error);
+  }
+
+  try {
+    dialog.showErrorBox(
+      'Trading Cockpit failed to start',
+      `A startup error occurred:\n\n${detail.slice(0, 1200)}\n\nCrash log:\n${crashLogPath}`,
+    );
+  } catch {
+    // Ignore dialog failures in early startup contexts.
+  }
+
+  process.exit(1);
+}
+
 // Global error handlers
 process.on('uncaughtException', (err) => {
-  console.error('[main] Uncaught Exception:', err);
-  process.exit(1);
+  reportFatalAndExit('uncaughtException', err);
 });
 
 process.on('unhandledRejection', (reason) => {
-  console.error('[main] Unhandled Rejection:', reason);
-  process.exit(1);
+  reportFatalAndExit('unhandledRejection', reason);
 });
 
 const isDev =
