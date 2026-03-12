@@ -1,5 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, protocol } from 'electron';
 import { config as loadEnv } from 'dotenv';
+import { autoUpdater } from 'electron-updater';
 import { getDb } from './persistence/db';
 import {
   WatchlistsRepo,
@@ -46,6 +47,70 @@ import type { ApiHubSnapshot, ApiCredentialRecord } from '../shared/apiHub';
 
 const PRODUCTION_BACKEND_URL = 'http://79.76.40.72:8787';
 const DEV_BACKEND_FALLBACK_URL = 'http://localhost:8787';
+
+/**
+ * Configure auto-updates from GitHub Releases.
+ * The updater will:
+ * 1. Check for updates every hour
+ * 2. Download updates in the background
+ * 3. Prompt user to restart and install
+ */
+function setupAutoUpdater(): void {
+  try {
+    // Only enable auto-updates in packaged (production) builds
+    if (!app.isPackaged) {
+      console.log('[main] auto-update disabled in dev mode');
+      return;
+    }
+
+    // Configure updater
+    autoUpdater.channel = 'latest';
+    autoUpdater.autoDownload = true;  // Auto-download updates
+    autoUpdater.autoInstallOnAppQuit = true;  // Install on quit
+
+    // Log update checks
+    autoUpdater.on('checking-for-update', () => {
+      console.log('[main] checking for updates...');
+    });
+
+    autoUpdater.on('update-available', (info) => {
+      console.log('[main] update available:', info.version);
+      dialog.showMessageBox({
+        type: 'info',
+        title: 'Update Available',
+        message: `A new version (${info.version}) is available.`,
+        detail: 'The app will download and install it in the background. Restart to apply the update.',
+        buttons: ['OK'],
+      });
+    });
+
+    autoUpdater.on('update-downloaded', (info) => {
+      console.log('[main] update downloaded:', info.version);
+      dialog.showMessageBox({
+        type: 'info',
+        title: 'Update Ready',
+        message: `Update version ${info.version} has been downloaded.`,
+        detail: 'Restart the app to install the update.',
+        buttons: ['Restart Now', 'Later'],
+      }).then((result) => {
+        if (result.response === 0) {
+          autoUpdater.quitAndInstall();
+        }
+      });
+    });
+
+    autoUpdater.on('error', (error) => {
+      console.error('[main] auto-update error:', error);
+    });
+
+    // Check for updates
+    autoUpdater.checkForUpdates().catch((error) => {
+      console.error('[main] failed to check for updates:', error);
+    });
+  } catch (error) {
+    console.error('[main] auto-updater setup failed:', error);
+  }
+}
 
 function getFatalLogPath(): string {
   const candidates = [
@@ -736,6 +801,9 @@ app.whenReady().then(async () => {
     // Detect available backend (try localhost first, fall back to production)
     await detectAvailableBackendUrl();
     console.log('[main] Backend URL resolved to:', getBackendUrl());
+
+    // Set up auto-updates from GitHub Releases
+    setupAutoUpdater();
 
     // Validate Cloud LLM configuration early so errors surface before the window opens
     try {
