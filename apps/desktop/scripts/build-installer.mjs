@@ -104,21 +104,21 @@ async function main() {
   ensureExists(path.join(root, "dist/main/index.cjs"));
   ensureExists(path.join(root, "dist/preload/index.cjs"));
 
+  const desktopPkg = JSON.parse(
+    fs.readFileSync(path.join(root, "package.json"), "utf8"),
+  );
+  const electronVersion = (desktopPkg.devDependencies?.electron ?? "30.5.1").replace(/[^0-9.]/g, "");
+  const electronMajor = electronVersion.split(".")[0];
+  const abi = ELECTRON_ABI_MAP[electronMajor];
+  if (!abi) {
+    throw new Error(
+      `[build] No ABI mapping for Electron ${electronVersion}. Update ELECTRON_ABI_MAP in build-installer.mjs.`,
+    );
+  }
+
   // When cross-building on Linux/macOS for Windows, download the pre-built
   // Windows PE binaries for native addons before packaging.
   if (process.platform !== "win32") {
-    const desktopPkg = JSON.parse(
-      fs.readFileSync(path.join(root, "package.json"), "utf8"),
-    );
-    const electronVersion = (desktopPkg.devDependencies?.electron ?? "30.5.1").replace(/[^0-9.]/g, "");
-    const electronMajor = electronVersion.split(".")[0];
-    const abi = ELECTRON_ABI_MAP[electronMajor];
-    if (!abi) {
-      throw new Error(
-        `[build] No ABI mapping for Electron ${electronVersion}. Update ELECTRON_ABI_MAP in build-installer.mjs.`,
-      );
-    }
-
     const bs3Pkg = JSON.parse(
       fs.readFileSync(path.join(root, "node_modules/better-sqlite3/package.json"), "utf8"),
     );
@@ -130,6 +130,13 @@ async function main() {
     );
     await downloadBetterSqlite3Win32(bs3Version, abi, bs3Dir);
     console.log("[build] better-sqlite3 win32 binary ready.");
+  } else {
+    // On Windows, rebuild native modules for Electron's Node version.
+    console.log(`[build] Rebuilding native modules for Electron ${electronVersion}...`);
+    await run("pnpm", ["exec", "electron-rebuild", "--version", electronVersion, "--force"], {
+      cwd: root,
+    });
+    console.log("[build] Native modules rebuilt for Electron.");
   }
 
   await runElectronBuilder([
