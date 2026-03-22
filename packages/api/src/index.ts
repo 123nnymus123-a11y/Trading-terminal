@@ -1,8 +1,8 @@
-import { z } from 'zod';
+import { z } from "zod";
 
 export const healthResponseSchema = z.object({
-  status: z.literal('ok'),
-  service: z.literal('trading-cockpit-backend'),
+  status: z.literal("ok"),
+  service: z.literal("trading-cockpit-backend"),
   version: z.string(),
   now: z.string().datetime(),
 });
@@ -15,8 +15,8 @@ export const loginRequestSchema = z
     licenseKey: z.string().min(8),
   })
   .refine((value) => Boolean(value.email || value.username), {
-    message: 'email_or_username_required',
-    path: ['email'],
+    message: "email_or_username_required",
+    path: ["email"],
   });
 
 export const signupRequestSchema = z.object({
@@ -28,7 +28,7 @@ export const signupRequestSchema = z.object({
 
 export const tenantContextSchema = z.object({
   tenantId: z.string().min(1),
-  source: z.enum(['header', 'default', 'user']),
+  source: z.enum(["header", "default", "user"]),
 });
 
 export const runtimeFeatureFlagsSchema = z.object({
@@ -68,16 +68,18 @@ export const totpDisableRequestSchema = z
     recoveryCode: z.string().min(6).max(24).optional(),
   })
   .refine((value) => Boolean(value.code || value.recoveryCode), {
-    message: 'code_or_recovery_code_required',
-    path: ['code'],
+    message: "code_or_recovery_code_required",
+    path: ["code"],
   });
 
 export const authUserSchema = z.object({
   id: z.string(),
   email: z.string().email(),
   username: z.string(),
-  tier: z.enum(['starter', 'pro', 'enterprise']),
-  roles: z.array(z.enum(['admin', 'operator', 'analyst', 'viewer', 'service'])).default(['viewer']),
+  tier: z.enum(["starter", "pro", "enterprise"]),
+  roles: z
+    .array(z.enum(["admin", "operator", "analyst", "viewer", "service"]))
+    .default(["viewer"]),
   licenseKey: z.string(),
 });
 
@@ -101,8 +103,8 @@ export const congressTradeSchema = z.object({
   id: z.string(),
   symbol: z.string(),
   member: z.string(),
-  chamber: z.enum(['House', 'Senate']),
-  side: z.enum(['buy', 'sell']),
+  chamber: z.enum(["House", "Senate"]),
+  side: z.enum(["buy", "sell"]),
   amountBand: z.string(),
   disclosedAt: z.string().datetime(),
   tradedAt: z.string().datetime(),
@@ -130,20 +132,20 @@ export const publicFlowEventsResponseSchema = z.object({
 export const congressQueryTradeItemSchema = z.object({
   id: z.number().int().positive(),
   person_name: z.string(),
-  chamber: z.enum(['House', 'Senate']),
+  chamber: z.enum(["House", "Senate"]),
   transaction_date: z.string().datetime(),
   disclosure_date: z.string().datetime(),
   transaction_type: z.string(),
   asset_name_raw: z.string(),
   ticker_normalized: z.string().nullable(),
-  asset_type: z.enum(['stock', 'option', 'crypto', 'fund', 'bond', 'other']),
+  asset_type: z.enum(["stock", "option", "crypto", "fund", "bond", "other"]),
   amount_range_low: z.number().nullable(),
   amount_range_high: z.number().nullable(),
   amount_currency: z.string(),
   comments_raw: z.string().nullable(),
   source_url: z.string().nullable(),
-  quality_flag_ticker_match: z.enum(['confident', 'ambiguous', 'unmatched']),
-  quality_flag_amount: z.enum(['complete', 'partial', 'missing']),
+  quality_flag_ticker_match: z.enum(["confident", "ambiguous", "unmatched"]),
+  quality_flag_amount: z.enum(["complete", "partial", "missing"]),
   ingestion_timestamp: z.string().datetime(),
   last_updated_timestamp: z.string().datetime(),
 });
@@ -156,7 +158,7 @@ export const congressMemberItemSchema = z.object({
   id: z.number().int().positive(),
   member_id: z.string(),
   full_name: z.string(),
-  chamber: z.enum(['House', 'Senate']),
+  chamber: z.enum(["House", "Senate"]),
   party: z.string().nullable(),
   state: z.string().nullable(),
   district: z.string().nullable(),
@@ -244,11 +246,11 @@ export const publicFlowRecentItemSchema = z.object({
   source: z.string(),
   source_url: z.string().nullable(),
   entity_name: z.string(),
-  entity_type: z.enum(['institution', 'insider', 'hedge-fund', 'etf', 'other']),
-  owner_type: z.enum(['institutional', 'insider', 'beneficial-owner', 'other']),
+  entity_type: z.enum(["institution", "insider", "hedge-fund", "etf", "other"]),
+  owner_type: z.enum(["institutional", "insider", "beneficial-owner", "other"]),
   ticker: z.string().nullable(),
   asset_name: z.string(),
-  action: z.enum(['BUY', 'SELL']),
+  action: z.enum(["BUY", "SELL"]),
   tx_date: z.string().datetime(),
   report_date: z.string().datetime(),
   amount_min: z.number().nullable(),
@@ -286,7 +288,7 @@ export const publicFlowCandidateItemSchema = z.object({
   theme_id: z.number().int().positive(),
   ticker: z.string(),
   rationale: z.string(),
-  relation_type: z.enum(['peer', 'supplier', 'customer', 'etf-constituent']),
+  relation_type: z.enum(["peer", "supplier", "customer", "etf-constituent"]),
   created_at: z.string().datetime(),
 });
 
@@ -296,7 +298,7 @@ export const publicFlowCandidatesResponseSchema = z.object({
 
 export const publicFlowValuationTagSchema = z.object({
   ticker: z.string(),
-  tag: z.enum(['overvalued', 'fair', 'undervalued']),
+  tag: z.enum(["overvalued", "fair", "undervalued"]),
   confidence: z.number(),
   updated_at: z.string().datetime(),
   basis: z.array(z.string()),
@@ -364,7 +366,7 @@ export const aiBriefSchema = z.object({
 export const aiResearchRunResponseSchema = z.object({
   briefs: z.array(aiBriefSchema),
   model: z.string(),
-  provider: z.literal('ollama-cloud'),
+  provider: z.literal("ollama-cloud"),
 });
 
 export const aiModelsListResponseSchema = z.object({
@@ -390,20 +392,87 @@ export const aiResearchConfigRequestSchema = z.object({
   focusPrompt: z.string().optional(),
 });
 
+const gwmdRelationTypeSchema = z.enum([
+  "supplier",
+  "customer",
+  "partner",
+  "competitor",
+  "financing",
+  "license",
+]);
+
+export const gwmdCloudCompanySchema = z.object({
+  ticker: z.string().min(1),
+  name: z.string().min(1),
+  hq_lat: z.number().min(-90).max(90).nullable().optional(),
+  hq_lon: z.number().min(-180).max(180).nullable().optional(),
+  hq_city: z.string().nullable().optional(),
+  hq_country: z.string().nullable().optional(),
+  industry: z.string().nullable().optional(),
+  health_score: z.number().int().min(0).max(100).nullable().optional(),
+});
+
+export const gwmdCloudRelationshipSchema = z.object({
+  id: z.string().min(1),
+  from_ticker: z.string().min(1),
+  to_ticker: z.string().min(1),
+  relation_type: gwmdRelationTypeSchema,
+  weight: z.number().min(0).max(1).nullable().optional(),
+  confidence: z.number().min(0).max(1).nullable().optional(),
+  evidence: z.string().nullable().optional(),
+});
+
+export const gwmdSyncPushRequestSchema = z.object({
+  companies: z.array(gwmdCloudCompanySchema),
+  relationships: z.array(gwmdCloudRelationshipSchema),
+  replace: z.boolean().optional(),
+});
+
+export const gwmdSyncStatusSchema = z.object({
+  cloudVersion: z.number().int().nonnegative(),
+  lastSyncAt: z.string().datetime().nullable(),
+  companiesCount: z.number().int().nonnegative(),
+  relationshipsCount: z.number().int().nonnegative(),
+  syncStatus: z.enum(["idle", "syncing", "ok", "error"]),
+});
+
+export const gwmdSyncPushResponseSchema = z.object({
+  ok: z.literal(true),
+  applied: z.object({
+    companies: z.number().int().nonnegative(),
+    relationships: z.number().int().nonnegative(),
+  }),
+  status: gwmdSyncStatusSchema,
+});
+
+export const gwmdSyncPullResponseSchema = z.object({
+  ok: z.literal(true),
+  data: z.object({
+    companies: z.array(gwmdCloudCompanySchema),
+    relationships: z.array(gwmdCloudRelationshipSchema),
+  }),
+  status: gwmdSyncStatusSchema,
+});
+
+export const gwmdSyncStatusResponseSchema = z.object({
+  ok: z.literal(true),
+  status: gwmdSyncStatusSchema,
+});
+
 export const calendarInsightRequestEventSchema = z.object({
   id: z.string(),
   title: z.string(),
   releaseDateTime: z.string(),
-  status: z.enum(['upcoming', 'released', 'revised']),
+  status: z.enum(["upcoming", "released", "revised"]),
   importance: z.union([z.literal(1), z.literal(2), z.literal(3)]),
   eventCategory: z.enum([
-    'inflation',
-    'employment',
-    'growth',
-    'trade',
-    'housing',
-    'confidence',
-    'other',
+    "inflation",
+    "employment",
+    "growth",
+    "trade",
+    "housing",
+    "confidence",
+    "other",
   ]),
   country: z.string(),
   confidenceScore: z.number().optional(),
@@ -411,14 +480,14 @@ export const calendarInsightRequestEventSchema = z.object({
 });
 
 export const calendarInsightRequestSchema = z.object({
-  focus: z.enum(['upcoming', 'released']),
+  focus: z.enum(["upcoming", "released"]),
   windowHours: z.number().int().positive(),
   events: z.array(calendarInsightRequestEventSchema),
   model: z.string().optional(),
 });
 
 export const calendarInsightResponseSchema = z.object({
-  aiEngine: z.enum(['cloud', 'heuristic']),
+  aiEngine: z.enum(["cloud", "heuristic"]),
   generatedAt: z.string(),
   headline: z.string(),
   synopsis: z.string(),
@@ -427,7 +496,7 @@ export const calendarInsightResponseSchema = z.object({
     z.object({
       label: z.string(),
       detail: z.string(),
-      severity: z.enum(['low', 'medium', 'high']),
+      severity: z.enum(["low", "medium", "high"]),
     }),
   ),
   focusEvents: z.array(
@@ -435,14 +504,20 @@ export const calendarInsightResponseSchema = z.object({
       id: z.string(),
       title: z.string(),
       eta: z.string(),
-      status: z.enum(['upcoming', 'released', 'revised']),
+      status: z.enum(["upcoming", "released", "revised"]),
       importance: z.union([z.literal(1), z.literal(2), z.literal(3)]),
       aiView: z.string(),
     }),
   ),
 });
 
-export const aiJobStatusSchema = z.enum(['queued', 'running', 'completed', 'failed', 'cancelled']);
+export const aiJobStatusSchema = z.enum([
+  "queued",
+  "running",
+  "completed",
+  "failed",
+  "cancelled",
+]);
 
 export const aiJobSchema = z.object({
   id: z.string(),
@@ -488,12 +563,12 @@ export const aiBriefDetailSchema = z.object({
 });
 
 export const wsClientSubscribeSchema = z.object({
-  type: z.literal('subscribe'),
+  type: z.literal("subscribe"),
   symbols: z.array(z.string().min(1)).max(50),
 });
 
 export const wsClientUnsubscribeSchema = z.object({
-  type: z.literal('unsubscribe'),
+  type: z.literal("unsubscribe"),
   symbols: z.array(z.string().min(1)).max(50),
 });
 
@@ -504,18 +579,18 @@ export const wsServerMarketQuoteSchema = z.object({
 });
 
 export const wsServerMarketBatchSchema = z.object({
-  type: z.literal('market.batch'),
+  type: z.literal("market.batch"),
   quotes: z.array(wsServerMarketQuoteSchema),
   dropped: z.number().int().nonnegative().default(0),
 });
 
 export const wsServerAckSchema = z.object({
-  type: z.enum(['subscribed', 'unsubscribed']),
+  type: z.enum(["subscribed", "unsubscribed"]),
   symbols: z.array(z.string()),
 });
 
 export const wsServerErrorSchema = z.object({
-  type: z.literal('error'),
+  type: z.literal("error"),
   reason: z.string(),
 });
 
@@ -533,36 +608,86 @@ export type RuntimeFeatureFlags = z.infer<typeof runtimeFeatureFlagsSchema>;
 export type TenantContext = z.infer<typeof tenantContextSchema>;
 export type ErrorResponse = z.infer<typeof errorResponseSchema>;
 export type CongressTrade = z.infer<typeof congressTradeSchema>;
-export type CongressTradesResponse = z.infer<typeof congressTradesResponseSchema>;
+export type CongressTradesResponse = z.infer<
+  typeof congressTradesResponseSchema
+>;
 export type PublicFlowEvent = z.infer<typeof publicFlowEventSchema>;
-export type PublicFlowEventsResponse = z.infer<typeof publicFlowEventsResponseSchema>;
-export type CongressQueryTradeItem = z.infer<typeof congressQueryTradeItemSchema>;
-export type CongressQueryTradesResponse = z.infer<typeof congressQueryTradesResponseSchema>;
+export type PublicFlowEventsResponse = z.infer<
+  typeof publicFlowEventsResponseSchema
+>;
+export type CongressQueryTradeItem = z.infer<
+  typeof congressQueryTradeItemSchema
+>;
+export type CongressQueryTradesResponse = z.infer<
+  typeof congressQueryTradesResponseSchema
+>;
 export type CongressMemberItem = z.infer<typeof congressMemberItemSchema>;
-export type CongressMembersResponse = z.infer<typeof congressMembersResponseSchema>;
+export type CongressMembersResponse = z.infer<
+  typeof congressMembersResponseSchema
+>;
 export type CongressLobbyingItem = z.infer<typeof congressLobbyingItemSchema>;
-export type CongressLobbyingResponse = z.infer<typeof congressLobbyingResponseSchema>;
+export type CongressLobbyingResponse = z.infer<
+  typeof congressLobbyingResponseSchema
+>;
 export type CongressContractItem = z.infer<typeof congressContractItemSchema>;
-export type CongressContractsResponse = z.infer<typeof congressContractsResponseSchema>;
-export type CongressMostTradedItem = z.infer<typeof congressMostTradedItemSchema>;
-export type CongressMostTradedResponse = z.infer<typeof congressMostTradedResponseSchema>;
-export type CongressDisclosureLagStats = z.infer<typeof congressDisclosureLagStatsSchema>;
-export type CongressDisclosureLagResponse = z.infer<typeof congressDisclosureLagResponseSchema>;
+export type CongressContractsResponse = z.infer<
+  typeof congressContractsResponseSchema
+>;
+export type CongressMostTradedItem = z.infer<
+  typeof congressMostTradedItemSchema
+>;
+export type CongressMostTradedResponse = z.infer<
+  typeof congressMostTradedResponseSchema
+>;
+export type CongressDisclosureLagStats = z.infer<
+  typeof congressDisclosureLagStatsSchema
+>;
+export type CongressDisclosureLagResponse = z.infer<
+  typeof congressDisclosureLagResponseSchema
+>;
 export type PublicFlowRecentItem = z.infer<typeof publicFlowRecentItemSchema>;
-export type PublicFlowRecentResponse = z.infer<typeof publicFlowRecentResponseSchema>;
+export type PublicFlowRecentResponse = z.infer<
+  typeof publicFlowRecentResponseSchema
+>;
 export type PublicFlowThemeItem = z.infer<typeof publicFlowThemeItemSchema>;
-export type PublicFlowThemesResponse = z.infer<typeof publicFlowThemesResponseSchema>;
-export type PublicFlowCandidateItem = z.infer<typeof publicFlowCandidateItemSchema>;
-export type PublicFlowCandidatesResponse = z.infer<typeof publicFlowCandidatesResponseSchema>;
-export type PublicFlowValuationTag = z.infer<typeof publicFlowValuationTagSchema>;
-export type PublicFlowValuationsResponse = z.infer<typeof publicFlowValuationsResponseSchema>;
-export type PublicFlowRefreshResponse = z.infer<typeof publicFlowRefreshResponseSchema>;
+export type PublicFlowThemesResponse = z.infer<
+  typeof publicFlowThemesResponseSchema
+>;
+export type PublicFlowCandidateItem = z.infer<
+  typeof publicFlowCandidateItemSchema
+>;
+export type PublicFlowCandidatesResponse = z.infer<
+  typeof publicFlowCandidatesResponseSchema
+>;
+export type PublicFlowValuationTag = z.infer<
+  typeof publicFlowValuationTagSchema
+>;
+export type PublicFlowValuationsResponse = z.infer<
+  typeof publicFlowValuationsResponseSchema
+>;
+export type PublicFlowRefreshResponse = z.infer<
+  typeof publicFlowRefreshResponseSchema
+>;
 export type UserSettingsResponse = z.infer<typeof userSettingsResponseSchema>;
-export type SupplyChainCacheResponse = z.infer<typeof supplyChainCacheResponseSchema>;
-export type SupplyChainGenerateRequest = z.infer<typeof supplyChainGenerateRequestSchema>;
-export type SupplyChainGenerateResponse = z.infer<typeof supplyChainGenerateResponseSchema>;
+export type SupplyChainCacheResponse = z.infer<
+  typeof supplyChainCacheResponseSchema
+>;
+export type SupplyChainGenerateRequest = z.infer<
+  typeof supplyChainGenerateRequestSchema
+>;
+export type SupplyChainGenerateResponse = z.infer<
+  typeof supplyChainGenerateResponseSchema
+>;
 export type AiBrief = z.infer<typeof aiBriefSchema>;
 export type AiJob = z.infer<typeof aiJobSchema>;
+export type GwmdCloudCompany = z.infer<typeof gwmdCloudCompanySchema>;
+export type GwmdCloudRelationship = z.infer<typeof gwmdCloudRelationshipSchema>;
+export type GwmdSyncPushRequest = z.infer<typeof gwmdSyncPushRequestSchema>;
+export type GwmdSyncPushResponse = z.infer<typeof gwmdSyncPushResponseSchema>;
+export type GwmdSyncPullResponse = z.infer<typeof gwmdSyncPullResponseSchema>;
+export type GwmdSyncStatusResponse = z.infer<
+  typeof gwmdSyncStatusResponseSchema
+>;
 export type WsClientSubscribe = z.infer<typeof wsClientSubscribeSchema>;
 export type WsClientUnsubscribe = z.infer<typeof wsClientUnsubscribeSchema>;
 export type WsServerMarketBatch = z.infer<typeof wsServerMarketBatchSchema>;

@@ -1,5 +1,4 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { showWindow } from "../lib/tauriWindows";
 import { useStreamStore } from "../store/streamStore";
 import { useConfigStore } from "../store/configStore";
 import { useSettingsStore } from "../store/settingsStore";
@@ -12,15 +11,16 @@ import {
   setBackendBaseUrl,
 } from "../lib/apiClient";
 import type {
-  AiStewardMode,
   AiStewardModule,
-  AiStewardModuleConfig,
   AiStewardModuleState,
   AiStewardModuleStatus,
 } from "../../shared/aiSteward";
 import { ThemeControls } from "../components/ThemeControls";
 import { API_KEY_TEMPLATES } from "../constants/apiKeyTemplates";
 import type { ApiKeyProviderOption } from "../constants/apiKeyTemplates";
+
+const TED_API_HUB_RECORD_ID = "ted-live";
+const TED_API_KEY_ACCOUNT = "api-hub:ted-live:api-key";
 
 function fmt(ts?: number | null) {
   if (!ts) return "—";
@@ -101,25 +101,16 @@ const STEWARD_MODULE_META: Record<AiStewardModule, {
   short: string;
   title: string;
   description: string;
-  runLabel: string;
-  helper: string;
-  modeLabel: string;
 }> = {
   cftc: {
     short: "CFTC",
     title: "CFTC Commitments of Traders",
     description: "Tracks futures positioning pulled straight from official CFTC drops.",
-    runLabel: "🔄 Re-run CFTC audit",
-    helper: "Validates local futures files against the most recent CFTC release.",
-    modeLabel: "CFTC supervision mode",
   },
   congress: {
     short: "Congress",
     title: "Congressional Disclosures",
     description: "Scrapes PTRs, lobbying filings, and federal contracts from public portals.",
-    runLabel: "🏛️ Re-scan Congress feeds",
-    helper: "Looks for stale ingestion logs or failed scrapes across the Hill data set.",
-    modeLabel: "Congress supervision mode",
   },
 };
 
@@ -128,8 +119,6 @@ const MODULE_STATUS_STYLE: Record<AiStewardModuleStatus, { bg: string; border: s
   degraded: { bg: "rgba(251,191,36,0.15)", border: "rgba(251,191,36,0.5)", color: "#fde68a", label: "Attention" },
   failing: { bg: "rgba(248,113,113,0.15)", border: "rgba(248,113,113,0.5)", color: "#fecaca", label: "Failing" },
 };
-
-type PartialModuleConfig = Partial<Record<AiStewardModule, AiStewardModuleConfig>>;
 
 type ProviderDraft = {
   enabled: boolean;
@@ -181,7 +170,8 @@ export default function SettingsLogs() {
   const aiContextSharingEnabled = useSettingsStore((s) => s.aiContextSharingEnabled);
   const setAiContextSharingEnabled = useSettingsStore((s) => s.setAiContextSharingEnabled);
   const aiEnginePreference = useSettingsStore((s) => s.aiEnginePreference);
-  const setAiEnginePreference = useSettingsStore((s) => s.setAiEnginePreference);
+  const aiFeatureRouting = useSettingsStore((s) => s.aiFeatureRouting);
+  const setAiFeatureRouting = useSettingsStore((s) => s.setAiFeatureRouting);
   const cloudAiModels = useSettingsStore((s) => s.cloudAiModels);
 
   const api = window.streaming;
@@ -286,11 +276,6 @@ export default function SettingsLogs() {
 
   const [logFilter, setLogFilter] = useState<"all" | "error" | "warn" | "info">("all");
   const [activeSection, setActiveSection] = useState<"ai" | "research" | "data" | "market" | "system">("ai");
-  const [aiSubsections, setAiSubsections] = useState<Record<"cloud-models" | "context-sharing" | "steward", boolean>>({
-    "cloud-models": true,
-    "context-sharing": false,
-    steward: false,
-  });
   const [externalFeedTests, setExternalFeedTests] = useState<Record<string, { status: "success" | "error" | "unknown"; message: string; timestamp: number }>>({});
 
   const [aiEnabled, setAiEnabled] = useState(false);
@@ -314,6 +299,16 @@ export default function SettingsLogs() {
   const [backendUrlSaving, setBackendUrlSaving] = useState(false);
   const [backendHealthChecking, setBackendHealthChecking] = useState(false);
   const [backendHealth, setBackendHealth] = useState<"unknown" | "ok" | "error">("unknown");
+  const [tedLiveEnabled, setTedLiveEnabled] = useState(false);
+  const [tedBaseUrl, setTedBaseUrl] = useState("");
+  const [tedApiKey, setTedApiKey] = useState("");
+  const [tedAuthHeader, setTedAuthHeader] = useState("x-api-key");
+  const [tedTimeoutMs, setTedTimeoutMs] = useState(12000);
+  const [tedWindowQueryParam, setTedWindowQueryParam] = useState("window");
+  const [tedConfigStatus, setTedConfigStatus] = useState<string | null>(null);
+  const [tedConfigSaving, setTedConfigSaving] = useState(false);
+  const [settingsSaveStatus, setSettingsSaveStatus] = useState<string | null>(null);
+  const [settingsSaving, setSettingsSaving] = useState(false);
 
   useEffect(() => {
     try {
@@ -327,7 +322,7 @@ export default function SettingsLogs() {
         secondaryAiKey?: string;
       };
       if (typeof parsed.aiEnabled === "boolean") setAiEnabled(parsed.aiEnabled);
-      if (typeof parsed.aiModel === "string" && parsed.aiModel.trim()) setAiModel(parsed.aiModel);
+      if (typeof parsed.aiModel === "string" && (parsed.aiModel ?? "").trim()) setAiModel(parsed.aiModel);
       if (typeof parsed.aiPollInterval === "number" && Number.isFinite(parsed.aiPollInterval)) {
         setAiPollInterval(parsed.aiPollInterval);
       }
@@ -383,7 +378,7 @@ export default function SettingsLogs() {
       }
     };
 
-    const localModel = aiModel.trim() || "deepseek-r1:14b";
+    const localModel = (aiModel ?? "").trim() || "deepseek-r1:14b";
     addOption(buildAiKey("ollama", localModel), `Local Ollama (${localModel})`);
 
     availableModels
@@ -424,7 +419,7 @@ export default function SettingsLogs() {
       merged.add(name);
     });
     if (aiModel?.trim()) {
-      const current = aiModel.trim();
+      const current = (aiModel ?? "").trim();
       const shouldIncludeCurrent =
         aiEnginePreference === "cloud-first" ||
         (aiEnginePreference === "cloud-only" && isCloudModelName(current)) ||
@@ -435,7 +430,7 @@ export default function SettingsLogs() {
   }, [availableModels, aiEnginePreference, aiModel]);
 
   const defaultPrimaryAiKey = useMemo(() => {
-    const fallbackLocal = buildAiKey("ollama", aiModel.trim() || "deepseek-r1:14b");
+    const fallbackLocal = buildAiKey("ollama", (aiModel ?? "").trim() || "deepseek-r1:14b");
     return aiOptions[0]?.key ?? fallbackLocal;
   }, [aiModel, aiOptions]);
 
@@ -505,16 +500,27 @@ export default function SettingsLogs() {
     }
   }, [settingsApi, primaryAiKey, secondaryAiKey, defaultPrimaryAiKey]);
 
+  const handleSaveSettings = useCallback(async () => {
+    if (settingsSaving) return;
+    setSettingsSaving(true);
+    setSettingsSaveStatus(null);
+    try {
+      saveSettings();
+      await persistAiSelections();
+      setSettingsSaveStatus("Saved");
+      setTimeout(() => setSettingsSaveStatus(null), 2500);
+    } catch (err) {
+      console.warn("[SettingsLogs] failed to save settings", err);
+      setSettingsSaveStatus("Save failed");
+    } finally {
+      setSettingsSaving(false);
+    }
+  }, [saveSettings, persistAiSelections, settingsSaving]);
+
   const stewardInit = useAiStewardStore((s) => s.init);
   const stewardOverview = useAiStewardStore((s) => s.overview);
   const stewardLoading = useAiStewardStore((s) => s.loading);
   const stewardError = useAiStewardStore((s) => s.error);
-  const stewardSetConfig = useAiStewardStore((s) => s.setConfig);
-  const stewardApplyTask = useAiStewardStore((s) => s.applyTask);
-  const stewardRunModule = useAiStewardStore((s) => s.runModule);
-  const stewardTestResponse = useAiStewardStore((s) => s.testResponse);
-  const stewardTesting = useAiStewardStore((s) => s.testing);
-  const stewardTestResult = useAiStewardStore((s) => s.testResult);
 
   const secretsApi = window.cockpit?.secrets;
   const apiHubApi = window.cockpit?.apiHub;
@@ -747,6 +753,50 @@ export default function SettingsLogs() {
     };
   }, [settingsApi]);
 
+  useEffect(() => {
+    let disposed = false;
+
+    const loadTedConfig = async () => {
+      try {
+        const config = await settingsApi?.tedConfigGet?.();
+        if (disposed || !config || typeof config !== "object") return;
+
+        const value = config as Record<string, unknown>;
+        if (typeof value.enabled === "boolean") setTedLiveEnabled(value.enabled);
+        if (typeof value.baseUrl === "string") setTedBaseUrl(value.baseUrl);
+        if (typeof value.apiKey === "string") setTedApiKey(value.apiKey);
+        if (typeof value.authHeader === "string" && value.authHeader.trim()) {
+          setTedAuthHeader(value.authHeader);
+        }
+        if (typeof value.timeoutMs === "number" && Number.isFinite(value.timeoutMs)) {
+          setTedTimeoutMs(value.timeoutMs);
+        }
+        if (
+          typeof value.windowQueryParam === "string" &&
+          value.windowQueryParam.trim()
+        ) {
+          setTedWindowQueryParam(value.windowQueryParam);
+        }
+      } catch (err) {
+        if (!disposed) {
+          console.warn("[SettingsLogs] failed to load TED config", err);
+          addLog({
+            timestamp: Date.now(),
+            level: "error",
+            category: "ted-intel",
+            message: `Failed to load TED config: ${err instanceof Error ? err.message : String(err)}`,
+          });
+        }
+      }
+    };
+
+    loadTedConfig();
+
+    return () => {
+      disposed = true;
+    };
+  }, [settingsApi]);
+
   const saveBackendUrl = useCallback(async () => {
     const next = backendUrlDraft.trim();
     if (!next) {
@@ -795,6 +845,115 @@ export default function SettingsLogs() {
     }
   }, [backendUrlDraft]);
 
+  const saveTedConfig = useCallback(async () => {
+    if (!settingsApi?.tedConfigSet) {
+      setTedConfigStatus("❌ TED config API unavailable");
+      addLog({
+        timestamp: Date.now(),
+        level: "error",
+        category: "ted-intel",
+        message: "TED config API unavailable in renderer bridge",
+      });
+      return;
+    }
+
+    if (!tedBaseUrl.trim()) {
+      setTedConfigStatus("❌ TED base URL is required");
+      addLog({
+        timestamp: Date.now(),
+        level: "error",
+        category: "ted-intel",
+        message: "TED config save blocked: missing base URL",
+      });
+      return;
+    }
+
+    if (!tedApiKey.trim()) {
+      setTedConfigStatus("❌ TED API key is required. Save it here or edit it in API Hub.");
+      addLog({
+        timestamp: Date.now(),
+        level: "error",
+        category: "ted-intel",
+        message: "TED config save blocked: missing API key",
+      });
+      return;
+    }
+
+    setTedConfigSaving(true);
+    setTedConfigStatus(null);
+    try {
+      const response = await settingsApi.tedConfigSet({
+        enabled: tedLiveEnabled,
+        baseUrl: tedBaseUrl,
+        apiKey: tedApiKey,
+        authHeader: tedAuthHeader,
+        timeoutMs: tedTimeoutMs,
+        windowQueryParam: tedWindowQueryParam,
+      });
+
+      const hasApiKey =
+        typeof response?.hasApiKey === "boolean"
+          ? response.hasApiKey
+          : tedApiKey.trim().length > 0;
+      setApiKeys(
+        [
+          ...apiKeys.filter((key) => key.id !== TED_API_HUB_RECORD_ID),
+          {
+            id: TED_API_HUB_RECORD_ID,
+            name: "TED Live Feed",
+            provider: "ted",
+            createdAt: Date.now(),
+            fields: [
+              {
+                key: "TED_API_KEY",
+                label: "API Key",
+                account: TED_API_KEY_ACCOUNT,
+              },
+            ],
+            config: {
+              BASE_URL: tedBaseUrl.trim(),
+              AUTH_HEADER: tedAuthHeader.trim(),
+              TIMEOUT_MS: String(tedTimeoutMs),
+              WINDOW_QUERY_PARAM: tedWindowQueryParam.trim(),
+              ENABLED: tedLiveEnabled ? "true" : "false",
+            },
+          },
+        ],
+        { persist: true },
+      );
+      addLog({
+        timestamp: Date.now(),
+        level: "info",
+        category: "ted-intel",
+        message: `TED config saved. Live feed ${tedLiveEnabled ? "enabled" : "disabled"}.`,
+      });
+      setTedConfigStatus(
+        `✅ TED config saved to Settings and API Hub${hasApiKey ? "" : " (no API key stored)"}`,
+      );
+      setTimeout(() => setTedConfigStatus(null), 3500);
+    } catch (error) {
+      addLog({
+        timestamp: Date.now(),
+        level: "error",
+        category: "ted-intel",
+        message: `TED config save failed: ${error instanceof Error ? error.message : String(error)}`,
+      });
+      setTedConfigStatus(
+        `❌ Failed to save TED config: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    } finally {
+      setTedConfigSaving(false);
+    }
+  }, [
+    settingsApi,
+    tedLiveEnabled,
+    tedBaseUrl,
+    tedApiKey,
+    tedAuthHeader,
+    tedTimeoutMs,
+    tedWindowQueryParam,
+  ]);
+
   // Save Ollama API key to localStorage when it changes
   useEffect(() => {
     if (ollamaApiKey) {
@@ -811,8 +970,6 @@ export default function SettingsLogs() {
   }, [logs, logFilter]);
 
   const blsKeys = useMemo(() => apiKeys.filter((k) => k.provider === "bls"), [apiKeys]);
-  const stewardConfig = stewardOverview?.config;
-  const stewardPendingTasks = useMemo(() => (stewardOverview?.tasks ?? []).filter((t) => t.status === "pending"), [stewardOverview?.tasks]);
   const stewardModules = stewardOverview?.modules ?? [];
   const moduleStateMap = useMemo(() => {
     const map = new Map<AiStewardModule, AiStewardModuleState>();
@@ -830,13 +987,33 @@ export default function SettingsLogs() {
     [moduleStateMap],
   );
 
-  const handleModuleModeChange = useCallback(
-    (module: AiStewardModule, mode: AiStewardMode) => {
-      const patch: PartialModuleConfig = { [module]: { mode } };
-      stewardSetConfig({ modules: patch as any });
-    },
-    [stewardSetConfig],
-  );
+  const aiRoutingOptions = useMemo(() => {
+    const map = new Map<string, string>();
+    map.set("auto", "Auto (first connected provider)");
+
+    const ollamaEnabled = cloudAiModels.some((entry) => entry.provider === "ollama" && entry.enabled);
+    if (ollamaEnabled) {
+      map.set("ollama", "Ollama (local)");
+    }
+
+    const providerLabels: Record<string, string> = {
+      openai: "OpenAI",
+      anthropic: "Anthropic",
+      gemini: "Google Gemini",
+      mistral: "Mistral",
+      groq: "Groq",
+      xai: "xAI / Grok",
+    };
+
+    apiKeys.forEach((entry) => {
+      const provider = String(entry.provider);
+      if (provider in providerLabels) {
+        map.set(provider, providerLabels[provider]);
+      }
+    });
+
+    return Array.from(map.entries()).map(([value, label]) => ({ value, label }));
+  }, [cloudAiModels, apiKeys]);
 
   const syncExternalFeeds = async (next?: Partial<typeof externalFeeds>) => {
     if (!externalFeedsApi?.setConfig) {
@@ -1105,14 +1282,10 @@ export default function SettingsLogs() {
     }
   };
 
-  const toggleAiSubsection = (key: "cloud-models" | "context-sharing" | "steward") => {
-    setAiSubsections((prev) => ({ ...prev, [key]: !prev[key] }));
-  };
-
   const saveAiConfiguration = async () => {
     const next = {
       enabled: aiEnabled,
-      model: aiModel.trim() || "deepseek-r1:14b",
+      model: (aiModel ?? "").trim() || "deepseek-r1:14b",
       pollIntervalSec: Math.max(60, Math.min(3600, aiPollInterval || 300)),
       rssFeeds: parseList(aiRssFeeds),
       secForms: parseList(aiSecForms),
@@ -1170,6 +1343,32 @@ export default function SettingsLogs() {
         <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
           <StatusIndicator label="Stream" value={source} status={source === "live" ? "success" : source === "demo" ? "warning" : "info"} />
           <StatusIndicator label="AI" value={aiRuntime?.available ? "Ready" : "Offline"} status={aiRuntime?.available ? "success" : "error"} />
+          <button
+            type="button"
+            onClick={() => {
+              handleSaveSettings().catch(() => void 0);
+            }}
+            disabled={settingsSaving}
+            style={{
+              border: S.border,
+              background: "linear-gradient(180deg, rgba(99,102,241,0.9), rgba(79,70,229,0.85))",
+              color: "#fff",
+              borderRadius: 8,
+              padding: "8px 14px",
+              fontSize: 12,
+              fontWeight: 700,
+              letterSpacing: 0.3,
+              cursor: settingsSaving ? "wait" : "pointer",
+              opacity: settingsSaving ? 0.75 : 1,
+            }}
+          >
+            {settingsSaving ? "Saving..." : "Save"}
+          </button>
+          {settingsSaveStatus ? (
+            <span style={{ fontSize: 12, color: settingsSaveStatus === "Saved" ? "#86efac" : "#fca5a5", minWidth: 70 }}>
+              {settingsSaveStatus}
+            </span>
+          ) : null}
         </div>
       </div>
 
@@ -1212,324 +1411,14 @@ export default function SettingsLogs() {
         <div style={{ display: "grid", gap: 20 }}>
           <Card title="⚡ AI Control Center">
             <div style={{ display: "grid", gap: 16 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-                <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
-                  <input type="checkbox" checked={aiEnabled} onChange={(e) => setAiEnabled(e.target.checked)} style={{ width: 20, height: 20 }} />
-                  <span style={{ fontWeight: 600 }}>Enable AI Research</span>
-                </label>
-                {!aiRuntime?.available && (
-                  <div style={{ fontSize: 12, color: "#fca5a5", padding: "6px 12px", background: "rgba(248,113,113,0.15)", borderRadius: 6, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                    <span>⚠️ Ollama offline{aiRuntime?.message ? `: ${aiRuntime.message}` : ""}</span>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        aiCheckRuntime().catch(() => void 0);
-                      }}
-                      style={{ padding: "4px 8px", fontSize: 11, borderRadius: 4, border: "1px solid rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.05)", cursor: "pointer" }}
-                    >
-                      Check
-                    </button>
-                  </div>
-                )}
-                {aiRuntime?.available && (
-                  <div style={{ fontSize: 12, color: "#86efac", padding: "6px 12px", background: "rgba(34,197,94,0.15)", borderRadius: 6 }}>
-                    ✓ Ollama {aiRuntime.version ?? "ready"}
-                  </div>
-                )}
+              <div style={{ fontSize: 14, lineHeight: 1.6, color: "var(--muted)", maxWidth: 900 }}>
+                Configure your AI providers below. Active providers are used automatically across AI-powered features,
+                and you can fine-tune which provider powers each feature in the routing panel.
               </div>
 
-              <div style={{ display: "grid", gridTemplateColumns: "180px 1fr", gap: 10, alignItems: "start" }}>
-                <label style={{ fontSize: 12, opacity: 0.8, textTransform: "uppercase", letterSpacing: 0.8, fontFamily: "var(--mono)", paddingTop: 9 }}>
-                  Engine Mode
-                </label>
-                <div style={{ display: "grid", gap: 6 }}>
-                  <select
-                    value={aiEnginePreference}
-                    onChange={(e) => setAiEnginePreference(e.target.value as "cloud-first" | "cloud-only" | "local-only")}
-                    style={{ padding: "8px 12px", borderRadius: 6, border: "1px solid rgba(255,255,255,0.2)", background: "rgba(15,23,42,0.95)", color: "inherit" }}
-                  >
-                    <option value="cloud-first">☁️ Cloud w/ local fallback</option>
-                    <option value="cloud-only">☁️ Cloud only</option>
-                    <option value="local-only">🖥️ Local (Ollama)</option>
-                  </select>
-                  <div style={{ fontSize: 11, opacity: 0.7 }}>One mode for all AI features.</div>
-                </div>
-
-                <label style={{ fontSize: 12, opacity: 0.8, textTransform: "uppercase", letterSpacing: 0.8, fontFamily: "var(--mono)", paddingTop: 9 }}>
-                  Primary AI
-                </label>
-                <div style={{ display: "grid", gap: 6 }}>
-                  <select
-                    value={primaryAiKey || defaultPrimaryAiKey}
-                    onChange={(e) => setPrimaryAiKey(e.target.value)}
-                    style={{ padding: "8px 12px", borderRadius: 6, border: "1px solid rgba(255,255,255,0.2)", background: "rgba(15,23,42,0.95)", color: "inherit" }}
-                  >
-                    {aiOptions.map((opt) => (
-                      <option key={opt.key} value={opt.key}>{opt.label}</option>
-                    ))}
-                  </select>
-                  <div style={{ fontSize: 11, opacity: 0.7 }}>Main model used app-wide.</div>
-                </div>
-
-                <label style={{ fontSize: 12, opacity: 0.8, textTransform: "uppercase", letterSpacing: 0.8, fontFamily: "var(--mono)", paddingTop: 9 }}>
-                  Secondary AI
-                </label>
-                <div style={{ display: "grid", gap: 6 }}>
-                  <select
-                    value={secondaryAiKey}
-                    onChange={(e) => setSecondaryAiKey(e.target.value)}
-                    style={{ padding: "8px 12px", borderRadius: 6, border: "1px solid rgba(255,255,255,0.2)", background: "rgba(15,23,42,0.95)", color: "inherit" }}
-                  >
-                    <option value="">None</option>
-                    {aiOptions.map((opt) => (
-                      <option key={opt.key} value={opt.key}>{opt.label}</option>
-                    ))}
-                  </select>
-                  <div style={{ fontSize: 11, opacity: 0.7 }}>Optional backup model.</div>
-                </div>
-
-                <label style={{ fontSize: 12, opacity: 0.8, textTransform: "uppercase", letterSpacing: 0.8, fontFamily: "var(--mono)", paddingTop: 9 }}>
-                  Runtime
-                </label>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                  <button type="button" onClick={refreshModelCatalog} disabled={modelsLoading} style={{ padding: "8px 12px", minWidth: 110 }}>
-                    {modelsLoading ? "Scanning..." : "Scan Models"}
-                  </button>
-                  <span style={{ fontSize: 11, opacity: 0.7 }}>
-                    {modelsError
-                      ? `⚠️ ${modelsError}`
-                      : `${filteredModelOptions.length} model${filteredModelOptions.length === 1 ? "" : "s"} available`}
-                  </span>
-                </div>
-
-                {needsOllamaCloudKey && (
-                  <>
-                    <label style={{ fontSize: 12, opacity: 0.8, textTransform: "uppercase", letterSpacing: 0.8, fontFamily: "var(--mono)", paddingTop: 9 }}>
-                      Ollama Cloud Key
-                    </label>
-                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                      <input
-                        type="password"
-                        value={ollamaApiKey}
-                        onChange={(e) => setOllamaApiKey(e.target.value)}
-                        placeholder="Ollama API key"
-                        style={{
-                          flex: 1,
-                          padding: "8px 12px",
-                          borderRadius: 6,
-                          border: "1px solid rgba(168,85,247,0.4)",
-                          background: "rgba(0,0,0,0.3)",
-                          fontSize: 12,
-                          fontFamily: "monospace",
-                        }}
-                      />
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const key = window.localStorage.getItem("ollama_api_key");
-                          if (key) navigator.clipboard.writeText(key);
-                        }}
-                        style={{
-                          padding: "8px 12px",
-                          fontSize: 12,
-                          borderRadius: 6,
-                          border: "1px solid rgba(168,85,247,0.4)",
-                          background: "rgba(168,85,247,0.15)",
-                          cursor: "pointer",
-                        }}
-                      >
-                        Copy
-                      </button>
-                    </div>
-                  </>
-                )}
-              </div>
-
-              <div style={{ display: "grid", gap: 10, paddingTop: 10, borderTop: S.border }}>
-                <CollapsibleSection
-                  title="Cloud Models"
-                  open={aiSubsections["cloud-models"]}
-                  onToggle={() => toggleAiSubsection("cloud-models")}
-                >
-                  <CloudAiConfigurator onConfigUpdated={() => {
-                    console.log("[SettingsLogs] Cloud AI config updated");
-                  }} />
-                </CollapsibleSection>
-
-                <CollapsibleSection
-                  title="Context Sharing"
-                  open={aiSubsections["context-sharing"]}
-                  onToggle={() => toggleAiSubsection("context-sharing")}
-                >
-                  <div style={{ display: "flex", alignItems: "center", gap: 12, padding: 16, background: "var(--accent-light)", borderRadius: 10, border: S.borderStrong }}>
-                    <input
-                      type="checkbox"
-                      checked={aiContextSharingEnabled}
-                      onChange={(e) => setAiContextSharingEnabled(e.target.checked)}
-                      style={{ width: 24, height: 24, cursor: "pointer" }}
-                    />
-                    <label style={{ cursor: "pointer", flex: 1 }}>
-                      <span style={{ fontWeight: 700, fontSize: 15 }}>Share Trading Context with AI</span>
-                      <div style={{ fontSize: 13, opacity: 0.8, marginTop: 6, lineHeight: 1.5 }}>
-                        Allow the Llama advisor to access current prices, positions, trades, journal entries, and supply chain data for contextual analysis.
-                      </div>
-                    </label>
-                  </div>
-                </CollapsibleSection>
-
-                <CollapsibleSection
-                  title="AI Steward & Data Guardian"
-                  open={aiSubsections.steward}
-                  onToggle={() => toggleAiSubsection("steward")}
-                >
-                  <div style={{ display: "grid", gap: 16 }}>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 16, alignItems: "center" }}>
-                      <div style={{ fontSize: 13, opacity: 0.8 }}>Model: <b>{stewardConfig?.model ?? "deepseek-r1:14b"}</b></div>
-                      <div style={{ fontSize: 13, opacity: 0.8 }}>Last check: <b>{stewardOverview?.lastCheckAt ? fmtDate(stewardOverview.lastCheckAt) : "—"}</b></div>
-                      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                        {STEWARD_MODULE_ORDER.map((module) => {
-                          const statusStyle = getModuleStatusStyle(module);
-                          return (
-                            <div
-                              key={module}
-                              style={{
-                                padding: "4px 12px",
-                                borderRadius: 999,
-                                border: `1px solid ${statusStyle.border}`,
-                                background: statusStyle.bg,
-                                color: statusStyle.color,
-                                fontSize: 12,
-                                textTransform: "uppercase",
-                                letterSpacing: 0.5,
-                              }}
-                            >
-                              {STEWARD_MODULE_META[module].short} {statusStyle.label}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 16 }}>
-                      <label style={{ display: "flex", gap: 10, alignItems: "center", padding: 12, border: "1px solid rgba(255,255,255,0.1)", borderRadius: 10 }}>
-                        <input
-                          type="checkbox"
-                          checked={stewardConfig?.autoFixData ?? false}
-                          onChange={(e) => stewardSetConfig({ autoFixData: e.target.checked })}
-                          style={{ width: 20, height: 20 }}
-                        />
-                        <div>
-                          <div style={{ fontWeight: 600 }}>Auto-fix trusted data</div>
-                          <div style={{ fontSize: 12, opacity: 0.7 }}>Allow the steward to pull fresh regulatory and disclosure files without prompts.</div>
-                        </div>
-                      </label>
-                      <div style={{ padding: 12, borderRadius: 10, border: "1px solid rgba(255,255,255,0.1)" }}>
-                        <div style={{ fontWeight: 600, fontSize: 13 }}>Monitoring cadence</div>
-                        <div style={{ fontSize: 12, opacity: 0.75, marginTop: 6 }}>
-                          Checks run every <b>{stewardConfig?.checkIntervalMinutes ?? 30} minutes</b> plus whenever you trigger a module manually.
-                        </div>
-                      </div>
-                    </div>
-
-                    <div style={{ display: "grid", gap: 16 }}>
-                      {STEWARD_MODULE_ORDER.map((module) => {
-                        const meta = STEWARD_MODULE_META[module];
-                        const moduleState = moduleStateMap.get(module);
-                        const mode = stewardConfig?.modules?.[module]?.mode ?? "suggest";
-                        const statusStyle = getModuleStatusStyle(module);
-                        return (
-                          <div key={module} style={{ border: "1px solid rgba(255,255,255,0.1)", borderRadius: 12, padding: 16, background: "rgba(15,23,42,0.55)" }}>
-                            <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", gap: 12 }}>
-                              <div>
-                                <div style={{ fontWeight: 600 }}>{meta.title}</div>
-                                <div style={{ fontSize: 13, opacity: 0.75 }}>{meta.description}</div>
-                              </div>
-                              <div
-                                style={{
-                                  padding: "4px 12px",
-                                  borderRadius: 999,
-                                  border: `1px solid ${statusStyle.border}`,
-                                  background: statusStyle.bg,
-                                  color: statusStyle.color,
-                                  fontSize: 12,
-                                  textTransform: "uppercase",
-                                  letterSpacing: 0.5,
-                                }}
-                              >
-                                {statusStyle.label}
-                              </div>
-                            </div>
-                            <div style={{ fontSize: 13, opacity: 0.85, marginTop: 10, lineHeight: 1.5 }}>
-                              {moduleState?.summary ?? "Waiting for first inspection run."}
-                            </div>
-                            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12, marginTop: 12, alignItems: "flex-end" }}>
-                              <div>
-                                <div style={{ fontSize: 12, opacity: 0.7 }}>{meta.modeLabel}</div>
-                                <select
-                                  value={mode}
-                                  onChange={(e) => handleModuleModeChange(module, e.target.value as AiStewardMode)}
-                                  style={{ marginTop: 6, padding: "8px 12px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.2)", width: "100%" }}
-                                >
-                                  <option value="off">Off</option>
-                                  <option value="observe">Observe only</option>
-                                  <option value="suggest">Suggest fixes</option>
-                                  <option value="auto">Auto repair</option>
-                                </select>
-                                <div style={{ fontSize: 12, opacity: 0.65, marginTop: 4 }}>{meta.helper}</div>
-                              </div>
-                              <button onClick={() => stewardRunModule(module)} disabled={stewardLoading} style={{ padding: "10px 14px" }}>
-                                {meta.runLabel}
-                              </button>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-
-                    <div style={{ padding: 16, borderRadius: 12, border: "1px solid rgba(255,255,255,0.08)", background: "rgba(15,23,42,0.6)" }}>
-                      <div style={{ fontWeight: 600, marginBottom: 8 }}>Pending remediation</div>
-                      {stewardPendingTasks.length === 0 && (
-                        <div style={{ fontSize: 13, opacity: 0.75 }}>No open fixes. The steward will refresh monitored feeds on schedule.</div>
-                      )}
-                      {stewardPendingTasks.length > 0 && (
-                        <div style={{ display: "grid", gap: 12 }}>
-                          {stewardPendingTasks.map((task) => (
-                            <div key={task.id} style={{ border: "1px solid rgba(255,255,255,0.08)", borderRadius: 10, padding: 12 }}>
-                              <div style={{ fontWeight: 600, marginBottom: 4 }}>{task.title}</div>
-                              <div style={{ fontSize: 13, opacity: 0.8, marginBottom: 8 }}>{task.summary}</div>
-                              <button onClick={() => stewardApplyTask(task.id)} disabled={stewardLoading} style={{ padding: "6px 12px" }}>
-                                ⚙️ Apply fix
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-
-                    <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                      <button onClick={() => stewardSetConfig({ model: "deepseek-r1:14b" })} style={{ padding: "8px 16px" }}>
-                        🧠 Reset to deepseek-r1:14b
-                      </button>
-                      <button onClick={() => stewardTestResponse()} disabled={stewardTesting} style={{ padding: "8px 16px" }}>
-                        {stewardTesting ? "🧪 Testing..." : "🧪 Ping AI"}
-                      </button>
-                    </div>
-
-                    {stewardTestResult && (
-                      <div style={{ fontSize: 13, opacity: 0.8, padding: 12, borderRadius: 8, border: "1px solid rgba(134,239,172,0.4)", background: "rgba(21,128,61,0.15)" }}>
-                        <div style={{ fontWeight: 600, marginBottom: 4 }}>Latest response ({fmtDate(stewardTestResult.ts)}):</div>
-                        <div>{stewardTestResult.message}</div>
-                      </div>
-                    )}
-
-                    {stewardError && (
-                      <div style={{ padding: 12, borderRadius: 8, background: "rgba(248,113,113,0.15)", border: "1px solid rgba(248,113,113,0.4)", color: "#fecdd3" }}>
-                        ⚠️ {stewardError}
-                      </div>
-                    )}
-                  </div>
-                </CollapsibleSection>
-              </div>
+              <CloudAiConfigurator onConfigUpdated={() => {
+                console.log("[SettingsLogs] AI provider configuration updated");
+              }} />
 
               {showAiErrorBanner && (
                 <div style={{ padding: 12, borderRadius: 8, background: "rgba(248,113,113,0.1)", border: "1px solid rgba(248,113,113,0.4)", color: "#fecdd3" }}>
@@ -1545,33 +1434,59 @@ export default function SettingsLogs() {
             </div>
           </Card>
 
-          <Card title="☁️ Cloud AI Models">
-            <CloudAiConfigurator onConfigUpdated={() => {
-              console.log("[SettingsLogs] Cloud AI config updated");
-            }} />
-          </Card>
-
-          <Card title="🤖 AI Context Sharing">
-            <div style={{ display: "flex", alignItems: "center", gap: 12, padding: 16, background: "rgba(59,130,246,0.08)", borderRadius: 12, border: "1px solid rgba(59,130,246,0.2)" }}>
-              <input
-                type="checkbox"
-                checked={aiContextSharingEnabled}
-                onChange={(e) => setAiContextSharingEnabled(e.target.checked)}
-                style={{ width: 24, height: 24, cursor: "pointer" }}
-              />
-              <label style={{ cursor: "pointer", flex: 1 }}>
-                <span style={{ fontWeight: 700, fontSize: 15 }}>Share Trading Context with AI</span>
-                <div style={{ fontSize: 13, opacity: 0.8, marginTop: 6, lineHeight: 1.5 }}>
-                  Allow the Llama advisor to access current prices, positions, trades, journal entries, and supply chain data for contextual analysis.
+          <Card title="🔌 AI Feature Routing">
+            <div style={{ display: "grid", gap: 12 }}>
+              {[{ key: "research", title: "AI Research Briefs", detail: "Daily research summaries and signal synthesis." },
+                { key: "supplyChain", title: "Supply Chain Intelligence", detail: "Shipping and logistics disruption analysis." },
+                { key: "congress", title: "Congressional Intelligence", detail: "Legislative and disclosure impact detection." },
+                { key: "cftc", title: "CFTC Analysis", detail: "Commitments of Traders and futures positioning insights." }].map((row) => (
+                <div key={row.key} style={{ display: "grid", gridTemplateColumns: "1fr minmax(220px, 280px)", gap: 12, alignItems: "center", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 10, padding: 12 }}>
+                  <div>
+                    <div style={{ fontWeight: 600 }}>{row.title}</div>
+                    <div style={{ fontSize: 12, opacity: 0.72, marginTop: 3 }}>{row.detail}</div>
+                  </div>
+                  <select
+                    value={aiFeatureRouting[row.key as "research" | "supplyChain" | "congress" | "cftc"]}
+                    onChange={(e) => setAiFeatureRouting(row.key as "research" | "supplyChain" | "congress" | "cftc", e.target.value)}
+                    style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.2)", background: "rgba(15,23,42,0.95)", color: "inherit" }}
+                  >
+                    {aiRoutingOptions.map((opt) => (
+                      <option key={`${row.key}:${opt.value}`} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
                 </div>
-              </label>
+              ))}
+              <div style={{ fontSize: 12, opacity: 0.72 }}>
+                Auto routing uses the first connected provider by priority, starting with local Ollama.
+              </div>
             </div>
           </Card>
 
-          <Card title="🛡️ AI Steward & Data Guardian">
+          <div style={{ display: "flex", alignItems: "center", gap: 12, padding: 14, border: "1px solid rgba(59,130,246,0.25)", background: "rgba(59,130,246,0.08)", borderRadius: 10 }}>
+            <input
+              type="checkbox"
+              checked={aiContextSharingEnabled}
+              onChange={(e) => setAiContextSharingEnabled(e.target.checked)}
+              style={{ width: 18, height: 18, cursor: "pointer" }}
+            />
+            <label style={{ cursor: "pointer", flex: 1, fontSize: 13 }}>
+              <span style={{ fontWeight: 700 }}>AI Context Sharing</span>
+              <span style={{ opacity: 0.8 }}> - Allow AI systems to read prices, positions, trades, journal notes, and supply chain state.</span>
+            </label>
+          </div>
+
+          <Card title="🤖 OpenClaw Agent">
             <div style={{ display: "grid", gap: 16 }}>
+              <div style={{ padding: 12, borderRadius: 10, border: "1px solid rgba(251,191,36,0.4)", background: "rgba(251,191,36,0.14)", color: "#fde68a", fontWeight: 700 }}>
+                🚧 Under Development
+              </div>
+
+              <div style={{ fontSize: 13, lineHeight: 1.6, opacity: 0.85 }}>
+                OpenClaw Agent is the upcoming autonomous AI steward for regulatory and disclosure data quality, recovery, and operational oversight.
+                Core monitoring hooks are active, with expanded autonomous controls rolling out in a future update.
+              </div>
+
               <div style={{ display: "flex", flexWrap: "wrap", gap: 16, alignItems: "center" }}>
-                <div style={{ fontSize: 13, opacity: 0.8 }}>Model: <b>{stewardConfig?.model ?? "deepseek-r1:14b"}</b></div>
                 <div style={{ fontSize: 13, opacity: 0.8 }}>Last check: <b>{stewardOverview?.lastCheckAt ? fmtDate(stewardOverview.lastCheckAt) : "—"}</b></div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                   {STEWARD_MODULE_ORDER.map((module) => {
@@ -1597,122 +1512,14 @@ export default function SettingsLogs() {
                 </div>
               </div>
 
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 16 }}>
-                <label style={{ display: "flex", gap: 10, alignItems: "center", padding: 12, border: "1px solid rgba(255,255,255,0.1)", borderRadius: 10 }}>
-                  <input
-                    type="checkbox"
-                    checked={stewardConfig?.autoFixData ?? false}
-                    onChange={(e) => stewardSetConfig({ autoFixData: e.target.checked })}
-                    style={{ width: 20, height: 20 }}
-                  />
-                  <div>
-                    <div style={{ fontWeight: 600 }}>Auto-fix trusted data</div>
-                    <div style={{ fontSize: 12, opacity: 0.7 }}>Allow the steward to pull fresh regulatory and disclosure files without prompts.</div>
-                  </div>
-                </label>
-                <div style={{ padding: 12, borderRadius: 10, border: "1px solid rgba(255,255,255,0.1)" }}>
-                  <div style={{ fontWeight: 600, fontSize: 13 }}>Monitoring cadence</div>
-                  <div style={{ fontSize: 12, opacity: 0.75, marginTop: 6 }}>
-                    Checks run every <b>{stewardConfig?.checkIntervalMinutes ?? 30} minutes</b> plus whenever you trigger a module manually.
-                  </div>
-                </div>
-              </div>
-
-              <div style={{ display: "grid", gap: 16 }}>
-                {STEWARD_MODULE_ORDER.map((module) => {
-                  const meta = STEWARD_MODULE_META[module];
-                  const moduleState = moduleStateMap.get(module);
-                  const mode = stewardConfig?.modules?.[module]?.mode ?? "suggest";
-                  const statusStyle = getModuleStatusStyle(module);
-                  return (
-                    <div key={module} style={{ border: "1px solid rgba(255,255,255,0.1)", borderRadius: 12, padding: 16, background: "rgba(15,23,42,0.55)" }}>
-                      <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", gap: 12 }}>
-                        <div>
-                          <div style={{ fontWeight: 600 }}>{meta.title}</div>
-                          <div style={{ fontSize: 13, opacity: 0.75 }}>{meta.description}</div>
-                        </div>
-                        <div
-                          style={{
-                            padding: "4px 12px",
-                            borderRadius: 999,
-                            border: `1px solid ${statusStyle.border}`,
-                            background: statusStyle.bg,
-                            color: statusStyle.color,
-                            fontSize: 12,
-                            textTransform: "uppercase",
-                            letterSpacing: 0.5,
-                          }}
-                        >
-                          {statusStyle.label}
-                        </div>
-                      </div>
-                      <div style={{ fontSize: 13, opacity: 0.85, marginTop: 10, lineHeight: 1.5 }}>
-                        {moduleState?.summary ?? "Waiting for first inspection run."}
-                      </div>
-                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12, marginTop: 12, alignItems: "flex-end" }}>
-                        <div>
-                          <div style={{ fontSize: 12, opacity: 0.7 }}>{meta.modeLabel}</div>
-                          <select
-                            value={mode}
-                            onChange={(e) => handleModuleModeChange(module, e.target.value as AiStewardMode)}
-                            style={{ marginTop: 6, padding: "8px 12px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.2)", width: "100%" }}
-                          >
-                            <option value="off">Off</option>
-                            <option value="observe">Observe only</option>
-                            <option value="suggest">Suggest fixes</option>
-                            <option value="auto">Auto repair</option>
-                          </select>
-                          <div style={{ fontSize: 12, opacity: 0.65, marginTop: 4 }}>{meta.helper}</div>
-                        </div>
-                        <button onClick={() => stewardRunModule(module)} disabled={stewardLoading} style={{ padding: "10px 14px" }}>
-                          {meta.runLabel}
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              <div style={{ padding: 16, borderRadius: 12, border: "1px solid rgba(255,255,255,0.08)", background: "rgba(15,23,42,0.6)" }}>
-                <div style={{ fontWeight: 600, marginBottom: 8 }}>Pending remediation</div>
-                {stewardPendingTasks.length === 0 && (
-                  <div style={{ fontSize: 13, opacity: 0.75 }}>No open fixes. The steward will refresh monitored feeds on schedule.</div>
-                )}
-                {stewardPendingTasks.length > 0 && (
-                  <div style={{ display: "grid", gap: 12 }}>
-                    {stewardPendingTasks.map((task) => (
-                      <div key={task.id} style={{ border: "1px solid rgba(255,255,255,0.08)", borderRadius: 10, padding: 12 }}>
-                        <div style={{ fontWeight: 600, marginBottom: 4 }}>{task.title}</div>
-                        <div style={{ fontSize: 13, opacity: 0.8, marginBottom: 8 }}>{task.summary}</div>
-                        <button onClick={() => stewardApplyTask(task.id)} disabled={stewardLoading} style={{ padding: "6px 12px" }}>
-                          ⚙️ Apply fix
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                <button onClick={() => stewardSetConfig({ model: "deepseek-r1:14b" })} style={{ padding: "8px 16px" }}>
-                  🧠 Reset to deepseek-r1:14b
-                </button>
-                <button onClick={() => stewardTestResponse()} disabled={stewardTesting} style={{ padding: "8px 16px" }}>
-                  {stewardTesting ? "🧪 Testing..." : "🧪 Ping AI"}
-                </button>
-              </div>
-
-              {stewardTestResult && (
-                <div style={{ fontSize: 13, opacity: 0.8, padding: 12, borderRadius: 8, border: "1px solid rgba(134,239,172,0.4)", background: "rgba(21,128,61,0.15)" }}>
-                  <div style={{ fontWeight: 600, marginBottom: 4 }}>Latest response ({fmtDate(stewardTestResult.ts)}):</div>
-                  <div>{stewardTestResult.message}</div>
-                </div>
-              )}
-
               {stewardError && (
                 <div style={{ padding: 12, borderRadius: 8, background: "rgba(248,113,113,0.15)", border: "1px solid rgba(248,113,113,0.4)", color: "#fecdd3" }}>
                   ⚠️ {stewardError}
                 </div>
+              )}
+
+              {stewardLoading && (
+                <div style={{ fontSize: 12, opacity: 0.75 }}>Refreshing OpenClaw status...</div>
               )}
             </div>
           </Card>
@@ -2058,10 +1865,7 @@ export default function SettingsLogs() {
                 <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
                   <button
                     onClick={async () => {
-                      const opened = await showWindow("api-hub");
-                      if (!opened) {
-                        apiHubApi?.openWindow?.();
-                      }
+                      await apiHubApi?.openWindow?.();
                     }}
                     style={{
                       padding: "8px 14px",
@@ -2076,12 +1880,9 @@ export default function SettingsLogs() {
                   </button>
                   <button
                     onClick={async () => {
-                      const opened = await showWindow("smart-routing");
-                      if (opened) return;
-
                       const api = window.cockpit?.smartRouting;
                       if (api?.openWindow) {
-                        api.openWindow();
+                        await api.openWindow();
                       } else {
                         console.warn("[SettingsLogs] smartRouting bridge missing");
                         setApiKeyStatus("❌ Smart Routing service unavailable");
@@ -2561,6 +2362,119 @@ export default function SettingsLogs() {
               {backendUrlStatus && (
                 <div style={{ fontSize: 12, opacity: 0.9 }}>{backendUrlStatus}</div>
               )}
+            </div>
+          </Card>
+
+          <Card title="🛰️ TED Intel Live API">
+            <div style={{ display: "grid", gap: 12 }}>
+              <div style={{ fontSize: 13, opacity: 0.8 }}>
+                Enter your TED live endpoint and API key here. The API key is stored in API Hub,
+                and TED will error instead of falling back to fake data. This feeds the
+                TED Intel pipeline used in Intelligence, Panorama, Data Vault,
+                Supply Chain, and GWMD overlays.
+              </div>
+
+              <label style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <input
+                  type="checkbox"
+                  checked={tedLiveEnabled}
+                  onChange={(e) => setTedLiveEnabled(e.target.checked)}
+                  style={{ width: 18, height: 18 }}
+                />
+                <span style={{ fontWeight: 600 }}>Enable live TED ingestion</span>
+              </label>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                <div style={{ display: "grid", gap: 6 }}>
+                  <div style={{ fontSize: 12, opacity: 0.72 }}>Base URL</div>
+                  <input
+                    value={tedBaseUrl}
+                    onChange={(e) => setTedBaseUrl(e.target.value)}
+                    placeholder="https://your-ted-provider.example/api/tedintel"
+                    style={{
+                      padding: "10px 12px",
+                      borderRadius: 8,
+                      border: "1px solid rgba(255,255,255,0.2)",
+                      fontFamily: "var(--mono)",
+                    }}
+                  />
+                </div>
+
+                <div style={{ display: "grid", gap: 6 }}>
+                  <div style={{ fontSize: 12, opacity: 0.72 }}>API Key</div>
+                  <input
+                    type="password"
+                    value={tedApiKey}
+                    onChange={(e) => setTedApiKey(e.target.value)}
+                    placeholder="Paste TED API key"
+                    style={{
+                      padding: "10px 12px",
+                      borderRadius: 8,
+                      border: "1px solid rgba(255,255,255,0.2)",
+                      fontFamily: "var(--mono)",
+                    }}
+                  />
+                </div>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(140px, 1fr))", gap: 10 }}>
+                <div style={{ display: "grid", gap: 6 }}>
+                  <div style={{ fontSize: 12, opacity: 0.72 }}>Auth Header</div>
+                  <input
+                    value={tedAuthHeader}
+                    onChange={(e) => setTedAuthHeader(e.target.value)}
+                    placeholder="x-api-key"
+                    style={{ padding: "10px 12px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.2)", fontFamily: "var(--mono)" }}
+                  />
+                </div>
+
+                <div style={{ display: "grid", gap: 6 }}>
+                  <div style={{ fontSize: 12, opacity: 0.72 }}>Timeout (ms)</div>
+                  <input
+                    type="number"
+                    min={1000}
+                    step={500}
+                    value={tedTimeoutMs}
+                    onChange={(e) => setTedTimeoutMs(Number(e.target.value) || 12000)}
+                    style={{ padding: "10px 12px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.2)", fontFamily: "var(--mono)" }}
+                  />
+                </div>
+
+                <div style={{ display: "grid", gap: 6 }}>
+                  <div style={{ fontSize: 12, opacity: 0.72 }}>Window Query Param</div>
+                  <input
+                    value={tedWindowQueryParam}
+                    onChange={(e) => setTedWindowQueryParam(e.target.value)}
+                    placeholder="window"
+                    style={{ padding: "10px 12px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.2)", fontFamily: "var(--mono)" }}
+                  />
+                </div>
+              </div>
+
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <button onClick={saveTedConfig} disabled={tedConfigSaving} style={{ padding: "8px 14px" }}>
+                  {tedConfigSaving ? "Saving..." : "💾 Save TED Config"}
+                </button>
+                <button
+                  onClick={async () => {
+                    try {
+                      await apiHubApi?.openWindow?.();
+                    } catch (err) {
+                      console.warn("[SettingsLogs] failed to open API Hub", err);
+                    }
+                  }}
+                  style={{ padding: "8px 14px" }}
+                >
+                  🔐 Open API Hub
+                </button>
+                <span style={{ fontSize: 12, opacity: 0.75 }}>
+                  Missing or broken TED config now produces an error instead of fallback data.
+                </span>
+              </div>
+
+              {tedConfigStatus ? (
+                <div style={{ fontSize: 12, opacity: 0.95 }}>{tedConfigStatus}</div>
+              ) : null}
             </div>
           </Card>
 

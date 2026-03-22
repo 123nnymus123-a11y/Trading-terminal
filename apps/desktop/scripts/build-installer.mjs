@@ -7,17 +7,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const root = path.resolve(__dirname, "..");
 
-// Resolve local binaries so they work even when not on $PATH (e.g. running
-// `node scripts/build-installer.mjs` directly on Linux).
-// On Windows, pnpm/npm place a .cmd shim in .bin; using the full absolute path
-// via cmd.exe requires the explicit .cmd extension.
-const BIN = path.join(root, "node_modules/.bin");
-const electronBuilder = path.join(
-    BIN,
-    process.platform === "win32" ? "electron-builder.cmd" : "electron-builder",
-);
-
-// Electron major version → prebuild ABI tag used by better-sqlite3 releases.
+// Electron major version -> prebuild ABI tag used by better-sqlite3 releases.
 // Extend this table when upgrading Electron.
 const ELECTRON_ABI_MAP = {
     "28": "119",
@@ -37,13 +27,15 @@ function run(cmd, args, opts = {}) {
             ...opts,
         });
         child.on("exit", (code) => {
-            if (code === 0) {
-                resolve();
-            } else {
-                reject(new Error(`${cmd} exited with code ${code}`));
-            }
+            if (code === 0) resolve();
+            else reject(new Error(`${cmd} exited with code ${code}`));
         });
     });
+}
+
+function runElectronBuilder(args) {
+    // Resolve binary through pnpm workspace instead of node_modules/.bin.
+    return run("pnpm", ["exec", "electron-builder", ...args]);
 }
 
 function cleanDir(target) {
@@ -52,10 +44,15 @@ function cleanDir(target) {
     }
 }
 
+function ensureExists(target) {
+    if (!fs.existsSync(target)) {
+        throw new Error(`[build] Missing build output: ${target}`);
+    }
+}
+
 /**
  * Download and unpack the win32-x64 pre-built binary for better-sqlite3 using
- * Python3 (available on all Linux/macOS CI machines).  This avoids the pnpm
- * symlink-path issues that make prebuild-install's own shell wrapper unreliable.
+ * Python3. This avoids pnpm symlink path issues with prebuild-install wrappers.
  */
 async function downloadBetterSqlite3Win32(bs3Version, electronAbi, destDir) {
     const tarName = `better-sqlite3-v${bs3Version}-electron-v${electronAbi}-win32-x64.tar.gz`;
@@ -65,7 +62,7 @@ async function downloadBetterSqlite3Win32(bs3Version, electronAbi, destDir) {
     fs.mkdirSync(path.join(destDir, "build", "Release"), { recursive: true });
 
     const pyScript = `
-import urllib.request, tarfile, io, os, sys
+import urllib.request, tarfile, io, sys
 
 url = ${JSON.stringify(url)}
 dest = ${JSON.stringify(destNode)}
@@ -75,10 +72,7 @@ with urllib.request.urlopen(url, timeout=60) as r:
     data = r.read()
 
 with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tf:
-    # The tarball has a prebuilds/ directory with the .node inside
-    node_member = next(
-        (m for m in tf.getmembers() if m.name.endswith(".node")), None
-    )
+    node_member = next((m for m in tf.getmembers() if m.name.endswith(".node")), None)
     if node_member is None:
         print("[build] ERROR: no .node file found in tarball", flush=True)
         sys.exit(1)
@@ -91,8 +85,8 @@ print(f"[build] Wrote {dest}", flush=True)
 
     return new Promise((resolve, reject) => {
         const child = spawn("python3", ["-c", pyScript], {
-            stdio: "inherit",
             cwd: root,
+            stdio: "inherit",
         });
         child.on("exit", (code) => {
             if (code === 0) resolve();
@@ -107,10 +101,12 @@ async function main() {
 
     await run("node", [path.join(root, "scripts/build.mjs")]);
 
+    ensureExists(path.join(root, "dist/main/index.cjs"));
+    ensureExists(path.join(root, "dist/preload/index.cjs"));
+
     // When cross-building on Linux/macOS for Windows, download the pre-built
     // Windows PE binaries for native addons before packaging.
     if (process.platform !== "win32") {
-        // Read versions from package.json so they never drift out of sync.
         const desktopPkg = JSON.parse(
             fs.readFileSync(path.join(root, "package.json"), "utf8"),
         );
@@ -118,7 +114,9 @@ async function main() {
         const electronMajor = electronVersion.split(".")[0];
         const abi = ELECTRON_ABI_MAP[electronMajor];
         if (!abi) {
-            throw new Error(`[build] No ABI mapping for Electron ${electronVersion}. Update ELECTRON_ABI_MAP in build-installer.mjs.`);
+            throw new Error(
+                `[build] No ABI mapping for Electron ${electronVersion}. Update ELECTRON_ABI_MAP in build-installer.mjs.`,
+            );
         }
 
         const bs3Pkg = JSON.parse(
@@ -127,21 +125,25 @@ async function main() {
         const bs3Version = bs3Pkg.version;
         const bs3Dir = path.join(root, "node_modules/better-sqlite3");
 
-        console.log(`[build] Downloading better-sqlite3 v${bs3Version} win32-x64 for Electron ${electronVersion} (ABI ${abi})...`);
+        console.log(
+            `[build] Downloading better-sqlite3 v${bs3Version} win32-x64 for Electron ${electronVersion} (ABI ${abi})...`,
+        );
         await downloadBetterSqlite3Win32(bs3Version, abi, bs3Dir);
         console.log("[build] better-sqlite3 win32 binary ready.");
-
-        // keytar is optional (gracefully falls back to file-based encryption
-        // when unavailable) so we do not need a Windows keytar binary.
     }
 
-    await run(electronBuilder, ["--config", path.join(root, "electron-builder.config.cjs"), "--win", "nsis"]);
+    await runElectronBuilder([
+        "--config",
+        path.join(root, "electron-builder.config.cjs"),
+        "--win",
+        "nsis",
+    ]);
 
     // After cross-building for Windows, restore native addons for the host
     // platform so this development environment stays functional.
     if (process.platform !== "win32") {
         console.log("[build] Restoring native modules for host platform...");
-        await run(electronBuilder, ["install-app-deps"]);
+        await runElectronBuilder(["install-app-deps"]);
         console.log("[build] Host native modules restored.");
     }
 }

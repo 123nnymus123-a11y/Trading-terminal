@@ -74,6 +74,20 @@ function run(cmd, args, opts = {}) {
   return child;
 }
 
+function runAndWait(cmd, args, opts = {}) {
+  return new Promise((resolve, reject) => {
+    const child = run(cmd, args, opts);
+    child.once("exit", (code) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(new Error(`${cmd} ${args.join(" ")} exited with code ${code ?? "unknown"}`));
+    });
+    child.once("error", reject);
+  });
+}
+
 // ---------- config ----------
 let VITE_PORT = Number(process.env.VITE_PORT || 5173);
 const VITE_HOST = process.env.VITE_HOST || "127.0.0.1";
@@ -127,9 +141,17 @@ console.log("[dev] Starting esbuild watch (main/preload) ...");
 const esbuildScript = path.resolve(__dirname, "esbuild.mjs");
 ensureExists(esbuildScript);
 
+console.log("[dev] Building Electron main/preload once before watch...");
+await runAndWait("node", [esbuildScript], {
+  env: { ...process.env }
+});
+
 const esbuild = run("node", [esbuildScript, "--watch"], {
   env: { ...process.env }
 });
+
+const electronEntry = path.resolve(__dirname, "..", "dist", "main", "index.cjs");
+ensureExists(electronEntry);
 
 // Rebuild native modules for Electron (better-sqlite3, keytar)
 const rebuildScript = path.resolve(__dirname, "..", "node_modules", ".bin", process.platform === "win32" ? "electron-rebuild.cmd" : "electron-rebuild");

@@ -1,0 +1,40 @@
+{
+  "syncMode": "manual",
+  "operations": {
+    "pull": {
+      "input": {
+        "since": "ISO timestamp"
+      },
+      "output": {
+        "entities": "array",
+        "edges": "array",
+        "evidence": "array"
+      }
+    },
+    "push": {
+      "input": {
+        "entities": "array",
+        "edges": "array",
+        "evidence": "array",
+        "since": "optional ISO timestamp"
+      },
+      "output": {
+        "accepted": "number",
+        "rejected": "number"
+      }
+    },
+    "ping": {
+      "output": {
+        "ok": "boolean",
+        "message": "string"
+      }
+    }
+  },
+  "conflictResolutionPlaceholders": [
+    "prefer_local",
+    "prefer_cloud",
+    "latest_timestamp",
+    "manual_review"
+  ],
+  "notes": "Current implementation runs in local-first not-connected mode."
+}

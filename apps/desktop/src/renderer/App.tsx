@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect, useRef, Component, type ErrorInfo, type ReactNode } from "react";
+import React, { useMemo, useState, useEffect, useRef, useCallback, Component, type ErrorInfo, type ReactNode } from "react";
 
 declare global {
   interface Window {
@@ -21,9 +21,10 @@ import EconomicCalendar from "./components/EconomicCalendar";
 import Panorama from "./pages/Panorama";
 import SettingsLogs from "./pages/SettingsLogs";
 import { useConfigStore } from "./store/configStore";
-import LocalAI from "./pages/LocalAI";
+import TerminalAI from "./pages/LocalAI";
 import Intelligence from "./pages/Intelligence";
 import SupplyChainMindMap from "./pages/SupplyChainMindMap";
+import DataVault from "./pages/DataVault";
 import GlobalSupplyChainMap from "./pages/GlobalSupplyChainMap";
 import GwmdMapPage from "./pages/GwmdMapPage";
 import { CongressActivity } from "./pages/CongressActivity";
@@ -95,8 +96,9 @@ const TABS = [
   { label: "ECONOMIC CALENDAR", icon: "📈" },
   { label: "INTELLIGENCE", icon: "🧠" },
   { label: "CONGRESS ACTIVITY", icon: "🏛️" },
-  { label: "LOCAL AI", icon: "🤖" },
+  { label: "TERMINAL AI", icon: "🤖" },
   { label: "SUPPLY CHAIN", icon: "🔗" },
+  { label: "DATA VAULT", icon: "🗄️" },
   { label: "GWMD MAP", icon: "🗺️" },
   // { label: "OIL TANKERS", icon: "🚢" },
   // { label: "CARGO FLIGHTS", icon: "✈️" },
@@ -104,6 +106,21 @@ const TABS = [
 ] as const;
 
 type Tab = (typeof TABS)[number]["label"];
+
+const TAB_LABELS = new Set<Tab>(TABS.map((tab) => tab.label));
+
+function asTabLabel(value: string | null): Tab | null {
+  if (!value) return null;
+  return TAB_LABELS.has(value as Tab) ? (value as Tab) : null;
+}
+
+const DETACH_DRAG_DISTANCE_PX = 8;
+const DETACH_OUTSIDE_MARGIN_PX = 12;
+const TAB_SYNC_CHANNEL = "tc:tabs:sync";
+
+type TabSyncMessage =
+  | { type: "detached"; tab: Tab }
+  | { type: "reattach"; tab: Tab; activate?: boolean };
 
 type StatCardProps = {
   label: string;
@@ -124,9 +141,18 @@ function StatCard({ label, value, hint, tone }: StatCardProps) {
 
 function TerminalWorkspace({ onLogout }: { onLogout: () => void }) {
   console.log("[App] ✓ rendering component");
-  const [viewMode] = useState(() => {
-    if (typeof window === "undefined") return "main";
-    return new URLSearchParams(window.location.search).get("view") ?? "main";
+  const [bootQuery] = useState(() => {
+    if (typeof window === "undefined") {
+      return {
+        viewMode: "main",
+        initialTab: null as Tab | null,
+      };
+    }
+    const params = new URLSearchParams(window.location.search);
+    return {
+      viewMode: params.get("view") ?? "main",
+      initialTab: asTabLabel(params.get("tab")),
+    };
   });
 
   const loadConfig = useConfigStore((s) => s.loadInitial);
@@ -139,9 +165,21 @@ function TerminalWorkspace({ onLogout }: { onLogout: () => void }) {
   const uiProfile = useThemeStore((s) => s.uiProfile);
   const colorway = useThemeStore((s) => s.colorway);
 
-  const [tab, setTab] = useState<Tab>("SETTINGS & LOGS");
+  const [tab, setTab] = useState<Tab>(bootQuery.initialTab ?? "SETTINGS & LOGS");
+  const [detachedTabs, setDetachedTabs] = useState<Set<Tab>>(() => new Set());
+  const [draggingTab, setDraggingTab] = useState<Tab | null>(null);
   const [priceChange, setPriceChange] = useState<number>(0);
   const prevPriceRef = useRef<number | null>(null);
+  const tabStripRef = useRef<HTMLElement | null>(null);
+  const tabSyncChannelRef = useRef<BroadcastChannel | null>(null);
+  const suppressClickTabRef = useRef<Tab | null>(null);
+  const dragStateRef = useRef<{
+    tab: Tab;
+    pointerId: number;
+    startX: number;
+    startY: number;
+    detached: boolean;
+  } | null>(null);
 
   const [updateState, setUpdateState] = useState<{ version: string; downloaded: boolean } | null>(null);
 
@@ -204,17 +242,276 @@ function TerminalWorkspace({ onLogout }: { onLogout: () => void }) {
   const sourceTone = source === "demo" ? "sim" : source === "replay" ? "replay" : "live";
   const hbLabel = hbTime === "—" ? "Waiting" : hbTime;
   const showTabIcons = uiProfile === "friendly";
+  const isDetachedView = bootQuery.viewMode === "detached-tab" && bootQuery.initialTab !== null;
+  const detachedViewTab = bootQuery.initialTab;
 
-  if (viewMode === "api-hub") {
+  const publishTabSync = useCallback((message: TabSyncMessage) => {
+    try {
+      tabSyncChannelRef.current?.postMessage(message);
+    } catch (error) {
+      console.warn("[App] tab sync publish failed", error);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof BroadcastChannel === "undefined") {
+      return;
+    }
+
+    const channel = new BroadcastChannel(TAB_SYNC_CHANNEL);
+    tabSyncChannelRef.current = channel;
+
+    channel.onmessage = (event: MessageEvent<TabSyncMessage>) => {
+      const payload = event.data;
+      if (!payload || typeof payload !== "object" || !("type" in payload)) {
+        return;
+      }
+
+      if (!isDetachedView && payload.type === "detached") {
+        setDetachedTabs((prev) => {
+          if (prev.has(payload.tab)) return prev;
+          const next = new Set(prev);
+          next.add(payload.tab);
+          return next;
+        });
+        return;
+      }
+
+      if (!isDetachedView && payload.type === "reattach") {
+        setDetachedTabs((prev) => {
+          if (!prev.has(payload.tab)) return prev;
+          const next = new Set(prev);
+          next.delete(payload.tab);
+          return next;
+        });
+        if (payload.activate) {
+          setTab(payload.tab);
+        }
+      }
+    };
+
+    return () => {
+      channel.close();
+      if (tabSyncChannelRef.current === channel) {
+        tabSyncChannelRef.current = null;
+      }
+    };
+  }, [isDetachedView]);
+
+  useEffect(() => {
+    if (isDetachedView && detachedViewTab) {
+      publishTabSync({ type: "detached", tab: detachedViewTab });
+    }
+  }, [isDetachedView, detachedViewTab, publishTabSync]);
+
+  const visibleTabs = useMemo(() => {
+    if (isDetachedView) {
+      return detachedViewTab ? TABS.filter((item) => item.label === detachedViewTab) : [];
+    }
+    return TABS.filter((item) => !detachedTabs.has(item.label));
+  }, [isDetachedView, detachedViewTab, detachedTabs]);
+
+  useEffect(() => {
+    if (isDetachedView) {
+      return;
+    }
+    if (detachedTabs.has(tab)) {
+      const firstVisible = TABS.find((item) => !detachedTabs.has(item.label))?.label;
+      if (firstVisible) {
+        setTab(firstVisible);
+      }
+    }
+  }, [isDetachedView, detachedTabs, tab]);
+
+  const clearDetachGesture = useCallback(() => {
+    setDraggingTab(null);
+    dragStateRef.current = null;
+  }, []);
+
+  const openDetachedTabWindow = useCallback(async (detachedTab: Tab) => {
+    if (!isDetachedView) {
+      setDetachedTabs((prev) => {
+        if (prev.has(detachedTab)) return prev;
+        const next = new Set(prev);
+        next.add(detachedTab);
+        return next;
+      });
+      publishTabSync({ type: "detached", tab: detachedTab });
+    }
+
+    try {
+      const opened = await window.cockpit?.tabs?.openWindow?.(detachedTab);
+      if (!opened && typeof window !== "undefined") {
+        const url = new URL(window.location.href);
+        url.searchParams.set("view", "detached-tab");
+        url.searchParams.set("tab", detachedTab);
+        window.open(url.toString(), "_blank", "noopener,noreferrer");
+      }
+    } catch (error) {
+      console.warn("[App] failed to open detached tab window", error);
+    }
+  }, [isDetachedView, publishTabSync]);
+
+  const reattachTabToMain = useCallback((targetTab: Tab, activate = true) => {
+    setDetachedTabs((prev) => {
+      if (!prev.has(targetTab)) return prev;
+      const next = new Set(prev);
+      next.delete(targetTab);
+      return next;
+    });
+    publishTabSync({ type: "reattach", tab: targetTab, activate });
+  }, [publishTabSync]);
+
+  const addDetachedTabBackAndClose = useCallback((targetTab: Tab) => {
+    reattachTabToMain(targetTab, true);
+    if (typeof window !== "undefined") {
+      window.close();
+    }
+  }, [reattachTabToMain]);
+
+  const onTabPointerDown = useCallback((event: React.PointerEvent<HTMLButtonElement>, nextTab: Tab) => {
+    if (event.button !== 0) return;
+
+    clearDetachGesture();
+    dragStateRef.current = {
+      tab: nextTab,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      detached: false,
+    };
+
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }, [clearDetachGesture]);
+
+  const onTabPointerMove = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
+    const state = dragStateRef.current;
+    if (!state || state.pointerId !== event.pointerId || state.detached) {
+      return;
+    }
+
+    const dx = event.clientX - state.startX;
+    const dy = event.clientY - state.startY;
+    const dragDistance = Math.hypot(dx, dy);
+    if (dragDistance < DETACH_DRAG_DISTANCE_PX) {
+      return;
+    }
+
+    if (draggingTab !== state.tab) {
+      setDraggingTab(state.tab);
+    }
+
+    const tabStrip = tabStripRef.current;
+    if (!tabStrip) {
+      return;
+    }
+    const rect = tabStrip.getBoundingClientRect();
+    const draggedOutsideStrip =
+      event.clientX < rect.left - DETACH_OUTSIDE_MARGIN_PX ||
+      event.clientX > rect.right + DETACH_OUTSIDE_MARGIN_PX ||
+      event.clientY < rect.top - DETACH_OUTSIDE_MARGIN_PX ||
+      event.clientY > rect.bottom + DETACH_OUTSIDE_MARGIN_PX;
+
+    if (!draggedOutsideStrip) {
+      return;
+    }
+
+    state.detached = true;
+    suppressClickTabRef.current = state.tab;
+
+    event.preventDefault();
+    event.stopPropagation();
+    void openDetachedTabWindow(state.tab);
+  }, [draggingTab, openDetachedTabWindow]);
+
+  const onTabPointerEnd = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
+    const state = dragStateRef.current;
+    if (!state || state.pointerId !== event.pointerId) {
+      return;
+    }
+
+    setDraggingTab(null);
+    dragStateRef.current = null;
+  }, []);
+
+  const renderTabContent = (activeTab: Tab) => {
+    return (
+      <>
+        {activeTab === "PANORAMA" && <Panorama />}
+        {activeTab === "CAM" && <Cam />}
+        {activeTab === "MACRO" && <Macro />}
+        {activeTab === "MICROSCAPE" && <Microscape />}
+        {activeTab === "STRUCTURE" && <Structure />}
+        {activeTab === "FLOW" && <Flow />}
+        {activeTab === "EXECUTE" && <Execute />}
+        {activeTab === "JOURNAL" && <Journal />}
+        {activeTab === "ECONOMIC CALENDAR" && <EconomicCalendar />}
+        {activeTab === "INTELLIGENCE" && <Intelligence />}
+        {activeTab === "CONGRESS ACTIVITY" && <CongressActivity />}
+        {activeTab === "TERMINAL AI" && <TerminalAI />}
+        {activeTab === "SUPPLY CHAIN" && <SupplyChainMindMap />}
+        {activeTab === "DATA VAULT" && <DataVault />}
+        {activeTab === "GWMD MAP" && <GwmdMapPage />}
+        {activeTab === "SETTINGS & LOGS" && <SettingsLogs />}
+      </>
+    );
+  };
+
+  if (bootQuery.viewMode === "api-hub") {
     return <ApiHub />;
   }
 
-  if (viewMode === "smart-routing") {
+  if (bootQuery.viewMode === "smart-routing") {
     return <SmartRoutingOverview />;
   }
 
-  if (viewMode === "global-map") {
+  if (bootQuery.viewMode === "global-map") {
     return <GlobalSupplyChainMap />;
+  }
+
+  if (
+    bootQuery.viewMode === "gwmd-wall" ||
+    bootQuery.viewMode === "gwmd-analyst" ||
+    bootQuery.viewMode === "gwmd-mirror"
+  ) {
+    return (
+      <div
+        style={{
+          width: "100vw",
+          height: "100vh",
+          minHeight: "100vh",
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden",
+        }}
+      >
+        <GwmdMapPage />
+      </div>
+    );
+  }
+
+  if (isDetachedView && detachedViewTab) {
+    return (
+      <div className={`appFrame theme-${uiProfile}`}>
+        <div className="chrome detachedWindowChrome">
+          <div className="detachedTabBar">
+            <div className="detachedTabTitle">Detached Tab: {detachedViewTab}</div>
+            <button
+              className="tab detachedTabAction"
+              type="button"
+              onClick={() => addDetachedTabBackAndClose(detachedViewTab)}
+            >
+              Add Back To Main
+            </button>
+          </div>
+          <main className="contentShell">
+            <div className="contentPanel">
+              {renderTabContent(detachedViewTab)}
+            </div>
+          </main>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -327,41 +624,48 @@ function TerminalWorkspace({ onLogout }: { onLogout: () => void }) {
           </div>
         </header>
 
-        <nav className="tabs proTabs">
-          {TABS.map((tabConfig) => {
+        <nav className="tabs proTabs" ref={tabStripRef}>
+          {visibleTabs.map((tabConfig) => {
             const active = tabConfig.label === tab;
+            const dragging = draggingTab === tabConfig.label;
             return (
               <button
                 key={tabConfig.label}
-                onClick={() => setTab(tabConfig.label)}
-                className={`tab ${active ? "active" : ""}`}
+                onPointerDown={(event) => onTabPointerDown(event, tabConfig.label)}
+                onPointerMove={onTabPointerMove}
+                onPointerUp={onTabPointerEnd}
+                onPointerCancel={onTabPointerEnd}
+                onLostPointerCapture={onTabPointerEnd}
+                onClick={() => {
+                  if (suppressClickTabRef.current === tabConfig.label) {
+                    suppressClickTabRef.current = null;
+                    return;
+                  }
+                  setTab(tabConfig.label);
+                }}
+                className={`tab ${active ? "active" : ""} ${dragging ? "dragging" : ""}`}
               >
                 {showTabIcons && <span className="tabIcon">{tabConfig.icon}</span>}
                 <span className="tabLabel">{tabConfig.label}</span>
               </button>
             );
           })}
+          {Array.from(detachedTabs).map((detachedTabLabel) => (
+            <button
+              key={`restore-${detachedTabLabel}`}
+              className="tab tabDetachedRestore"
+              type="button"
+              onClick={() => reattachTabToMain(detachedTabLabel, true)}
+              title={`Add ${detachedTabLabel} back`}
+            >
+              + {detachedTabLabel}
+            </button>
+          ))}
         </nav>
 
         <main className="contentShell">
           <div className="contentPanel">
-            {tab === "PANORAMA" && <Panorama />}
-            {tab === "CAM" && <Cam />}
-            {tab === "MACRO" && <Macro />}
-            {tab === "MICROSCAPE" && <Microscape />}
-            {tab === "STRUCTURE" && <Structure />}
-            {tab === "FLOW" && <Flow />}
-            {tab === "EXECUTE" && <Execute />}
-            {tab === "JOURNAL" && <Journal />}
-            {tab === "ECONOMIC CALENDAR" && <EconomicCalendar />}
-            {tab === "INTELLIGENCE" && <Intelligence />}
-            {tab === "CONGRESS ACTIVITY" && <CongressActivity />}
-            {tab === "LOCAL AI" && <LocalAI />}
-            {tab === "SUPPLY CHAIN" && <SupplyChainMindMap />}
-            {tab === "GWMD MAP" && <GwmdMapPage />}
-            {/* {tab === "OIL TANKERS" && <OilTankerMap />} */}
-            {/* {tab === "CARGO FLIGHTS" && <CargoFlightsMap />} */}
-            {tab === "SETTINGS & LOGS" && <SettingsLogs />}
+            {renderTabContent(tab)}
           </div>
         </main>
       </div>

@@ -1,19 +1,22 @@
-﻿export * from './env';
-export * from './logger';
-export * from './adapters';
-export * from './replay';
-export * from './publicFlow';
-export * from './congress';
-export * from './supplyChain';
-export * from './supplyChainGraph';
-export * from './supplyChainSimulation';
-export * from './maritime';
-export * from './aviation';
-export * from './economicCalendar.ts';
-export * from './economicCalendarAdapters';
-export * from './economicCalendarService';
-export * from './strategy';
-export * from './auth';
+﻿export * from "./env.js";
+export * from "./logger.js";
+export * from "./adapters.js";
+export * from "./replay.js";
+export * from "./publicFlow/index.js";
+export * from "./congress/index.js";
+export * from "./supplyChain.js";
+export * from "./supplyChainGraph.js";
+export * from "./supplyChainSimulation.js";
+export * from "./maritime.js";
+export * from "./aviation.js";
+export * from "./economicCalendar.js";
+export * from "./economicCalendarAdapters.js";
+export * from "./economicCalendarService.js";
+export * from "./strategy.js";
+export * from "./auth.js";
+export * from "./graphMemory.js";
+export * from "./tedIntel.js";
+export * from "./exposureBrief.js";
 
 // Import both and export with clear names to avoid collisions
 import {
@@ -23,7 +26,7 @@ import {
   TradePrintSchema,
   type MarketDataEvent,
   MarketDataEventSchema,
-} from './marketData';
+} from "./marketData.js";
 import {
   BarSchema as SimpleBarSchema,
   QuoteSchema as IndicatorQuoteSchema,
@@ -31,7 +34,7 @@ import {
   type Quote,
   type IndicatorUpdate,
   IndicatorUpdateSchema,
-} from './indicators';
+} from "./indicators.js";
 
 // Re-export with distinct names
 export {
@@ -60,7 +63,7 @@ export type {
   ReplayStateEvent,
   AppEvent,
   AppEventBatch,
-} from './events';
+} from "./events.js";
 
 export {
   eventSourceSchema,
@@ -71,7 +74,7 @@ export {
   appEventSchema,
   appEventBatchSchema,
   validateAppEventBatch,
-} from './events';
+} from "./events.js";
 
-export type { StreamSource, StreamStatus } from './streaming';
-export { IPC, LEGACY_IPC_ALIASES } from './streaming';
+export type { StreamSource, StreamStatus } from "./streaming.js";
+export { IPC, LEGACY_IPC_ALIASES } from "./streaming.js";

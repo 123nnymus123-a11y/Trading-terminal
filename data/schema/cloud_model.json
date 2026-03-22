@@ -1,0 +1,74 @@
+{
+  "version": "1.0.0",
+  "description": "Cloud-ready graph enrichment schema contract",
+  "tables": {
+    "entity": {
+      "pk": "id",
+      "fields": [
+        "id",
+        "canonical_name",
+        "entity_type",
+        "zone",
+        "validation_status",
+        "confidence_score",
+        "freshness_score",
+        "first_seen_at",
+        "last_seen_at",
+        "expires_at",
+        "source_type",
+        "source_ref",
+        "source_title",
+        "source_url",
+        "ai_inferred",
+        "metadata_json",
+        "updated_at"
+      ]
+    },
+    "edge": {
+      "pk": "id",
+      "fields": [
+        "id",
+        "from_entity_id",
+        "to_entity_id",
+        "relation_type",
+        "zone",
+        "validation_status",
+        "confidence_score",
+        "freshness_score",
+        "first_seen_at",
+        "last_seen_at",
+        "expires_at",
+        "source_type",
+        "source_ref",
+        "ai_inferred",
+        "metadata_json",
+        "updated_at"
+      ]
+    },
+    "evidence": {
+      "pk": "evidence_id",
+      "fields": [
+        "evidence_id",
+        "source_type",
+        "source_reference",
+        "source_title",
+        "source_url",
+        "snippet",
+        "extracted_summary",
+        "extraction_method",
+        "extracted_at",
+        "fingerprint_hash",
+        "quality_score"
+      ]
+    }
+  },
+  "sync": {
+    "required_conflict_keys": [
+      "updated_at",
+      "zone",
+      "validation_status"
+    ],
+    "recommended_conflict_strategy": "latest_timestamp",
+    "offline_queue_table": "graph_enrichment_sync_queue"
+  }
+}

@@ -15,7 +15,11 @@ export type SupplyChainRiskType =
   | "cyber"
   | "other";
 
-export type SupplyChainEntityType = "company" | "facility" | "infrastructure" | "region";
+export type SupplyChainEntityType =
+  | "company"
+  | "facility"
+  | "infrastructure"
+  | "region";
 
 export type SupplyChainTier = "direct" | "indirect" | "systemic";
 
@@ -133,7 +137,7 @@ export interface RelationCategory {
   color: string;
   /** Companies in this category */
   companies: CompanyNode[];
-  
+
   // Supply chain enrichment data
   /** Average health score for all companies in category */
   categoryHealthScore?: number;
@@ -174,6 +178,7 @@ export interface SupplyChainGraphEdge {
   explanation?: string;
   source?: string;
   evidence?: SupplyChainEvidence[];
+  metadata?: Record<string, unknown>;
 }
 
 export interface SupplyChainGraph {

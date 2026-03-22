@@ -5,7 +5,7 @@
  * Call validateConfig() on startup to catch missing vars before any window opens.
  */
 
-export type CloudLlmProvider = "openai";
+export type CloudLlmProvider = "openai" | "gemini";
 
 export interface CloudLlmConfig {
   provider: CloudLlmProvider;
@@ -18,16 +18,14 @@ export interface CloudLlmConfig {
 export function getProvider(): CloudLlmProvider {
   const raw = process.env.CLOUD_AI_PROVIDER?.trim().toLowerCase();
   if (!raw) {
+    return "openai";
+  }
+  if (raw !== "openai" && raw !== "gemini") {
     throw new Error(
-      'CLOUD_AI_PROVIDER is not set. Add CLOUD_AI_PROVIDER=openai to your .env.local file.',
+      `CLOUD_AI_PROVIDER="${raw}" is not supported. Use "openai" or "gemini".`,
     );
   }
-  if (raw !== "openai") {
-    throw new Error(
-      `CLOUD_AI_PROVIDER="${raw}" is not supported. Only "openai" is accepted at this time.`,
-    );
-  }
-  return "openai";
+  return raw;
 }
 
 export function getApiKey(provider: CloudLlmProvider = getProvider()): string {
@@ -35,8 +33,19 @@ export function getApiKey(provider: CloudLlmProvider = getProvider()): string {
     const key = process.env.OPENAI_API_KEY?.trim();
     if (!key) {
       throw new Error(
-        'OPENAI_API_KEY is not set. Get your key at https://platform.openai.com/api-keys ' +
-          'and add OPENAI_API_KEY=sk-proj-... to your .env.local file.',
+        "OPENAI_API_KEY is not set. Get your key at https://platform.openai.com/api-keys " +
+          "and add OPENAI_API_KEY=sk-proj-... to your .env.local file.",
+      );
+    }
+    return key;
+  }
+  if (provider === "gemini") {
+    const key =
+      process.env.GEMINI_API_KEY?.trim() ||
+      process.env.GOOGLE_GEMINI_API_KEY?.trim();
+    if (!key) {
+      throw new Error(
+        "GEMINI_API_KEY is not set. Add GEMINI_API_KEY=... (or GOOGLE_GEMINI_API_KEY) to your .env.local file.",
       );
     }
     return key;
@@ -47,6 +56,13 @@ export function getApiKey(provider: CloudLlmProvider = getProvider()): string {
 export function getModel(provider: CloudLlmProvider = getProvider()): string {
   if (provider === "openai") {
     return process.env.OPENAI_MODEL?.trim() || "gpt-4o";
+  }
+  if (provider === "gemini") {
+    return (
+      process.env.GEMINI_MODEL?.trim() ||
+      process.env.GOOGLE_GEMINI_MODEL?.trim() ||
+      "gemini-2.5-pro"
+    );
   }
   throw new Error(`Unknown provider: ${provider}`);
 }
@@ -72,7 +88,11 @@ export function validateConfig(): void {
 /**
  * Returns a safe summary without exposing the API key.
  */
-export function getConfigSummary(): { provider: string; model: string; keyPresent: boolean } {
+export function getConfigSummary(): {
+  provider: string;
+  model: string;
+  keyPresent: boolean;
+} {
   try {
     const cfg = getConfig();
     return { provider: cfg.provider, model: cfg.model, keyPresent: true };

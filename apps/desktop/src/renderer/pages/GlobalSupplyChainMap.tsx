@@ -126,6 +126,15 @@ export default function GlobalSupplyChainMap() {
           includeHypothesis={includeHypothesis}
           hops={hops}
           minEdgeWeight={minEdgeWeight}
+          intelligenceSettings={{
+            upstreamDepth: 2,
+            downstreamDepth: 2,
+            totalVisibleTiers: 3,
+            relationScope: "both",
+            showFacilities: true,
+            showRoutes: true,
+            confidenceThreshold: 0.45,
+          }}
           globalTickers={globalTickers}
           gwmdFilters={gwmdFilters}
           onGwmdFiltersChange={setGwmdFilters}

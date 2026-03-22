@@ -1,4 +1,4 @@
-import type { SupplyChainGraph, SupplyChainGraphEdge } from "./supplyChain";
+import type { SupplyChainGraph, SupplyChainGraphEdge } from "./supplyChain.js";
 
 export interface ShockSimulationParams {
   severity: number; // 0..1
@@ -59,16 +59,27 @@ function clampWeight(raw: number, criticality?: number): number {
   return 0.25;
 }
 
-function buildAdjacency(graph: SupplyChainGraph, includeKinds?: SupplyChainGraphEdge["kind"][]) {
-  const edges = includeKinds && includeKinds.length > 0
-    ? graph.edges.filter((edge) => includeKinds.includes(edge.kind))
-    : graph.edges;
+function buildAdjacency(
+  graph: SupplyChainGraph,
+  includeKinds?: SupplyChainGraphEdge["kind"][],
+) {
+  const edges =
+    includeKinds && includeKinds.length > 0
+      ? graph.edges.filter((edge) => includeKinds.includes(edge.kind))
+      : graph.edges;
 
-  const adjacency = new Map<string, Array<{ edge: SupplyChainGraphEdge; weight: number }>>();
-  const reverseAdjacency = new Map<string, Array<{ edge: SupplyChainGraphEdge; weight: number }>>();
+  const adjacency = new Map<
+    string,
+    Array<{ edge: SupplyChainGraphEdge; weight: number }>
+  >();
+  const reverseAdjacency = new Map<
+    string,
+    Array<{ edge: SupplyChainGraphEdge; weight: number }>
+  >();
 
   edges.forEach((edge) => {
-    const weight = normalizeEdgeWeight(edge) * Math.max(0.1, edge.confidence ?? 0.7);
+    const weight =
+      normalizeEdgeWeight(edge) * Math.max(0.1, edge.confidence ?? 0.7);
     if (!adjacency.has(edge.from)) adjacency.set(edge.from, []);
     if (!reverseAdjacency.has(edge.to)) reverseAdjacency.set(edge.to, []);
     adjacency.get(edge.from)!.push({ edge, weight });
@@ -78,7 +89,12 @@ function buildAdjacency(graph: SupplyChainGraph, includeKinds?: SupplyChainGraph
   return { adjacency, reverseAdjacency, edges };
 }
 
-function simulate(graph: SupplyChainGraph, failedNodeIds: string[], params: ShockSimulationParams, weightOverride?: (edge: SupplyChainGraphEdge) => number) {
+function simulate(
+  graph: SupplyChainGraph,
+  failedNodeIds: string[],
+  params: ShockSimulationParams,
+  weightOverride?: (edge: SupplyChainGraphEdge) => number,
+) {
   const severity = Math.min(1, Math.max(0, params.severity));
   const damping = Math.min(1, Math.max(0, params.damping));
   const steps = params.maxSteps ?? 6;
@@ -109,7 +125,9 @@ function simulate(graph: SupplyChainGraph, failedNodeIds: string[], params: Shoc
   }
 
   const impactedEdgeIds = edges
-    .filter((edge) => (scores[edge.from] ?? 0) > 0 || (scores[edge.to] ?? 0) > 0)
+    .filter(
+      (edge) => (scores[edge.from] ?? 0) > 0 || (scores[edge.to] ?? 0) > 0,
+    )
     .map((edge) => edge.id);
 
   return { scores, impactedEdgeIds };
@@ -118,7 +136,7 @@ function simulate(graph: SupplyChainGraph, failedNodeIds: string[], params: Shoc
 export function runShockSimulation(
   graph: SupplyChainGraph,
   failedNodeIds: string[],
-  params: ShockSimulationParams
+  params: ShockSimulationParams,
 ): ShockSimulationResult {
   const base = simulate(graph, failedNodeIds, params);
   const impacts: Record<string, ShockImpactResult> = {};
@@ -131,12 +149,20 @@ export function runShockSimulation(
   });
 
   const minRun = simulate(graph, failedNodeIds, params, (edge) => {
-    if (edge.weightRange) return clampWeight(edge.weightRange.min, edge.criticality) * Math.max(0.1, edge.confidence ?? 0.7);
+    if (edge.weightRange)
+      return (
+        clampWeight(edge.weightRange.min, edge.criticality) *
+        Math.max(0.1, edge.confidence ?? 0.7)
+      );
     return normalizeEdgeWeight(edge) * Math.max(0.1, edge.confidence ?? 0.7);
   });
 
   const maxRun = simulate(graph, failedNodeIds, params, (edge) => {
-    if (edge.weightRange) return clampWeight(edge.weightRange.max, edge.criticality) * Math.max(0.1, edge.confidence ?? 0.7);
+    if (edge.weightRange)
+      return (
+        clampWeight(edge.weightRange.max, edge.criticality) *
+        Math.max(0.1, edge.confidence ?? 0.7)
+      );
     return normalizeEdgeWeight(edge) * Math.max(0.1, edge.confidence ?? 0.7);
   });
 
@@ -164,12 +190,18 @@ export function findTopDependencyPaths(
   sourceId: string,
   targetId: string | null,
   limit = 5,
-  maxDepth = 3
+  maxDepth = 3,
 ): ShockPath[] {
   const { adjacency } = buildAdjacency(graph);
   const results: ShockPath[] = [];
 
-  function dfs(current: string, depth: number, score: number, steps: ShockPathStep[], visited: Set<string>) {
+  function dfs(
+    current: string,
+    depth: number,
+    score: number,
+    steps: ShockPathStep[],
+    visited: Set<string>,
+  ) {
     if (depth > maxDepth) return;
     if (targetId && current === targetId && steps.length > 0) {
       results.push({ score, steps: [...steps] });

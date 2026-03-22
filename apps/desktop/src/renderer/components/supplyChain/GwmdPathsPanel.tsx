@@ -17,6 +17,7 @@ interface Props {
     relation: string;
     showFlows: boolean;
     showOnlyImpacted: boolean;
+    hops?: number;
   };
   onSelectNode: (nodeId: string) => void;
   onSelectEdge: (edgeId: string) => void;

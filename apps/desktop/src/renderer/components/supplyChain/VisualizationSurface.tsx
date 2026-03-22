@@ -3,6 +3,7 @@ import type { MindMapData, SupplyChainGraph, SupplyChainGraphEdge, SupplyChainGr
 import { ensureCanonicalStructures } from "@tc/shared/supplyChainGraph";
 import { findTopDependencyPaths } from "@tc/shared/supplyChainSimulation";
 import type { SupplyChainViewMode } from "../../store/supplyChainStore";
+import { Transitions } from "./tokens";
 import HierarchicalTree from "./HierarchicalTree";
 import FlowDiagram from "./FlowDiagram";
 import RadialEcosystem from "./RadialEcosystem";
@@ -28,6 +29,15 @@ export interface VisualizationSurfaceProps {
   includeHypothesis: boolean;
   hops: number;
   minEdgeWeight: number;
+  intelligenceSettings: {
+    upstreamDepth: number;
+    downstreamDepth: number;
+    totalVisibleTiers: number;
+    relationScope: "suppliers" | "customers" | "both";
+    showFacilities: boolean;
+    showRoutes: boolean;
+    confidenceThreshold: number;
+  };
   globalTickers: string[];
   gwmdFilters: {
     region: string;
@@ -50,6 +60,8 @@ const surfaceStyle: React.CSSProperties = {
   borderRadius: 16,
   overflow: "hidden",
   overscrollBehavior: "contain",
+  display: "flex",
+  flexDirection: "column",
 };
 
 const fullscreenSurfaceStyle: React.CSSProperties = {
@@ -118,11 +130,76 @@ function filterByHops(graph: SupplyChainGraph, focalNodeIds: string[], hops: num
   return { nodes, edges };
 }
 
+function filterByDirectionalDepth(
+  graph: SupplyChainGraph,
+  focalNodeIds: string[],
+  settings: VisualizationSurfaceProps["intelligenceSettings"]
+) {
+  const maxTier = Math.max(1, settings.totalVisibleTiers);
+  const upstreamDepth = Math.max(0, Math.min(settings.upstreamDepth, maxTier));
+  const downstreamDepth = Math.max(0, Math.min(settings.downstreamDepth, maxTier));
+
+  const incoming = new Map<string, string[]>();
+  const outgoing = new Map<string, string[]>();
+  graph.nodes.forEach((node) => {
+    incoming.set(node.id, []);
+    outgoing.set(node.id, []);
+  });
+  graph.edges.forEach((edge) => {
+    incoming.get(edge.to)?.push(edge.from);
+    outgoing.get(edge.from)?.push(edge.to);
+  });
+
+  const visited = new Set<string>(focalNodeIds);
+
+  const expand = (adjacency: Map<string, string[]>, depthLimit: number) => {
+    let frontier = new Set<string>(focalNodeIds);
+    for (let depth = 0; depth < depthLimit; depth += 1) {
+      const next = new Set<string>();
+      frontier.forEach((nodeId) => {
+        (adjacency.get(nodeId) ?? []).forEach((neighborId) => {
+          if (!visited.has(neighborId)) {
+            visited.add(neighborId);
+            next.add(neighborId);
+          }
+        });
+      });
+      frontier = next;
+      if (frontier.size === 0) break;
+    }
+  };
+
+  if (settings.relationScope !== "customers") {
+    expand(incoming, upstreamDepth);
+  }
+  if (settings.relationScope !== "suppliers") {
+    expand(outgoing, downstreamDepth);
+  }
+
+  const nodes = graph.nodes.filter((node) => visited.has(node.id));
+  const nodeSet = new Set(nodes.map((node) => node.id));
+  const edges = graph.edges.filter((edge) => nodeSet.has(edge.from) && nodeSet.has(edge.to));
+  return { nodes, edges };
+}
+
 export default function VisualizationSurface(props: VisualizationSurfaceProps) {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const canonical = ensureCanonicalStructures(props.data);
   const baseGraph: SupplyChainGraph = canonical.graph!;
   const riskLens = canonical.riskLens ?? [];
+  const nodeById = new Map(baseGraph.nodes.map((node) => [node.id, node]));
+  const supplierKinds = new Set<SupplyChainGraphEdge["kind"]>([
+    "supplies",
+    "manufactures",
+    "assembles",
+    "transports",
+    "supplier",
+  ]);
+  const customerKinds = new Set<SupplyChainGraphEdge["kind"]>([
+    "customer",
+    "distributes",
+  ]);
+  const routeKinds = new Set<SupplyChainGraphEdge["kind"]>(["transports", "distributes"]);
   const filteredEdges = baseGraph.edges.filter((edge) => {
     const isHypothesis = edge.evidenceStatus === "hypothesis";
     if (props.strictMode) {
@@ -131,6 +208,25 @@ export default function VisualizationSurface(props: VisualizationSurfaceProps) {
       }
     } else if (!props.includeHypothesis && isHypothesis) {
       return false;
+    }
+    if ((edge.confidence ?? 0) < props.intelligenceSettings.confidenceThreshold) {
+      return false;
+    }
+    if (props.intelligenceSettings.relationScope === "suppliers" && !supplierKinds.has(edge.kind)) {
+      return false;
+    }
+    if (props.intelligenceSettings.relationScope === "customers" && !customerKinds.has(edge.kind)) {
+      return false;
+    }
+    if (!props.intelligenceSettings.showRoutes && routeKinds.has(edge.kind)) {
+      return false;
+    }
+    if (!props.intelligenceSettings.showFacilities) {
+      const fromNode = nodeById.get(edge.from);
+      const toNode = nodeById.get(edge.to);
+      const fromFacility = fromNode?.entityType === "facility" || fromNode?.entityType === "infrastructure";
+      const toFacility = toNode?.entityType === "facility" || toNode?.entityType === "infrastructure";
+      if (fromFacility || toFacility) return false;
     }
     const weight = normalizedEdgeWeight(edge);
     return weight >= props.minEdgeWeight;
@@ -142,10 +238,12 @@ export default function VisualizationSurface(props: VisualizationSurfaceProps) {
   });
   const focalNodeIds = resolveFocalNodeIds(baseGraph, props.globalTickers, canonical.centerNodeId ?? canonical.centerTicker);
   focalNodeIds.forEach((id) => nodeIds.add(id));
-  const graph = filterByHops({
+  const scopedGraph = {
     nodes: baseGraph.nodes.filter((node) => nodeIds.has(node.id)),
     edges: filteredEdges,
-  }, focalNodeIds, props.hops);
+  };
+  const directionalGraph = filterByDirectionalDepth(scopedGraph, focalNodeIds, props.intelligenceSettings);
+  const graph = filterByHops(directionalGraph, focalNodeIds, props.hops);
 
   const selectedNode: SupplyChainGraphNode | null = graph.nodes.find((n) => n.id === props.selectedNodeId) ?? null;
   const selectedEdge: SupplyChainGraphEdge | null = graph.edges.find((e) => e.id === props.selectedEdgeId) ?? null;
@@ -229,6 +327,7 @@ export default function VisualizationSurface(props: VisualizationSurfaceProps) {
           onFiltersChange={props.onGwmdFiltersChange}
           onSelectNode={props.onSelectNode}
           onSelectEdge={props.onSelectEdge}
+          globalTickers={props.globalTickers}
         />
       )}
       {props.viewMode === "risk" && (
@@ -358,32 +457,139 @@ export default function VisualizationSurface(props: VisualizationSurfaceProps) {
 
   return (
     <div style={surfaceStyle}>
-      <button
-        onClick={() => setIsFullscreen(true)}
+      {/* Mode Switcher Pill - Top Center */}
+      <ModeSwitch currentMode={props.viewMode} />
+      
+      {/* Main Visualization Area */}
+      <div style={{ flex: 1, position: "relative", overflow: "hidden" }}>
+        {isEmpty ? <EmptyState message={emptyMessage} /> : visualizationContent}
+      </div>
+
+      {/* Floating Bottom Stats Bar - Not Overlaid */}
+      <div
         style={{
-          position: "absolute",
-          top: 12,
-          right: 12,
-          zIndex: 10,
-          padding: "8px 12px",
-          background: "rgba(59,130,246,0.2)",
-          border: "1px solid rgba(96,165,250,0.35)",
-          borderRadius: "8px",
-          color: "#ffffff",
-          fontSize: "12px",
-          fontWeight: 600,
-          cursor: "pointer",
-          backdropFilter: "blur(8px)",
-          transition: "all 0.2s ease",
+          padding: "12px 24px",
+          background: "linear-gradient(180deg, rgba(15,23,42,0) 0%, rgba(10,14,26,0.7) 100%)",
+          borderTop: "1px solid rgba(148,163,184,0.1)",
           display: "flex",
+          justifyContent: "space-between",
           alignItems: "center",
-          gap: 6,
+          fontSize: 12,
+          color: "#94a3b8",
+          transition: Transitions.fast,
         }}
-        title="Fullscreen"
       >
-        ⤢ Fullscreen
-      </button>
-      {isEmpty ? <EmptyState message={emptyMessage} /> : visualizationContent}
+        <div style={{ display: "flex", gap: 24, alignItems: "center" }}>
+          <span>
+            <strong style={{ color: "#e5e7eb" }}>{graph.nodes.length}</strong> companies
+          </span>
+          <span>
+            <strong style={{ color: "#e5e7eb" }}>{graph.edges.length}</strong> connections
+          </span>
+          {props.simulation.failedNodeIds.length > 0 && (
+            <span style={{ color: "#fca5a5" }}>
+              <strong style={{ color: "#fecaca" }}>{props.simulation.failedNodeIds.length}</strong> failures
+            </span>
+          )}
+        </div>
+        <button
+          onClick={() => setIsFullscreen(true)}
+          style={{
+            padding: "8px 14px",
+            background: "rgba(59,130,246,0.15)",
+            border: "1px solid rgba(96,165,250,0.3)",
+            borderRadius: "6px",
+            color: "#bfdbfe",
+            fontSize: "12px",
+            fontWeight: 600,
+            cursor: "pointer",
+            transition: Transitions.fast,
+          }}
+          onMouseEnter={(e) => {
+            (e.target as HTMLButtonElement).style.background = "rgba(59,130,246,0.25)";
+            (e.target as HTMLButtonElement).style.borderColor = "rgba(96,165,250,0.5)";
+          }}
+          onMouseLeave={(e) => {
+            (e.target as HTMLButtonElement).style.background = "rgba(59,130,246,0.15)";
+            (e.target as HTMLButtonElement).style.borderColor = "rgba(96,165,250,0.3)";
+          }}
+          title="Expand to fullscreen"
+        >
+          ⤢ Fullscreen
+        </button>
+      </div>
+    </div>
+  );
+}
+
+interface ModeSwitchProps {
+  currentMode: SupplyChainViewMode;
+}
+
+function ModeSwitch({ currentMode }: ModeSwitchProps) {
+  const modes: Array<{ id: SupplyChainViewMode; label: string; icon: string }> = [
+    { id: "hierarchy", label: "Hierarchy", icon: "⊟" },
+    { id: "flow", label: "Flow", icon: "⇄" },
+    { id: "impact", label: "Impact", icon: "◉" },
+    { id: "radial", label: "Radial", icon: "⊙" },
+    { id: "global", label: "GWMD", icon: "🌐" },
+    { id: "risk", label: "Risk", icon: "⚠" },
+    { id: "shock", label: "Paths", icon: "🔴" },
+  ];
+
+  return (
+    <div
+      style={{
+        padding: "12px 16px",
+        display: "flex",
+        justifyContent: "center",
+        alignItems: "center",
+        gap: 8,
+        backgroundColor: "rgba(15, 23, 42, 0.4)",
+        borderBottom: "1px solid rgba(148,163,184,0.1)",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          gap: 4,
+          backgroundColor: "rgba(15, 23, 42, 0.6)",
+          backdropFilter: "blur(8px)",
+          borderRadius: "999px",
+          padding: "4px",
+          border: "1px solid rgba(148,163,184,0.15)",
+        }}
+      >
+        {modes.map((mode) => (
+          <div
+            key={mode.id}
+            style={{
+              padding: "6px 12px",
+              borderRadius: "999px",
+              fontSize: "11px",
+              fontWeight: 600,
+              color: currentMode === mode.id ? "#e2e8f0" : "#64748b",
+              backgroundColor:
+                currentMode === mode.id
+                  ? "rgba(59, 130, 246, 0.25)"
+                  : "transparent",
+              border:
+                currentMode === mode.id
+                  ? "1px solid rgba(59, 130, 246, 0.4)"
+                  : "none",
+              transition: Transitions.fast,
+              cursor: "default",
+              whiteSpace: "nowrap",
+              display: "flex",
+              alignItems: "center",
+              gap: 4,
+            }}
+          >
+            <span>{mode.icon}</span>
+            {mode.label}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

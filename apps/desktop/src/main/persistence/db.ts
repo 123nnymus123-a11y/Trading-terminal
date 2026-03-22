@@ -5,7 +5,7 @@ import { app } from "electron";
 
 const DEFAULT_BACKEND_URL = "http://79.76.40.72:8787";
 const BASELINE_SCHEMA_VERSION = 0;
-const LATEST_SCHEMA_VERSION = 1;
+const LATEST_SCHEMA_VERSION = 2;
 
 let db: Database.Database | null = null;
 
@@ -515,25 +515,36 @@ function ensureSchemaVersionTable(db: Database.Database): void {
 }
 
 function getCurrentSchemaVersion(db: Database.Database): number | null {
-  const row = db.prepare("SELECT MAX(version) AS version FROM schema_version").get() as
-    | { version: number | null }
-    | undefined;
+  const row = db
+    .prepare("SELECT MAX(version) AS version FROM schema_version")
+    .get() as { version: number | null } | undefined;
   if (!row || row.version === null) return null;
   return row.version;
 }
 
 function recordSchemaVersion(db: Database.Database, version: number): void {
-  db.prepare("INSERT OR IGNORE INTO schema_version (version) VALUES (?)").run(version);
+  db.prepare("INSERT OR IGNORE INTO schema_version (version) VALUES (?)").run(
+    version,
+  );
 }
 
 function runPendingMigrations(db: Database.Database): void {
-  const migrations: Array<{ version: number; up: (database: Database.Database) => void }> = [
+  const migrations: Array<{
+    version: number;
+    up: (database: Database.Database) => void;
+  }> = [
     {
       version: 1,
       up: (database) => {
         ensureDisclosureEventTickerNullable(database);
         ensureAppSettingsDefaults(database);
         ensureAiConfigDefaults(database);
+      },
+    },
+    {
+      version: 2,
+      up: (database) => {
+        ensureGraphEnrichmentTables(database);
       },
     },
   ];
@@ -552,7 +563,9 @@ function runPendingMigrations(db: Database.Database): void {
   }
 
   if (current < LATEST_SCHEMA_VERSION) {
-    throw new Error(`Failed to migrate schema to v${LATEST_SCHEMA_VERSION}. Current: v${current}`);
+    throw new Error(
+      `Failed to migrate schema to v${LATEST_SCHEMA_VERSION}. Current: v${current}`,
+    );
   }
 }
 
@@ -605,7 +618,10 @@ function ensureAiConfigDefaults(db: Database.Database): void {
 }
 
 function ensureDisclosureEventTickerNullable(db: Database.Database): void {
-  const columns = db.prepare("PRAGMA table_info('disclosure_event')").all() as { name: string; notnull: number }[];
+  const columns = db.prepare("PRAGMA table_info('disclosure_event')").all() as {
+    name: string;
+    notnull: number;
+  }[];
   const ticker = columns.find((c) => c.name === "ticker");
 
   if (ticker && ticker.notnull === 1) {
@@ -652,4 +668,185 @@ function ensureDisclosureEventTickerNullable(db: Database.Database): void {
       `);
     })();
   }
+}
+
+function ensureGraphEnrichmentTables(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS graph_enrichment_entity (
+      id TEXT PRIMARY KEY,
+      canonical_name TEXT NOT NULL,
+      entity_type TEXT NOT NULL,
+      zone TEXT NOT NULL CHECK (zone IN ('candidate','validation','production')),
+      source_type TEXT NOT NULL,
+      source_ref TEXT NOT NULL,
+      source_title TEXT,
+      source_url TEXT,
+      ai_inferred INTEGER NOT NULL DEFAULT 0,
+      confidence_score REAL NOT NULL CHECK (confidence_score >= 0 AND confidence_score <= 1),
+      freshness_score REAL NOT NULL CHECK (freshness_score >= 0 AND freshness_score <= 1),
+      confidence_band TEXT NOT NULL CHECK (confidence_band IN ('very_low','low','medium','high','very_high')),
+      first_seen_at TEXT NOT NULL,
+      last_seen_at TEXT NOT NULL,
+      expires_at TEXT,
+      validation_status TEXT NOT NULL CHECK (validation_status IN ('unvalidated','pending_validation','validated','contradicted','rejected')),
+      validation_method TEXT,
+      validator_type TEXT CHECK (validator_type IN ('human','rule','model','hybrid')),
+      contradiction_flag INTEGER NOT NULL DEFAULT 0,
+      stale_flag INTEGER NOT NULL DEFAULT 0,
+      promotion_eligible INTEGER NOT NULL DEFAULT 0,
+      metadata_json TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS graph_enrichment_alias (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      entity_id TEXT NOT NULL,
+      alias TEXT NOT NULL,
+      alias_type TEXT NOT NULL,
+      source TEXT,
+      created_at TEXT NOT NULL,
+      UNIQUE(entity_id, alias),
+      FOREIGN KEY (entity_id) REFERENCES graph_enrichment_entity(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS graph_enrichment_edge (
+      id TEXT PRIMARY KEY,
+      from_entity_id TEXT NOT NULL,
+      to_entity_id TEXT NOT NULL,
+      relation_type TEXT NOT NULL,
+      zone TEXT NOT NULL CHECK (zone IN ('candidate','validation','production')),
+      source_type TEXT NOT NULL,
+      source_ref TEXT NOT NULL,
+      source_title TEXT,
+      source_url TEXT,
+      ai_inferred INTEGER NOT NULL DEFAULT 0,
+      confidence_score REAL NOT NULL CHECK (confidence_score >= 0 AND confidence_score <= 1),
+      freshness_score REAL NOT NULL CHECK (freshness_score >= 0 AND freshness_score <= 1),
+      confidence_band TEXT NOT NULL CHECK (confidence_band IN ('very_low','low','medium','high','very_high')),
+      first_seen_at TEXT NOT NULL,
+      last_seen_at TEXT NOT NULL,
+      expires_at TEXT,
+      validation_status TEXT NOT NULL CHECK (validation_status IN ('unvalidated','pending_validation','validated','contradicted','rejected')),
+      validation_method TEXT,
+      validator_type TEXT CHECK (validator_type IN ('human','rule','model','hybrid')),
+      contradiction_flag INTEGER NOT NULL DEFAULT 0,
+      stale_flag INTEGER NOT NULL DEFAULT 0,
+      promotion_eligible INTEGER NOT NULL DEFAULT 0,
+      metadata_json TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (from_entity_id) REFERENCES graph_enrichment_entity(id) ON DELETE CASCADE,
+      FOREIGN KEY (to_entity_id) REFERENCES graph_enrichment_entity(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS graph_enrichment_evidence (
+      evidence_id TEXT PRIMARY KEY,
+      source_type TEXT NOT NULL,
+      source_reference TEXT NOT NULL,
+      source_title TEXT,
+      source_url TEXT,
+      source_key TEXT,
+      snippet TEXT,
+      extracted_summary TEXT,
+      extraction_method TEXT,
+      extracted_at TEXT NOT NULL,
+      fingerprint_hash TEXT,
+      quality_score REAL NOT NULL CHECK (quality_score >= 0 AND quality_score <= 1),
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS graph_enrichment_evidence_link (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      target_type TEXT NOT NULL CHECK (target_type IN ('entity','edge')),
+      target_id TEXT NOT NULL,
+      evidence_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      UNIQUE(target_type, target_id, evidence_id),
+      FOREIGN KEY (evidence_id) REFERENCES graph_enrichment_evidence(evidence_id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS graph_enrichment_validation_event (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      target_type TEXT NOT NULL CHECK (target_type IN ('entity','edge')),
+      target_id TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      from_zone TEXT CHECK (from_zone IN ('candidate','validation','production')),
+      to_zone TEXT CHECK (to_zone IN ('candidate','validation','production')),
+      validator_type TEXT,
+      validation_method TEXT,
+      reason TEXT NOT NULL,
+      contradiction_flag INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS graph_enrichment_usage_memory (
+      target_type TEXT NOT NULL CHECK (target_type IN ('entity','edge')),
+      target_id TEXT NOT NULL,
+      request_count INTEGER NOT NULL DEFAULT 0,
+      last_requested_at TEXT NOT NULL,
+      query_cluster TEXT,
+      speedup_benefit_ms REAL,
+      temperature TEXT NOT NULL CHECK (temperature IN ('hot','warm','cold')),
+      improved_response_speed INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (target_type, target_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS graph_enrichment_query_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      query_hash TEXT NOT NULL,
+      query_text TEXT NOT NULL,
+      query_cluster TEXT,
+      requested_at TEXT NOT NULL,
+      cache_hit INTEGER NOT NULL DEFAULT 0,
+      stale_items_detected INTEGER NOT NULL DEFAULT 0,
+      enrichment_delta_count INTEGER NOT NULL DEFAULT 0,
+      response_ms REAL
+    );
+
+    CREATE TABLE IF NOT EXISTS graph_enrichment_revalidation_queue (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      target_type TEXT NOT NULL CHECK (target_type IN ('entity','edge')),
+      target_id TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      scheduled_at TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('pending','running','done','failed')),
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS graph_enrichment_sync_queue (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      operation_type TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('pending','running','retry','done','failed')),
+      attempts INTEGER NOT NULL DEFAULT 0,
+      last_error TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_graph_entity_zone ON graph_enrichment_entity(zone);
+    CREATE INDEX IF NOT EXISTS idx_graph_entity_name ON graph_enrichment_entity(canonical_name);
+    CREATE INDEX IF NOT EXISTS idx_graph_entity_stale ON graph_enrichment_entity(stale_flag);
+    CREATE INDEX IF NOT EXISTS idx_graph_entity_validation_status ON graph_enrichment_entity(validation_status);
+    CREATE INDEX IF NOT EXISTS idx_graph_entity_expiry ON graph_enrichment_entity(expires_at);
+    CREATE INDEX IF NOT EXISTS idx_graph_alias_alias ON graph_enrichment_alias(alias);
+
+    CREATE INDEX IF NOT EXISTS idx_graph_edge_zone ON graph_enrichment_edge(zone);
+    CREATE INDEX IF NOT EXISTS idx_graph_edge_from ON graph_enrichment_edge(from_entity_id);
+    CREATE INDEX IF NOT EXISTS idx_graph_edge_to ON graph_enrichment_edge(to_entity_id);
+    CREATE INDEX IF NOT EXISTS idx_graph_edge_stale ON graph_enrichment_edge(stale_flag);
+    CREATE INDEX IF NOT EXISTS idx_graph_edge_validation_status ON graph_enrichment_edge(validation_status);
+    CREATE INDEX IF NOT EXISTS idx_graph_edge_expiry ON graph_enrichment_edge(expires_at);
+
+    CREATE INDEX IF NOT EXISTS idx_graph_evidence_source_reference ON graph_enrichment_evidence(source_reference);
+    CREATE INDEX IF NOT EXISTS idx_graph_evidence_quality ON graph_enrichment_evidence(quality_score);
+    CREATE INDEX IF NOT EXISTS idx_graph_evidence_link_target ON graph_enrichment_evidence_link(target_type, target_id);
+    CREATE INDEX IF NOT EXISTS idx_graph_validation_event_target ON graph_enrichment_validation_event(target_type, target_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_graph_usage_temperature ON graph_enrichment_usage_memory(temperature);
+    CREATE INDEX IF NOT EXISTS idx_graph_query_cluster ON graph_enrichment_query_history(query_cluster, requested_at);
+    CREATE INDEX IF NOT EXISTS idx_graph_revalidation_status ON graph_enrichment_revalidation_queue(status, scheduled_at);
+    CREATE INDEX IF NOT EXISTS idx_graph_sync_status ON graph_enrichment_sync_queue(status, updated_at);
+  `);
 }

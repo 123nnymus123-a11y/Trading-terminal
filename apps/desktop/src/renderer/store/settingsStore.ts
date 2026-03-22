@@ -11,8 +11,17 @@ export interface MarketFocusConfig {
 }
 
 export type AiEnginePreference = "cloud-first" | "cloud-only" | "local-only";
-export type CloudProvider = "ollama";
+export type CloudProvider =
+  | "ollama"
+  | "openai"
+  | "anthropic"
+  | "gemini"
+  | "mistral"
+  | "groq"
+  | "xai";
 export type ModelTier = "standard" | "advanced" | "expert";
+export type AiFeature = "research" | "supplyChain" | "congress" | "cftc";
+export type AiFeatureRouting = Record<AiFeature, string>;
 
 export interface CloudAiModelConfig {
   provider: CloudProvider;
@@ -46,7 +55,11 @@ export interface AlertRule {
   id: string;
   name: string;
   symbol?: string;
-  condition: "price_above" | "price_below" | "volume_surge" | "volatility_spike";
+  condition:
+    | "price_above"
+    | "price_below"
+    | "volume_surge"
+    | "volatility_spike";
   threshold: number;
   enabled: boolean;
   createdAt: number;
@@ -87,14 +100,21 @@ interface SettingsStoreState {
   setAiContextSharingEnabled: (enabled: boolean) => void;
   aiEnginePreference: AiEnginePreference;
   setAiEnginePreference: (mode: AiEnginePreference) => void;
+  aiFeatureRouting: AiFeatureRouting;
+  setAiFeatureRouting: (feature: AiFeature, providerKey: string) => void;
 
   // Cloud AI Models
   cloudAiModels: CloudAiModelConfig[];
   addCloudAiModel: (model: Omit<CloudAiModelConfig, "createdAt">) => string;
-  updateCloudAiModel: (id: string, updates: Partial<CloudAiModelConfig>) => void;
+  updateCloudAiModel: (
+    id: string,
+    updates: Partial<CloudAiModelConfig>,
+  ) => void;
   removeCloudAiModel: (id: string) => void;
   getActiveCloudModels: () => CloudAiModelConfig[];
-  getCloudModelFor: (feature: "research" | "supplyChain" | "congress" | "cftc") => CloudAiModelConfig | null;
+  getCloudModelFor: (
+    feature: "research" | "supplyChain" | "congress" | "cftc",
+  ) => CloudAiModelConfig | null;
   recordCloudModelUsage: (id: string) => void;
 
   // API Keys
@@ -145,10 +165,29 @@ const MARKET_FOCUS_CONFIGS: Record<MarketFocus, MarketFocusConfig> = {
   "us-large-cap": {
     type: "us-large-cap",
     symbols: [
-      "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA", "BRK.B", "JNJ", "V",
-      "WMT", "PG", "JPM", "MA", "INTC", "KO", "PEP", "DIS", "BA", "VZ"
+      "AAPL",
+      "MSFT",
+      "GOOGL",
+      "AMZN",
+      "NVDA",
+      "META",
+      "TSLA",
+      "BRK.B",
+      "JNJ",
+      "V",
+      "WMT",
+      "PG",
+      "JPM",
+      "MA",
+      "INTC",
+      "KO",
+      "PEP",
+      "DIS",
+      "BA",
+      "VZ",
     ],
-    description: "Sophisticated US Large Cap equity trading with advanced analytics",
+    description:
+      "Sophisticated US Large Cap equity trading with advanced analytics",
     sophisticationLevel: "sophisticated",
   },
   "index-futures": {
@@ -162,12 +201,14 @@ const MARKET_FOCUS_CONFIGS: Record<MarketFocus, MarketFocusConfig> = {
 export const useSettingsStore = create<SettingsStoreState>((set, get) => ({
   // Market Focus
   marketFocus: "us-large-cap",
-  
+
   setMarketFocus: (focus: MarketFocus) => {
     set({ marketFocus: focus });
     // Trigger any necessary UI updates or reconfigurations
     const config = MARKET_FOCUS_CONFIGS[focus];
-    console.log(`[settingsStore] Market focus changed to: ${config.description}`);
+    console.log(
+      `[settingsStore] Market focus changed to: ${config.description}`,
+    );
   },
 
   getMarketFocusConfig: () => {
@@ -179,9 +220,17 @@ export const useSettingsStore = create<SettingsStoreState>((set, get) => ({
   aiContextSharingEnabled: false,
   setAiContextSharingEnabled: (enabled: boolean) => {
     set({ aiContextSharingEnabled: enabled });
-    console.log(`[settingsStore] AI context sharing ${enabled ? "enabled" : "disabled"}`);
+    console.log(
+      `[settingsStore] AI context sharing ${enabled ? "enabled" : "disabled"}`,
+    );
   },
   aiEnginePreference: "cloud-only",
+  aiFeatureRouting: {
+    research: "auto",
+    supplyChain: "auto",
+    congress: "auto",
+    cftc: "auto",
+  },
   setAiEnginePreference: (mode: AiEnginePreference) => {
     set((state) => {
       try {
@@ -189,6 +238,7 @@ export const useSettingsStore = create<SettingsStoreState>((set, get) => ({
           marketFocus: state.marketFocus,
           aiContextSharingEnabled: state.aiContextSharingEnabled,
           aiEnginePreference: mode,
+          aiFeatureRouting: state.aiFeatureRouting,
           cloudAiModels: state.cloudAiModels,
           apiKeys: state.apiKeys,
           alertRules: state.alertRules,
@@ -197,11 +247,39 @@ export const useSettingsStore = create<SettingsStoreState>((set, get) => ({
         };
         localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
       } catch (e) {
-        console.error("[settingsStore] failed to persist aiEnginePreference:", e);
+        console.error(
+          "[settingsStore] failed to persist aiEnginePreference:",
+          e,
+        );
       }
       return { aiEnginePreference: mode };
     });
     console.log(`[settingsStore] AI engine preference -> ${mode}`);
+  },
+  setAiFeatureRouting: (feature, providerKey) => {
+    set((state) => {
+      const nextRouting: AiFeatureRouting = {
+        ...state.aiFeatureRouting,
+        [feature]: providerKey,
+      };
+      try {
+        const toSave = {
+          marketFocus: state.marketFocus,
+          aiContextSharingEnabled: state.aiContextSharingEnabled,
+          aiEnginePreference: state.aiEnginePreference,
+          aiFeatureRouting: nextRouting,
+          cloudAiModels: state.cloudAiModels,
+          apiKeys: state.apiKeys,
+          alertRules: state.alertRules,
+          layouts: state.layouts,
+          externalFeeds: state.externalFeeds,
+        };
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
+      } catch (e) {
+        console.error("[settingsStore] failed to persist aiFeatureRouting:", e);
+      }
+      return { aiFeatureRouting: nextRouting };
+    });
   },
 
   // Initialize other state
@@ -220,12 +298,16 @@ export const useSettingsStore = create<SettingsStoreState>((set, get) => ({
   addCloudAiModel: (model) => {
     const id = `cloud-ai-${crypto.randomUUID()}`;
     set((state) => {
-      const updated = [...state.cloudAiModels, { ...model, createdAt: Date.now() }];
+      const updated = [
+        ...state.cloudAiModels,
+        { ...model, createdAt: Date.now() },
+      ];
       try {
         const toSave = {
           marketFocus: state.marketFocus,
           aiContextSharingEnabled: state.aiContextSharingEnabled,
           aiEnginePreference: state.aiEnginePreference,
+          aiFeatureRouting: state.aiFeatureRouting,
           cloudAiModels: updated,
           apiKeys: state.apiKeys,
           alertRules: state.alertRules,
@@ -233,7 +315,10 @@ export const useSettingsStore = create<SettingsStoreState>((set, get) => ({
           externalFeeds: state.externalFeeds,
         };
         localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
-        console.log("[settingsStore] added cloud AI model:", { provider: model.provider, model: model.model });
+        console.log("[settingsStore] added cloud AI model:", {
+          provider: model.provider,
+          model: model.model,
+        });
       } catch (e) {
         console.error("[settingsStore] failed to save cloud AI model:", e);
       }
@@ -245,15 +330,17 @@ export const useSettingsStore = create<SettingsStoreState>((set, get) => ({
   updateCloudAiModel: (id, updates) =>
     set((state) => {
       const updated = state.cloudAiModels.map((m) =>
-        m.createdAt === parseInt(id.split("-").pop() || "0") || `cloud-ai-${m.createdAt}` === id
+        m.createdAt === parseInt(id.split("-").pop() || "0") ||
+        `cloud-ai-${m.createdAt}` === id
           ? { ...m, ...updates }
-          : m
+          : m,
       );
       try {
         const toSave = {
           marketFocus: state.marketFocus,
           aiContextSharingEnabled: state.aiContextSharingEnabled,
           aiEnginePreference: state.aiEnginePreference,
+          aiFeatureRouting: state.aiFeatureRouting,
           cloudAiModels: updated,
           apiKeys: state.apiKeys,
           alertRules: state.alertRules,
@@ -270,12 +357,15 @@ export const useSettingsStore = create<SettingsStoreState>((set, get) => ({
 
   removeCloudAiModel: (id) =>
     set((state) => {
-      const updated = state.cloudAiModels.filter((m) => `cloud-ai-${m.createdAt}` !== id);
+      const updated = state.cloudAiModels.filter(
+        (m) => `cloud-ai-${m.createdAt}` !== id,
+      );
       try {
         const toSave = {
           marketFocus: state.marketFocus,
           aiContextSharingEnabled: state.aiContextSharingEnabled,
           aiEnginePreference: state.aiEnginePreference,
+          aiFeatureRouting: state.aiFeatureRouting,
           cloudAiModels: updated,
           apiKeys: state.apiKeys,
           alertRules: state.alertRules,
@@ -297,7 +387,7 @@ export const useSettingsStore = create<SettingsStoreState>((set, get) => ({
   getCloudModelFor: (feature) => {
     const state = get();
     const models = state.cloudAiModels.filter((m) => m.enabled);
-    
+
     if (feature === "research") {
       return models.find((m) => m.useForResearch) || models[0] || null;
     } else if (feature === "supplyChain") {
@@ -313,7 +403,7 @@ export const useSettingsStore = create<SettingsStoreState>((set, get) => ({
   recordCloudModelUsage: (id) => {
     set((state) => {
       const updated = state.cloudAiModels.map((m) =>
-        `cloud-ai-${m.createdAt}` === id ? { ...m, lastUsed: Date.now() } : m
+        `cloud-ai-${m.createdAt}` === id ? { ...m, lastUsed: Date.now() } : m,
       );
       return { cloudAiModels: updated };
     });
@@ -329,6 +419,8 @@ export const useSettingsStore = create<SettingsStoreState>((set, get) => ({
           marketFocus: state.marketFocus,
           aiContextSharingEnabled: state.aiContextSharingEnabled,
           aiEnginePreference: state.aiEnginePreference,
+          aiFeatureRouting: state.aiFeatureRouting,
+          cloudAiModels: state.cloudAiModels,
           apiKeys: updated,
           alertRules: state.alertRules,
           layouts: state.layouts,
@@ -353,15 +445,22 @@ export const useSettingsStore = create<SettingsStoreState>((set, get) => ({
           marketFocus: state.marketFocus,
           aiContextSharingEnabled: state.aiContextSharingEnabled,
           aiEnginePreference: state.aiEnginePreference,
+          aiFeatureRouting: state.aiFeatureRouting,
+          cloudAiModels: state.cloudAiModels,
           apiKeys: updated,
           alertRules: state.alertRules,
           layouts: state.layouts,
           externalFeeds: state.externalFeeds,
         };
         localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
-        console.log("[settingsStore] auto-saved after removing apiKey to localStorage");
+        console.log(
+          "[settingsStore] auto-saved after removing apiKey to localStorage",
+        );
       } catch (e) {
-        console.error("[settingsStore] failed to auto-save after removing apiKey:", e);
+        console.error(
+          "[settingsStore] failed to auto-save after removing apiKey:",
+          e,
+        );
       }
       return { apiKeys: updated };
     }),
@@ -381,15 +480,22 @@ export const useSettingsStore = create<SettingsStoreState>((set, get) => ({
             marketFocus: state.marketFocus,
             aiContextSharingEnabled: state.aiContextSharingEnabled,
             aiEnginePreference: state.aiEnginePreference,
+            aiFeatureRouting: state.aiFeatureRouting,
+            cloudAiModels: state.cloudAiModels,
             apiKeys: normalized,
             alertRules: state.alertRules,
             layouts: state.layouts,
             externalFeeds: state.externalFeeds,
           };
           localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
-          console.log("[settingsStore] synced apiKeys from hub", { count: normalized.length });
+          console.log("[settingsStore] synced apiKeys from hub", {
+            count: normalized.length,
+          });
         } catch (err) {
-          console.error("[settingsStore] failed to persist apiKeys from hub", err);
+          console.error(
+            "[settingsStore] failed to persist apiKeys from hub",
+            err,
+          );
         }
       }
       return { apiKeys: normalized };
@@ -397,12 +503,17 @@ export const useSettingsStore = create<SettingsStoreState>((set, get) => ({
 
   addAlertRule: (rule) =>
     set((state) => ({
-      alertRules: [...state.alertRules, { ...rule, id: crypto.randomUUID(), createdAt: Date.now() }],
+      alertRules: [
+        ...state.alertRules,
+        { ...rule, id: crypto.randomUUID(), createdAt: Date.now() },
+      ],
     })),
 
   updateAlertRule: (id, updates) =>
     set((state) => ({
-      alertRules: state.alertRules.map((r) => (r.id === id ? { ...r, ...updates } : r)),
+      alertRules: state.alertRules.map((r) =>
+        r.id === id ? { ...r, ...updates } : r,
+      ),
     })),
 
   removeAlertRule: (id) =>
@@ -412,7 +523,10 @@ export const useSettingsStore = create<SettingsStoreState>((set, get) => ({
 
   saveLayout: (name, config) =>
     set((state) => ({
-      layouts: [...state.layouts, { id: crypto.randomUUID(), name, config, createdAt: Date.now() }],
+      layouts: [
+        ...state.layouts,
+        { id: crypto.randomUUID(), name, config, createdAt: Date.now() },
+      ],
     })),
 
   loadLayout: (id) => {
@@ -467,7 +581,15 @@ export const useSettingsStore = create<SettingsStoreState>((set, get) => ({
     set((state) => ({
       feedHealth: {
         ...state.feedHealth,
-        [adapter]: { ...(state.feedHealth[adapter] || { adapter, connected: false, eventsCount: 0, errorCount: 0 }), ...health },
+        [adapter]: {
+          ...(state.feedHealth[adapter] || {
+            adapter,
+            connected: false,
+            eventsCount: 0,
+            errorCount: 0,
+          }),
+          ...health,
+        },
       },
     })),
 
@@ -483,6 +605,8 @@ export const useSettingsStore = create<SettingsStoreState>((set, get) => ({
           marketFocus: state.marketFocus,
           aiContextSharingEnabled: state.aiContextSharingEnabled,
           aiEnginePreference: state.aiEnginePreference,
+          aiFeatureRouting: state.aiFeatureRouting,
+          cloudAiModels: state.cloudAiModels,
           apiKeys: state.apiKeys,
           alertRules: state.alertRules,
           layouts: state.layouts,
@@ -490,10 +614,19 @@ export const useSettingsStore = create<SettingsStoreState>((set, get) => ({
         };
         const json = JSON.stringify(toSave);
         localStorage.setItem(STORAGE_KEY, json);
-        console.log("[settingsStore] ✅ SAVED to localStorage:", { updated, totalSize: json.length });
-        console.log("[settingsStore] localStorage check:", localStorage.getItem(STORAGE_KEY));
+        console.log("[settingsStore] ✅ SAVED to localStorage:", {
+          updated,
+          totalSize: json.length,
+        });
+        console.log(
+          "[settingsStore] localStorage check:",
+          localStorage.getItem(STORAGE_KEY),
+        );
       } catch (e) {
-        console.error("[settingsStore] ❌ FAILED to auto-save externalFeeds:", e);
+        console.error(
+          "[settingsStore] ❌ FAILED to auto-save externalFeeds:",
+          e,
+        );
       }
       return { externalFeeds: updated };
     }),
@@ -501,19 +634,22 @@ export const useSettingsStore = create<SettingsStoreState>((set, get) => ({
   loadSettings: () => {
     try {
       const stored = localStorage.getItem(STORAGE_KEY);
-      console.log("[settingsStore] loadSettings called, stored data:", !!stored ? `${stored.length} chars` : "EMPTY");
+      console.log(
+        "[settingsStore] loadSettings called, stored data:",
+        !!stored ? `${stored.length} chars` : "EMPTY",
+      );
       if (!stored) {
         console.log("[settingsStore] ℹ️ No localStorage data found");
         return;
       }
 
       const parsed = JSON.parse(stored);
-      console.log("[settingsStore] ✅ PARSED localStorage:", { 
+      console.log("[settingsStore] ✅ PARSED localStorage:", {
         hasApiKeys: !!parsed.apiKeys?.length,
         apiKeysCount: parsed.apiKeys?.length ?? 0,
-        externalFeeds: parsed.externalFeeds
+        externalFeeds: parsed.externalFeeds,
       });
-      
+
       const normalizedApiKeys = Array.isArray(parsed.apiKeys)
         ? parsed.apiKeys.map((key: ApiKey) => ({
             ...key,
@@ -521,11 +657,31 @@ export const useSettingsStore = create<SettingsStoreState>((set, get) => ({
             config: key.config ?? undefined,
           }))
         : [];
-      
+
+      const normalizedCloudAiModels = Array.isArray(parsed.cloudAiModels)
+        ? parsed.cloudAiModels
+            .filter((entry: CloudAiModelConfig | null | undefined) => !!entry)
+            .map((entry: CloudAiModelConfig) => ({
+              ...entry,
+              createdAt:
+                typeof entry.createdAt === "number"
+                  ? entry.createdAt
+                  : Date.now(),
+            }))
+        : [];
+
       set({
         marketFocus: (parsed.marketFocus as MarketFocus) || "us-large-cap",
         aiContextSharingEnabled: parsed.aiContextSharingEnabled ?? false,
-        aiEnginePreference: (parsed.aiEnginePreference as AiEnginePreference) || "cloud-only",
+        aiEnginePreference:
+          (parsed.aiEnginePreference as AiEnginePreference) || "cloud-only",
+        aiFeatureRouting: {
+          research: parsed.aiFeatureRouting?.research ?? "auto",
+          supplyChain: parsed.aiFeatureRouting?.supplyChain ?? "auto",
+          congress: parsed.aiFeatureRouting?.congress ?? "auto",
+          cftc: parsed.aiFeatureRouting?.cftc ?? "auto",
+        },
+        cloudAiModels: normalizedCloudAiModels,
         apiKeys: normalizedApiKeys,
         alertRules: parsed.alertRules || [],
         layouts: parsed.layouts || [],
@@ -554,6 +710,8 @@ export const useSettingsStore = create<SettingsStoreState>((set, get) => ({
         marketFocus: state.marketFocus,
         aiContextSharingEnabled: state.aiContextSharingEnabled,
         aiEnginePreference: state.aiEnginePreference,
+        aiFeatureRouting: state.aiFeatureRouting,
+        cloudAiModels: state.cloudAiModels,
         apiKeys: state.apiKeys,
         alertRules: state.alertRules,
         layouts: state.layouts,
