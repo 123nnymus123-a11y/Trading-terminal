@@ -12,15 +12,16 @@
 
 The Trading Terminal V5 represents a **mature hybrid architecture** combining advanced AI intelligence modules with traditional trading execution surfaces. The system spans three primary layers:
 
-1. **Desktop Layer** (Electron + React): 16-tab shell with extensive IPC integration
+1. **Desktop Layer** (Electron + React): 17-tab shell with extensive IPC integration
 2. **Backend Layer** (Node.js + Express): Multi-tenant HTTP API with queue-backed AI services
 3. **Data Layer** (PostgreSQL + SQLite + Graph Memory): Persistent state, enrichment pipelines, and local caching
 
 **Overall Maturity Assessment:**
+
 - **AI/Intelligence Stack**: Production-Ready (Phase 2-3)
 - **Data Graph & Enrichment**: Advanced Research (Phase 2)
 - **Supply Chain Intelligence**: Deep Integration (Phase 2)
-- **Trading Execution Core**: Functional Foundation (Phase 1-2)
+- **Trading Execution Core**: Functional Plus Research (Phase 1-2)
 - **Classical Market Tools**: Early Implementation (Phase 1)
 
 ---
@@ -29,17 +30,17 @@ The Trading Terminal V5 represents a **mature hybrid architecture** combining ad
 
 ### Classification Hierarchy
 
-| Status | Definition | Production Ready? |
-|--------|-----------|-------------------|
-| **PRODUCTION** | Fully implemented, tested, and operational in critical path; stable API; no known blockers | ✅ Yes |
-| **ACTIVE** | Implemented and reachable in standard UX flow; may have minor gaps | ✅ Mostly |
-| **ACTIVE (PHASE-1)** | Implemented with intentionally limited scope/depth; roadmap defined; backwards compatible | ⚠️ Partial |
-| **PARTIAL** | Implemented with known fallbacks, mocks, or incomplete service depth | ⚠️ Limited |
-| **HIDDEN/DETACHED** | Fully functional but not in primary navigation; accessed via special modes/APIs | ⚠️ Limited |
-| **BACKEND-GATED** | Feature exists but requires backend availability; degrades gracefully without service | ⚠️ Conditional |
-| **LOCAL-FALLBACK** | Primary path requires backend; secondary path operates locally | ⚠️ Degraded |
-| **STUB/PLACEHOLDER** | Frontend shell exists; core logic not implemented | ❌ No |
-| **EXPERIMENTAL** | Under active development; API may change; not recommended for production | ❌ No |
+| Status               | Definition                                                                                 | Production Ready? |
+| -------------------- | ------------------------------------------------------------------------------------------ | ----------------- |
+| **PRODUCTION**       | Fully implemented, tested, and operational in critical path; stable API; no known blockers | ✅ Yes            |
+| **ACTIVE**           | Implemented and reachable in standard UX flow; may have minor gaps                         | ✅ Mostly         |
+| **ACTIVE (PHASE-1)** | Implemented with intentionally limited scope/depth; roadmap defined; backwards compatible  | ⚠️ Partial        |
+| **PARTIAL**          | Implemented with known fallbacks, mocks, or incomplete service depth                       | ⚠️ Limited        |
+| **HIDDEN/DETACHED**  | Fully functional but not in primary navigation; accessed via special modes/APIs            | ⚠️ Limited        |
+| **BACKEND-GATED**    | Feature exists but requires backend availability; degrades gracefully without service      | ⚠️ Conditional    |
+| **LOCAL-FALLBACK**   | Primary path requires backend; secondary path operates locally                             | ⚠️ Degraded       |
+| **STUB/PLACEHOLDER** | Frontend shell exists; core logic not implemented                                          | ❌ No             |
+| **EXPERIMENTAL**     | Under active development; API may change; not recommended for production                   | ❌ No             |
 
 ---
 
@@ -52,45 +53,48 @@ The Trading Terminal V5 represents a **mature hybrid architecture** combining ad
 **State Management**: Zustand (multiple domain stores)  
 **IPC Framework**: Electron IPC (bi-directional channels)
 
-#### 2.1.1 Primary Tab System (16 Tabs)
+#### 2.1.1 Primary Tab System (17 Tabs)
 
-| Tab # | Name | Status | Primary Route | Navigation Key |
-|-------|------|--------|----------------|-----------------|
-| 1 | **PANORAMA** | PRODUCTION | `/dashboard/panorama` | `tab-panorama` |
-| 2 | **CAM** | PRODUCTION | `/dashboard/cam` | `tab-cam` |
-| 3 | **MACRO** | ACTIVE (PHASE-1) | `/markets/macro` | `tab-macro` |
-| 4 | **MICROSCAPE** | STUB/PLACEHOLDER | `/markets/microscape` | `tab-microscape` |
-| 5 | **STRUCTURE** | PARTIAL | `/structure/analysis` | `tab-structure` |
-| 6 | **FLOW** | ACTIVE | `/intel/regulatory-flow` | `tab-flow` |
-| 7 | **EXECUTE** | ACTIVE (PHASE-1) | `/execution/orders` | `tab-execute` |
-| 8 | **JOURNAL** | PRODUCTION | `/trading/journal` | `tab-journal` |
-| 9 | **ECONOMIC CALENDAR** | PRODUCTION | `/calendar/economic` | `tab-calendar` |
-| 10 | **INTELLIGENCE** | PRODUCTION | `/intel/briefs` | `tab-intelligence` |
-| 11 | **CONGRESS ACTIVITY** | PRODUCTION | `/intel/congress` | `tab-congress` |
-| 12 | **TERMINAL AI** | PRODUCTION | `/ai/runtime` | `tab-ai` |
-| 13 | **SUPPLY CHAIN** | PRODUCTION | `/intel/supply-chain` | `tab-supply-chain` |
-| 14 | **DATA VAULT** | PRODUCTION | `/data/vault` | `tab-data-vault` |
-| 15 | **GWMD MAP** | PRODUCTION | `/intel/gwmd` | `tab-gwmd` |
-| 16 | **SETTINGS & LOGS** | PRODUCTION | `/settings` | `tab-settings` |
+| Tab # | Name                  | Status           | Primary Route            | Navigation Key     |
+| ----- | --------------------- | ---------------- | ------------------------ | ------------------ |
+| 1     | **PANORAMA**          | PRODUCTION       | `/dashboard/panorama`    | `tab-panorama`     |
+| 2     | **CAM**               | PRODUCTION       | `/dashboard/cam`         | `tab-cam`          |
+| 3     | **MACRO**             | ACTIVE (PHASE-1) | `/markets/macro`         | `tab-macro`        |
+| 4     | **MICROSCAPE**        | STUB/PLACEHOLDER | `/markets/microscape`    | `tab-microscape`   |
+| 5     | **STRUCTURE**         | PARTIAL          | `/structure/analysis`    | `tab-structure`    |
+| 6     | **FLOW**              | ACTIVE           | `/intel/regulatory-flow` | `tab-flow`         |
+| 7     | **EXECUTE**           | ACTIVE (PHASE-1) | `/execution/orders`      | `tab-execute`      |
+| 8     | **JOURNAL**           | PRODUCTION       | `/trading/journal`       | `tab-journal`      |
+| 9     | **STRATEGY RESEARCH** | ACTIVE           | `/strategy/research`     | `tab-strategy`     |
+| 10    | **ECONOMIC CALENDAR** | PRODUCTION       | `/calendar/economic`     | `tab-calendar`     |
+| 11    | **INTELLIGENCE**      | PRODUCTION       | `/intel/briefs`          | `tab-intelligence` |
+| 12    | **CONGRESS ACTIVITY** | PRODUCTION       | `/intel/congress`        | `tab-congress`     |
+| 13    | **TERMINAL AI**       | PRODUCTION       | `/ai/runtime`            | `tab-ai`           |
+| 14    | **SUPPLY CHAIN**      | PRODUCTION       | `/intel/supply-chain`    | `tab-supply-chain` |
+| 15    | **DATA VAULT**        | PRODUCTION       | `/data/vault`            | `tab-data-vault`   |
+| 16    | **GWMD MAP**          | PRODUCTION       | `/intel/gwmd`            | `tab-gwmd`         |
+| 17    | **SETTINGS & LOGS**   | PRODUCTION       | `/settings`              | `tab-settings`     |
 
 **File References:**
+
 - Tab definitions: `apps/desktop/src/renderer/shared/constants/tabs.ts`
 - Shell component: `apps/desktop/src/renderer/App.tsx`
 - Layout orchestration: `apps/desktop/src/renderer/shared/layout/AppShell.tsx`
 
 #### 2.1.2 Alternative View Modes (Accessible via URL Query)
 
-| Mode | Endpoint | Status | Use Case | File Reference |
-|------|----------|--------|----------|-----------------|
-| **API Hub** | `?mode=api-hub` | ACTIVE | Credential management, API key lifecycle | `src/renderer/pages/specialty/ApiHub.tsx` |
-| **Smart Routing** | `?mode=smart-routing` | ACTIVE | Order routing visualization, flow analysis | `src/renderer/pages/specialty/SmartRouting.tsx` |
-| **Global Map** | `?mode=global-map` | ACTIVE | World supply chain visualization | `src/renderer/pages/specialty/GlobalMap.tsx` |
-| **GWMD Wall** | `?mode=gwmd-wall` | ACTIVE | Multi-monitor GWMD display surface | `src/renderer/pages/specialty/GwmdWall.tsx` |
-| **GWMD Analyst** | `?mode=gwmd-analyst` | ACTIVE | Detailed GWMD analysis mode | `src/renderer/pages/specialty/GwmdAnalyst.tsx` |
-| **GWMD Mirror** | `?mode=gwmd-mirror` | PARTIAL | Secondary GWMD view sync | `src/renderer/pages/specialty/GwmdMirror.tsx` |
-| **Detached Tab** | `?mode=detached-tab&tab={name}` | ACTIVE | Floating window mode per tab | `src/main/handlers/window.ts` |
+| Mode              | Endpoint                        | Status  | Use Case                                   | File Reference                                  |
+| ----------------- | ------------------------------- | ------- | ------------------------------------------ | ----------------------------------------------- |
+| **API Hub**       | `?mode=api-hub`                 | ACTIVE  | Credential management, API key lifecycle   | `src/renderer/pages/specialty/ApiHub.tsx`       |
+| **Smart Routing** | `?mode=smart-routing`           | ACTIVE  | Order routing visualization, flow analysis | `src/renderer/pages/specialty/SmartRouting.tsx` |
+| **Global Map**    | `?mode=global-map`              | ACTIVE  | World supply chain visualization           | `src/renderer/pages/specialty/GlobalMap.tsx`    |
+| **GWMD Wall**     | `?mode=gwmd-wall`               | ACTIVE  | Multi-monitor GWMD display surface         | `src/renderer/pages/specialty/GwmdWall.tsx`     |
+| **GWMD Analyst**  | `?mode=gwmd-analyst`            | ACTIVE  | Detailed GWMD analysis mode                | `src/renderer/pages/specialty/GwmdAnalyst.tsx`  |
+| **GWMD Mirror**   | `?mode=gwmd-mirror`             | PARTIAL | Secondary GWMD view sync                   | `src/renderer/pages/specialty/GwmdMirror.tsx`   |
+| **Detached Tab**  | `?mode=detached-tab&tab={name}` | ACTIVE  | Floating window mode per tab               | `src/main/handlers/window.ts`                   |
 
 **Implementation Detail:**
+
 - Query routing: `apps/desktop/src/renderer/AppRouter.tsx` (lines 45-80)
 - Window factory: `apps/desktop/src/main/handlers/window.ts` (handles windowing + sync channels)
 
@@ -99,15 +103,18 @@ The Trading Terminal V5 represents a **mature hybrid architecture** combining ad
 **Status**: ⚠️ **DEBT ITEM**
 
 **Issue Description:**
+
 - Legacy 7-tab constant model still exists in codebase
-- Modern active shell renders 16 tabs
+- Modern active shell renders 17 tabs
 - Mismatch creates confusion in navigation constants and historical drift
 
 **Legacy Path:**
+
 - File: `apps/desktop/src/renderer/shared/constants/legacyTabs.ts`
 - Contains: `['panorama', 'microscape', 'structure', 'flow', 'execute', 'journal', 'settingsLogs']`
 
 **Remediation:**
+
 - Flag for v5.1: Consolidate legacy constant references
 - Estimated effort: 2-4 hours (semantic search + replace)
 
@@ -152,6 +159,7 @@ The Trading Terminal V5 represents a **mature hybrid architecture** combining ad
 - Snapshot aggregation depends on upstream service availability
 
 **Dependencies:**
+
 - Backend: `/api/intelligence/snapshot`, `/api/calendar/economic-insight`
 - Local AI: LocalAI runtime (optional, with fallback)
 - Stores: `snapshotStore`, `strategyStore`, `riskStore`
@@ -190,6 +198,7 @@ The Trading Terminal V5 represents a **mature hybrid architecture** combining ad
 - Gate logic is read-only from Python backend (no override in frontend)
 
 **Dependencies:**
+
 - Backend: `/api/strategies/cam-signals`
 - Store: `useStrategyStore()`
 - Updates: Via WebSocket channel `cam-signals-update`
@@ -230,6 +239,7 @@ The Trading Terminal V5 represents a **mature hybrid architecture** combining ad
 - FRED API key required (fallback to demo data if unavailable)
 
 **Dependencies:**
+
 - External: FRED API
 - Local cache: SQLite table `macro_snapshots`
 - Store: `useMacroStore()`
@@ -250,20 +260,22 @@ The Trading Terminal V5 represents a **mature hybrid architecture** combining ad
 - Component status: Intentional placeholder (roadmap item)
 
 **File References:**
+
 - `Microscape.tsx` (lines 1-50): Shell only
 - `components/placeholder/UnavailableDataCard.tsx`: Placeholder UI
 
 **Future Implementation Roadmap:**
 
-| Component | Status | Estimated ETA | Owner |
-|-----------|--------|----------------|-------|
-| Price Chart | DESIGN | Q2 2026 | Desktop Team |
-| Order Book | DESIGN | Q2 2026 | Desktop Team |
-| Trade Tape | DESIGN | Q2 2026 | Desktop Team |
-| Level 2 Depth | DESIGN | Q3 2026 | Data Team |
-| Greeks/Options | BACKLOG | Q3 2026 | Options Team |
+| Component      | Status  | Estimated ETA | Owner        |
+| -------------- | ------- | ------------- | ------------ |
+| Price Chart    | DESIGN  | Q2 2026       | Desktop Team |
+| Order Book     | DESIGN  | Q2 2026       | Desktop Team |
+| Trade Tape     | DESIGN  | Q2 2026       | Desktop Team |
+| Level 2 Depth  | DESIGN  | Q3 2026       | Data Team    |
+| Greeks/Options | BACKLOG | Q3 2026       | Options Team |
 
 **Blocking Issues:**
+
 - No live market data feed currently integrated (placeholder)
 - Options analytics library selection pending
 
@@ -312,6 +324,7 @@ The Trading Terminal V5 represents a **mature hybrid architecture** combining ad
    - Fallback: Demo/synthetic data
 
 **Dependencies:**
+
 - Chart library: `lightweight-charts` (v4.0.0)
 - Store: `useStructureStore()`
 - Services: `structureService`, `indicatorService`
@@ -332,7 +345,6 @@ The Trading Terminal V5 represents a **mature hybrid architecture** combining ad
      - Fields shown: Filer, Transaction type, Shares, Price, Gain
      - Retention: Last 100 filings
      - Component: `Form4Panel.tsx`
-   
    - **Form 8-K Panel** (Material Events)
      - Update frequency: Same-day
      - Fields shown: Company, Item category, Date, Summary
@@ -358,6 +370,7 @@ The Trading Terminal V5 represents a **mature hybrid architecture** combining ad
 - Data freshness: Subject to SEC.gov feed lag (typically 4-hour max)
 
 **Dependencies:**
+
 - Backend: `/api/flow/form4-list`, `/api/flow/form8k-list`
 - WebSocket: `flow-events-update` channel
 - Store: `useFlowStore()`
@@ -388,7 +401,7 @@ The Trading Terminal V5 represents a **mature hybrid architecture** combining ad
    - File: `components/execution/PositionSizer.tsx`
 
 3. **Order State Management**
-   - Hook: `useTrading()` 
+   - Hook: `useTrading()`
    - State shape: `{ orders, positions, pending, fills, bracket }`
    - Persistence: SQLite table `trading_orders`
    - File: `stores/trading.ts`
@@ -408,11 +421,13 @@ The Trading Terminal V5 represents a **mature hybrid architecture** combining ad
 - Slippage estimation: Not present (mock only)
 
 **Future Roadmap:**
+
 - Q2 2026: Portfolio margin calculation
 - Q3 2026: Strategy builder with pre-defined legs
 - Q4 2026: Risk simulation before order submit
 
 **Dependencies:**
+
 - Backend: `/api/trading/orders`, `/api/trading/positions`
 - Store: `useTrading()`
 - Hook: `useOrderPlacement()` (validation + submission)
@@ -461,9 +476,62 @@ The Trading Terminal V5 represents a **mature hybrid architecture** combining ad
 - Manual entry support: Add trade button available
 
 **Dependencies:**
+
 - Local persistence: SQLite `trading_trades` table
 - Store: `useJournal()`
 - Chart library: Recharts
+
+---
+
+### 3.8A STRATEGY RESEARCH (Backtesting)
+
+**Overall Status**: ACTIVE (Hybrid Cloud + Desktop Local)
+
+**Location**: `apps/desktop/src/renderer/pages/StrategyResearch.tsx`
+
+**Implemented Features:**
+
+1. **Hybrid Mode Workflow**
+   - Cloud mode uses authenticated backend strategy/version/run endpoints.
+   - Desktop-local mode remains operational when auth/backend path is unavailable.
+   - Mode state surfaced through store-level `syncMode` and UI notices.
+
+2. **Strategy Authoring and Versioning**
+   - Inline strategy creation panel in sidebar.
+   - Script editor with universe and assumptions controls.
+   - Save-version behavior updates current strategy version state.
+   - Local workspace persistence available when cloud path fails.
+
+3. **Historical Data Download to Local PC**
+   - Download action exposed in editor toolbar.
+   - Daily historical bars are downloaded via Electron main process service.
+   - Downloaded history is cached locally for reuse.
+
+4. **Desktop-Local Backtest Execution**
+   - Local run engine executes strategy script in sandboxed context.
+   - Outputs run metrics, equity curve, trades, and data source metadata.
+   - Results are persisted in local workspace state and rendered in run history.
+
+5. **Run Analysis UI**
+   - Run history list with status and return preview.
+   - Details panel with metrics cards.
+   - Inline SVG equity curve chart.
+   - Trade preview and run metadata panel.
+
+**Known Limitations:**
+
+- Local persistence currently uses localStorage workspace state.
+- Local script contract currently assumes `onBar(ctx)` entrypoint.
+- Historical source currently uses public daily EOD download path.
+- Backend execution path remains auth/session dependent.
+
+**File References:**
+
+- Renderer page: `apps/desktop/src/renderer/pages/StrategyResearch.tsx`
+- Store: `apps/desktop/src/renderer/store/strategyResearchStore.ts`
+- Local desktop service: `apps/desktop/src/main/services/strategyResearch/localStrategyResearchService.ts`
+- Main IPC wiring: `apps/desktop/src/main/index.ts`
+- Preload bridge: `apps/desktop/src/preload/index.ts`
 
 ---
 
@@ -507,6 +575,7 @@ The Trading Terminal V5 represents a **mature hybrid architecture** combining ad
 - Calendar data sourced from public APIs only (no proprietary calendars)
 
 **Dependencies:**
+
 - External APIs: FRED, BLS, Economic Calendar providers
 - Backend: `/api/calendar/list`, `/api/calendar/economic-insight`
 - Store: `useCalendar()`
@@ -558,6 +627,7 @@ The Trading Terminal V5 represents a **mature hybrid architecture** combining ad
 - Read-only operation (briefs cannot be edited in frontend)
 
 **Dependencies:**
+
 - Backend: `/api/research/briefs`, `/api/research/queue-run`, `/api/ai/runtime-status`
 - Store: `useIntelligence()`
 - WebSocket: `intelligence-update` channel (optional real-time updates)
@@ -612,6 +682,7 @@ The Trading Terminal V5 represents a **mature hybrid architecture** combining ad
 - Lag: 2-3 day lag from transaction to public disclosure
 
 **Dependencies:**
+
 - Backend: `/api/congress/trades`, `/api/congress/lobbying`, `/api/congress/contracts`, `/api/congress/analyze`
 - Store: `useCongress()`
 - External: SEC SOPR API, House.gov Clerk API
@@ -674,6 +745,7 @@ The Trading Terminal V5 represents a **mature hybrid architecture** combining ad
 - Memory footprint: 4-8GB minimum
 
 **Dependencies:**
+
 - Process: LocalAI binary (managed by main process)
 - IPC: Electron event channels
 - Store: `useAiRuntimeStore()`
@@ -771,6 +843,7 @@ The Trading Terminal V5 represents a **mature hybrid architecture** combining ad
 - Shock analysis computed locally (not distributed)
 
 **Dependencies:**
+
 - Backend: `/api/supply-chain/generate`, `/api/supply-chain/map/{id}`, `/api/supply-chain/shock-analysis`
 - Store: `useSupplyChainStore()`
 - WebSocket: `supply-chain-sync` channel
@@ -786,30 +859,30 @@ The Trading Terminal V5 represents a **mature hybrid architecture** combining ad
 
 **Section Model (9 Sections):**
 
-| Section | Purpose | Status | Key Controls |
-|---------|---------|--------|--------------|
-| **Overview** | Summary stats + growth metrics | PRODUCTION | Record count, data freshness |
-| **Entities** | Person, Organization, Location, Product | PRODUCTION | Filter, expand, drill-down |
-| **Relationships** | Links between entities (suppliers, owners, etc.) | PRODUCTION | Visualize as graph, filter by type |
-| **Evidence** | Source citations and data provenance | PRODUCTION | Filter by source, date range |
-| **Validation** | Quality assessment per record | PRODUCTION | Pass/fail/review status |
-| **Usage** | Where entities appear (supply chains, GWMD, etc.) | PRODUCTION | Cross-reference tracking |
-| **Snapshots** | Point-in-time graph exports | PRODUCTION | Save, load, compare versions |
-| **Cloud** | Cloud sync status and configuration | PARTIAL | Sync controls, status display |
-| **Settings** | Data Vault configuration | PRODUCTION | Export format, cache settings |
+| Section           | Purpose                                           | Status     | Key Controls                       |
+| ----------------- | ------------------------------------------------- | ---------- | ---------------------------------- |
+| **Overview**      | Summary stats + growth metrics                    | PRODUCTION | Record count, data freshness       |
+| **Entities**      | Person, Organization, Location, Product           | PRODUCTION | Filter, expand, drill-down         |
+| **Relationships** | Links between entities (suppliers, owners, etc.)  | PRODUCTION | Visualize as graph, filter by type |
+| **Evidence**      | Source citations and data provenance              | PRODUCTION | Filter by source, date range       |
+| **Validation**    | Quality assessment per record                     | PRODUCTION | Pass/fail/review status            |
+| **Usage**         | Where entities appear (supply chains, GWMD, etc.) | PRODUCTION | Cross-reference tracking           |
+| **Snapshots**     | Point-in-time graph exports                       | PRODUCTION | Save, load, compare versions       |
+| **Cloud**         | Cloud sync status and configuration               | PARTIAL    | Sync controls, status display      |
+| **Settings**      | Data Vault configuration                          | PRODUCTION | Export format, cache settings      |
 
 **2. Filter Model**
 
 Advanced filter combinator (AND/OR logic):
 
-| Filter Dimension | Options | Usage |
-|------------------|---------|-------|
-| **Status** | Active, Archived, Under Review | Clean data vs. draft stage |
-| **Zone** | Candidate, Validation, Production | Data maturity tier |
-| **Type** | Entity type (Person, Org, etc.) | Scope by entity category |
-| **Source** | Public, SEC, TED, GWMD, etc. | Data origin filter |
-| **Confidence** | High (>0.95), Med (0.7-0.95), Low (<0.7) | Trust level |
-| **Freshness** | <7 days, <30 days, >30 days | Data age filter |
+| Filter Dimension | Options                                  | Usage                      |
+| ---------------- | ---------------------------------------- | -------------------------- |
+| **Status**       | Active, Archived, Under Review           | Clean data vs. draft stage |
+| **Zone**         | Candidate, Validation, Production        | Data maturity tier         |
+| **Type**         | Entity type (Person, Org, etc.)          | Scope by entity category   |
+| **Source**       | Public, SEC, TED, GWMD, etc.             | Data origin filter         |
+| **Confidence**   | High (>0.95), Med (0.7-0.95), Low (<0.7) | Trust level                |
+| **Freshness**    | <7 days, <30 days, >30 days              | Data age filter            |
 
 File: `components/dataVault/FilterModel.tsx` (lines 80-150)
 
@@ -874,6 +947,7 @@ File: `components/dataVault/FilterModel.tsx` (lines 80-150)
 - Size limit: 2GB (managed automatically)
 
 **Dependencies:**
+
 - Backend: `/api/data-vault/list`, `/api/data-vault/entity/{id}`, `/api/data-vault/refresh`, `/api/data-vault/revalidate`
 - IPC: `graph-memory-open`, `graph-memory-export`
 - Store: `useDataVault()`
@@ -956,6 +1030,7 @@ File: `components/dataVault/FilterModel.tsx` (lines 80-150)
 - Cloud push/pull requires authenticated backend session
 
 **Dependencies:**
+
 - Backend: `/api/gwmd/search`, `/api/gwmd/expand`, `/api/gwmd/sync`, `/api/gwmd/sync-status`
 - Store: `useGwmdStore()`
 - WebSocket: `gwmd-updates` channel
@@ -1084,6 +1159,7 @@ Store: `stores/settings.ts`
 IPC handler: `src/main/handlers/settings.ts`
 
 **Dependencies:**
+
 - Store: `useSettings()`, `useAiPreference()`
 - Services: `healthCheck`, `feedTest`, `logExport`
 - IPC: `settings-update`, `logs-fetch`, `test-feed`
@@ -1117,6 +1193,7 @@ IPC handler: `src/main/handlers/settings.ts`
    - Kept in focus, synchronized with main window state
 
 **Dependencies:**
+
 - IPC: `api-hub-open`
 - Security: `keytar` package (Windows)
 - Store: `useCredentials()`
@@ -1144,10 +1221,12 @@ IPC handler: `src/main/handlers/settings.ts`
    - File: `services/routing/capacityCheck.ts`
 
 **Access:**
+
 - URL query: `?mode=smart-routing`
 - Dedicated floating window
 
 **Known Limitations:**
+
 - Read-only visualization (routing logic in backend)
 - No manual override of routing decisions
 - Simulated data if backend unavailable
@@ -1175,6 +1254,7 @@ IPC handler: `src/main/handlers/settings.ts`
    - Entity selection highlights connected nodes
 
 **Access:**
+
 - URL query: `?mode=global-map`
 - Dedicated full-screen window
 
@@ -1188,25 +1268,26 @@ IPC handler: `src/main/handlers/settings.ts`
 
 **Main Process Handler Files:**
 
-| Domain | Handler File | Channels | Count |
-|--------|------------|----------|-------|
-| **Auth** | `src/main/handlers/auth.ts` | login, logout, get-user, refresh | 5+ |
-| **AI** | `src/main/handlers/ai.ts` | ai-runtime-control, ai-status-check | 4+ |
-| **Public Flow** | `src/main/handlers/publicFlow.ts` | fetch-flow, subscribe-flow | 3+ |
-| **Congress** | `src/main/handlers/congress.ts` | fetch-congress, analyze-congress | 3+ |
-| **Supply Chain** | `src/main/handlers/supplyChain.ts` | generate-map, shock-analysis | 4+ |
-| **Graph Memory** | `src/main/handlers/graphMemory.ts` | graph-memory-open, export | 5+ |
-| **GWMD** | `src/main/handlers/gwmd.ts` | gwmd-search, gwmd-sync | 4+ |
-| **Config** | `src/main/handlers/config.ts` | get-config, set-config | 3+ |
-| **Streams** | `src/main/handlers/stream.ts` | subscribe-feed, unsubscribe | 4+ |
-| **Replay** | `src/main/handlers/replay.ts` | load-replay, play, seek | 4+ |
-| **Trading** | `src/main/handlers/trading.ts` | place-order, cancel-order | 4+ |
-| **Journal** | `src/main/handlers/journal.ts` | add-trade, edit-trade | 4+ |
-| **Window** | `src/main/handlers/window.ts` | open-detached-tab, sync-state | 5+ |
+| Domain           | Handler File                       | Channels                            | Count |
+| ---------------- | ---------------------------------- | ----------------------------------- | ----- |
+| **Auth**         | `src/main/handlers/auth.ts`        | login, logout, get-user, refresh    | 5+    |
+| **AI**           | `src/main/handlers/ai.ts`          | ai-runtime-control, ai-status-check | 4+    |
+| **Public Flow**  | `src/main/handlers/publicFlow.ts`  | fetch-flow, subscribe-flow          | 3+    |
+| **Congress**     | `src/main/handlers/congress.ts`    | fetch-congress, analyze-congress    | 3+    |
+| **Supply Chain** | `src/main/handlers/supplyChain.ts` | generate-map, shock-analysis        | 4+    |
+| **Graph Memory** | `src/main/handlers/graphMemory.ts` | graph-memory-open, export           | 5+    |
+| **GWMD**         | `src/main/handlers/gwmd.ts`        | gwmd-search, gwmd-sync              | 4+    |
+| **Config**       | `src/main/handlers/config.ts`      | get-config, set-config              | 3+    |
+| **Streams**      | `src/main/handlers/stream.ts`      | subscribe-feed, unsubscribe         | 4+    |
+| **Replay**       | `src/main/handlers/replay.ts`      | load-replay, play, seek             | 4+    |
+| **Trading**      | `src/main/handlers/trading.ts`     | place-order, cancel-order           | 4+    |
+| **Journal**      | `src/main/handlers/journal.ts`     | add-trade, edit-trade               | 4+    |
+| **Window**       | `src/main/handlers/window.ts`      | open-detached-tab, sync-state       | 5+    |
 
 **Total IPC Channels**: 50+
 
 **Risk Assessment**: ⚠️ **Large attack surface / regression risk**
+
 - Recommendation: Add integration test suite for IPC
 - Priority: Document critical paths (auth, trading, sync)
 
@@ -1251,18 +1332,18 @@ IPC handler: `src/main/handlers/settings.ts`
 
 **Endpoints:**
 
-| Endpoint | Method | Status | Auth | Description |
-|----------|--------|--------|------|-------------|
-| `/api/health` | GET | ✅ | None | Health check + version |
-| `/api/runtime-flags` | GET | ✅ | Optional | Feature flags, build info |
-| `/api/auth/signup` | POST | ✅ | None | User registration |
-| `/api/auth/login` | POST | ✅ | None | Login, return JWT + refresh |
-| `/api/auth/refresh` | POST | ✅ | None | Refresh JWT token |
-| `/api/auth/me` | GET | ✅ | JWT | Get current user + profile |
-| `/api/auth/logout` | POST | ✅ | JWT | Logout + invalidate token |
-| `/api/auth/2fa/setup` | POST | ✅ | JWT | Initiate 2FA setup |
-| `/api/auth/2fa/verify` | POST | ✅ | JWT + TOTP | Verify 2FA code |
-| `/api/auth/2fa/disable` | POST | ✅ | JWT + TOTP | Disable 2FA |
+| Endpoint                | Method | Status | Auth       | Description                 |
+| ----------------------- | ------ | ------ | ---------- | --------------------------- |
+| `/api/health`           | GET    | ✅     | None       | Health check + version      |
+| `/api/runtime-flags`    | GET    | ✅     | Optional   | Feature flags, build info   |
+| `/api/auth/signup`      | POST   | ✅     | None       | User registration           |
+| `/api/auth/login`       | POST   | ✅     | None       | Login, return JWT + refresh |
+| `/api/auth/refresh`     | POST   | ✅     | None       | Refresh JWT token           |
+| `/api/auth/me`          | GET    | ✅     | JWT        | Get current user + profile  |
+| `/api/auth/logout`      | POST   | ✅     | JWT        | Logout + invalidate token   |
+| `/api/auth/2fa/setup`   | POST   | ✅     | JWT        | Initiate 2FA setup          |
+| `/api/auth/2fa/verify`  | POST   | ✅     | JWT + TOTP | Verify 2FA code             |
+| `/api/auth/2fa/disable` | POST   | ✅     | JWT + TOTP | Disable 2FA                 |
 
 **Key Features:**
 
@@ -1299,16 +1380,17 @@ IPC handler: `src/main/handlers/settings.ts`
 
 **Endpoints:**
 
-| Endpoint | Method | Status | Purpose |
-|----------|--------|--------|---------|
-| `/api/user/settings` | GET/PUT | ✅ | User preferences CRUD |
-| `/api/user/watchlist` | GET/POST/DELETE | ✅ | Watched symbols |
-| `/api/trading/orders` | GET/POST | ✅ | Place order + list orders |
-| `/api/trading/orders/{id}` | GET/DELETE | ✅ | Order detail + cancel |
-| `/api/trading/positions` | GET | ✅ | Current open positions |
-| `/api/trading/account` | GET | ✅ | Account balance + margin |
+| Endpoint                   | Method          | Status | Purpose                   |
+| -------------------------- | --------------- | ------ | ------------------------- |
+| `/api/user/settings`       | GET/PUT         | ✅     | User preferences CRUD     |
+| `/api/user/watchlist`      | GET/POST/DELETE | ✅     | Watched symbols           |
+| `/api/trading/orders`      | GET/POST        | ✅     | Place order + list orders |
+| `/api/trading/orders/{id}` | GET/DELETE      | ✅     | Order detail + cancel     |
+| `/api/trading/positions`   | GET             | ✅     | Current open positions    |
+| `/api/trading/account`     | GET             | ✅     | Account balance + margin  |
 
 **Database Schema:**
+
 - Table: `users` (id, username, email, password_hash, 2fa_secret)
 - Table: `trading_orders` (id, user_id, symbol, side, qty, price, status, created_at)
 - Table: `trading_positions` (id, user_id, symbol, qty, avg_price, current_price)
@@ -1321,23 +1403,23 @@ IPC handler: `src/main/handlers/settings.ts`
 
 **Congress Endpoints:**
 
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/api/congress/trades` | GET | List congress trading activity |
-| `/api/congress/lobbying` | GET | List lobbying activity |
-| `/api/congress/contracts` | GET | List government contracts |
-| `/api/congress/metrics` | GET | Analytics: Most traded, disclosure lag |
-| `/api/congress/analyze` | POST | AI scan for patterns/signals |
+| Endpoint                  | Method | Purpose                                |
+| ------------------------- | ------ | -------------------------------------- |
+| `/api/congress/trades`    | GET    | List congress trading activity         |
+| `/api/congress/lobbying`  | GET    | List lobbying activity                 |
+| `/api/congress/contracts` | GET    | List government contracts              |
+| `/api/congress/metrics`   | GET    | Analytics: Most traded, disclosure lag |
+| `/api/congress/analyze`   | POST   | AI scan for patterns/signals           |
 
 **PublicFlow Endpoints:**
 
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/api/public-flow/recent` | GET | Recent filings (Forms, 8-K, etc.) |
-| `/api/public-flow/themes` | GET | Trending themes/topics |
-| `/api/public-flow/candidates` | GET | Relevant entities/candidates |
-| `/api/public-flow/valuations` | GET | Market impact estimates |
-| `/api/public-flow/refresh` | POST | Force refresh latest data |
+| Endpoint                      | Method | Purpose                           |
+| ----------------------------- | ------ | --------------------------------- |
+| `/api/public-flow/recent`     | GET    | Recent filings (Forms, 8-K, etc.) |
+| `/api/public-flow/themes`     | GET    | Trending themes/topics            |
+| `/api/public-flow/candidates` | GET    | Relevant entities/candidates      |
+| `/api/public-flow/valuations` | GET    | Market impact estimates           |
+| `/api/public-flow/refresh`    | POST   | Force refresh latest data         |
 
 **File**: `apps/backend/src/services/congress*.ts`
 
@@ -1349,24 +1431,25 @@ IPC handler: `src/main/handlers/settings.ts`
 
 **Endpoints:**
 
-| Endpoint | Method | Status | Behavior |
-|----------|--------|--------|----------|
-| `/api/ted/snapshot` | GET | ✅ | Returns real TED snapshot OR mock if disabled |
-| `/api/ted/config` | GET/PUT | ✅ | Get/update TED config (auth-protected) |
+| Endpoint            | Method  | Status | Behavior                                      |
+| ------------------- | ------- | ------ | --------------------------------------------- |
+| `/api/ted/snapshot` | GET     | ✅     | Returns real TED snapshot OR mock if disabled |
+| `/api/ted/config`   | GET/PUT | ✅     | Get/update TED config (auth-protected)        |
 
 **Snapshot Logic:**
 
 ```typescript
 // Pseudo-code
-GET /api/ted/snapshot
-  if (tedEnabled && tedApiAvailable) {
-    return fetchFromTedLive()  // Real data
-  } else {
-    return generateMockSnapshot()  // Fallback
-  }
+GET / api / ted / snapshot;
+if (tedEnabled && tedApiAvailable) {
+  return fetchFromTedLive(); // Real data
+} else {
+  return generateMockSnapshot(); // Fallback
+}
 ```
 
 **Mock Provider**:
+
 - File: `apps/backend/src/services/tedIntel/tedIntelMock.ts`
 - Generates realistic-looking fake threats (for demo/testing)
 - Updates every request (no caching in mock mode)
@@ -1381,22 +1464,23 @@ GET /api/ted/snapshot
 
 **Non-AI Endpoints:**
 
-| Endpoint | Method | Purpose | Cache |
-|----------|--------|---------|-------|
-| `/api/supply-chain/generate` | POST | Generate map (non-AI) | ✓ 1 hour |
-| `/api/supply-chain/cache` | GET | List cached maps | - |
-| `/api/supply-chain/clear` | DELETE | Clear map cache | - |
-| `/api/supply-chain/advisor` | GET | Heuristic suggestions | ✓ 30 min |
+| Endpoint                     | Method | Purpose               | Cache    |
+| ---------------------------- | ------ | --------------------- | -------- |
+| `/api/supply-chain/generate` | POST   | Generate map (non-AI) | ✓ 1 hour |
+| `/api/supply-chain/cache`    | GET    | List cached maps      | -        |
+| `/api/supply-chain/clear`    | DELETE | Clear map cache       | -        |
+| `/api/supply-chain/advisor`  | GET    | Heuristic suggestions | ✓ 30 min |
 
 **AI Endpoints (Queue-Backed):**
 
-| Endpoint | Method | Purpose | Queue Type |
-|----------|--------|---------|------------|
-| `/api/supply-chain/ai/generate` | POST | AI-powered map generation | `supply-chain-generate` |
-| `/api/supply-chain/ai/map/{id}` | GET | Cached AI map | - |
-| `/api/supply-chain/ai/insights` | GET | AI analysis insights | - |
+| Endpoint                        | Method | Purpose                   | Queue Type              |
+| ------------------------------- | ------ | ------------------------- | ----------------------- |
+| `/api/supply-chain/ai/generate` | POST   | AI-powered map generation | `supply-chain-generate` |
+| `/api/supply-chain/ai/map/{id}` | GET    | Cached AI map             | -                       |
+| `/api/supply-chain/ai/insights` | GET    | AI analysis insights      | -                       |
 
 **Queue Job Structure**:
+
 - Job type: `supply-chain-generate`
 - Params: `{ companyId, depth, threadHopLimit }`
 - Callback: Updates `supply_chain_jobs` table
@@ -1411,15 +1495,15 @@ GET /api/ted/snapshot
 
 **Endpoints:**
 
-| Endpoint | Method | Purpose | Auth |
-|----------|--------|---------|------|
-| `/api/research/queue-run` | POST | Trigger research run | JWT |
-| `/api/research/jobs/{jobId}` | GET | Get job status | JWT |
-| `/api/research/jobs/{jobId}/cancel` | POST | Cancel job | JWT |
-| `/api/research/briefs` | GET | List generated briefs | JWT |
-| `/api/research/briefs/{id}` | DELETE | Dismiss brief | JWT |
-| `/api/research/config` | GET/PUT | Research config | JWT |
-| `/api/research/status` | GET | Overall queue status | JWT |
+| Endpoint                            | Method  | Purpose               | Auth |
+| ----------------------------------- | ------- | --------------------- | ---- |
+| `/api/research/queue-run`           | POST    | Trigger research run  | JWT  |
+| `/api/research/jobs/{jobId}`        | GET     | Get job status        | JWT  |
+| `/api/research/jobs/{jobId}/cancel` | POST    | Cancel job            | JWT  |
+| `/api/research/briefs`              | GET     | List generated briefs | JWT  |
+| `/api/research/briefs/{id}`         | DELETE  | Dismiss brief         | JWT  |
+| `/api/research/config`              | GET/PUT | Research config       | JWT  |
+| `/api/research/status`              | GET     | Overall queue status  | JWT  |
 
 **Queue Implementation:**
 
@@ -1449,18 +1533,20 @@ GET /api/ted/snapshot
 
 **Endpoints:**
 
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/api/calendar/list` | GET | List economic events |
-| `/api/calendar/economic-insight` | POST | Generate LLM insight for event |
+| Endpoint                         | Method | Purpose                        |
+| -------------------------------- | ------ | ------------------------------ |
+| `/api/calendar/list`             | GET    | List economic events           |
+| `/api/calendar/economic-insight` | POST   | Generate LLM insight for event |
 
 **Calendar Data Integration**:
+
 - Source: Multiple providers (FRED, BLS, official calendars)
 - Update cadence: Hourly
 - Cache: 4-hour TTL
 - File: `src/services/calendar/calendarSync.ts`
 
 **Insight Generation**:
+
 - Queue-backed: `calendar:insight` job type
 - Input: Event data + market context
 - Output: LLM-generated trading implications
@@ -1474,12 +1560,13 @@ GET /api/ted/snapshot
 
 **Endpoints:**
 
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/api/congress/analyze` | POST | AI scan + pattern detection |
-| `/api/congress/watchlist` | GET/POST/DELETE | User-specific monitoring |
+| Endpoint                  | Method          | Purpose                     |
+| ------------------------- | --------------- | --------------------------- |
+| `/api/congress/analyze`   | POST            | AI scan + pattern detection |
+| `/api/congress/watchlist` | GET/POST/DELETE | User-specific monitoring    |
 
 **Congress Analysis Queue**:
+
 - Job type: `congress:analyze`
 - Input: Congress data context (date range, members, symbols)
 - Output: Patterns, anomalies, signals
@@ -1493,19 +1580,21 @@ GET /api/ted/snapshot
 
 **Endpoints:**
 
-| Endpoint | Method | Purpose | Status |
-|----------|--------|---------|--------|
-| `/api/gwmd/push` | POST | Save graph to cloud | Gated |
-| `/api/gwmd/pull` | POST | Load graph from cloud | Gated |
-| `/api/gwmd/sync-status` | GET | Check sync timestamp | Gated |
+| Endpoint                | Method | Purpose               | Status |
+| ----------------------- | ------ | --------------------- | ------ |
+| `/api/gwmd/push`        | POST   | Save graph to cloud   | Gated  |
+| `/api/gwmd/pull`        | POST   | Load graph from cloud | Gated  |
+| `/api/gwmd/sync-status` | GET    | Check sync timestamp  | Gated  |
 
 **Gating Factors**:
+
 - User must be authenticated (JWT required)
 - Backend must have database connection (PostgreSQL/Redis)
 - Cloud storage must be provisioned (S3 or local FS)
 - File: `src/services/gwmd/cloudSync.ts` (fallback handling)
 
 **Cache Layers**:
+
 - Status cache: 5-minute TTL
 - Pull response cache: 10-minute TTL per user
 - File: `src/services/gwmd/cacheSync.ts`
@@ -1518,14 +1607,15 @@ GET /api/ted/snapshot
 
 **Endpoints:**
 
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/api/orchestrator/interactions` | POST | Log user interaction |
-| `/api/orchestrator/predictions` | GET | Get next-action predictions |
-| `/api/orchestrator/stats` | GET | Session stats |
-| `/api/orchestrator/preload` | POST | Pre-fetch data (role-gated) |
+| Endpoint                         | Method | Purpose                     |
+| -------------------------------- | ------ | --------------------------- |
+| `/api/orchestrator/interactions` | POST   | Log user interaction        |
+| `/api/orchestrator/predictions`  | GET    | Get next-action predictions |
+| `/api/orchestrator/stats`        | GET    | Session stats               |
+| `/api/orchestrator/preload`      | POST   | Pre-fetch data (role-gated) |
 
 **Role-Based Access**:
+
 - `user`: Can log interactions, view own predictions
 - `admin`: Can preload/batch operations
 - File: `src/authMiddleware.ts` (role gates)
@@ -1538,16 +1628,17 @@ GET /api/ted/snapshot
 
 **Endpoints:**
 
-| Endpoint | Method | Purpose | Auth |
-|----------|--------|---------|------|
-| `/api/steward/overview` | GET | Current focus + status | JWT |
-| `/api/steward/config` | GET/PUT | Configure focus | JWT |
-| `/api/steward/run-module` | POST | Trigger analysis module | JWT |
-| `/api/steward/findings` | GET | Analysis findings list | JWT |
-| `/api/steward/tasks` | GET | Action tasks | JWT |
-| `/api/steward/apply-task` | POST | Apply task (mutation) | JWT + Admin |
+| Endpoint                  | Method  | Purpose                 | Auth        |
+| ------------------------- | ------- | ----------------------- | ----------- |
+| `/api/steward/overview`   | GET     | Current focus + status  | JWT         |
+| `/api/steward/config`     | GET/PUT | Configure focus         | JWT         |
+| `/api/steward/run-module` | POST    | Trigger analysis module | JWT         |
+| `/api/steward/findings`   | GET     | Analysis findings list  | JWT         |
+| `/api/steward/tasks`      | GET     | Action tasks            | JWT         |
+| `/api/steward/apply-task` | POST    | Apply task (mutation)   | JWT + Admin |
 
 **Steward Features**:
+
 - Tracks hypothesis focus (company, risk type, etc.)
 - Generates analysis findings
 - Proposes data corrections/enrichments (tasks)
@@ -1561,13 +1652,14 @@ GET /api/ted/snapshot
 
 **Endpoints:**
 
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/api/ai/provider-settings` | GET | Configured AI providers |
-| `/api/metrics/prometheus` | GET | Prometheus metrics |
-| `/api/metrics/json` | GET | JSON format metrics |
+| Endpoint                    | Method | Purpose                 |
+| --------------------------- | ------ | ----------------------- |
+| `/api/ai/provider-settings` | GET    | Configured AI providers |
+| `/api/metrics/prometheus`   | GET    | Prometheus metrics      |
+| `/api/metrics/json`         | GET    | JSON format metrics     |
 
 **Prometheus Metrics**:
+
 - HTTP request latency, error rates
 - Queue job counts (queued, active, completed)
 - AI runtime status (local vs. cloud)
@@ -1583,19 +1675,20 @@ GET /api/ted/snapshot
 
 **Repositories (SQLite-backed):**
 
-| Domain | Database File | Tables | Purpose |
-|--------|---------------|--------|---------|
-| **Trading** | `trading-desktop.db` | `trading_orders`, `trading_positions`, `trading_fills` | Orders, positions, execution history |
-| **Journal** | `journal-desktop.db` | `journal_trades`, `journal_tags`, `journal_sessions` | Trade review, statistics |
-| **Public Flow** | `publicflow-desktop.db` | `flow_filings`, `flow_themes` | SEC filings cache |
-| **Congress** | `congress-desktop.db` | `congress_trades`, `congress_lobbying` | Congress data cache |
-| **Supply Chain** | `supplychain-desktop.db` | `sc_entities`, `sc_relationships`, `sc_maps` | Graph cache |
-| **GWMD** | `gwmd-desktop.db` | `gwmd_graphs`, `gwmd_searches` | GWMD graph cache |
-| **AI Research** | `ai-research-desktop.db` | `research_briefs`, `research_jobs` | Brief history |
+| Domain           | Database File            | Tables                                                 | Purpose                              |
+| ---------------- | ------------------------ | ------------------------------------------------------ | ------------------------------------ |
+| **Trading**      | `trading-desktop.db`     | `trading_orders`, `trading_positions`, `trading_fills` | Orders, positions, execution history |
+| **Journal**      | `journal-desktop.db`     | `journal_trades`, `journal_tags`, `journal_sessions`   | Trade review, statistics             |
+| **Public Flow**  | `publicflow-desktop.db`  | `flow_filings`, `flow_themes`                          | SEC filings cache                    |
+| **Congress**     | `congress-desktop.db`    | `congress_trades`, `congress_lobbying`                 | Congress data cache                  |
+| **Supply Chain** | `supplychain-desktop.db` | `sc_entities`, `sc_relationships`, `sc_maps`           | Graph cache                          |
+| **GWMD**         | `gwmd-desktop.db`        | `gwmd_graphs`, `gwmd_searches`                         | GWMD graph cache                     |
+| **AI Research**  | `ai-research-desktop.db` | `research_briefs`, `research_jobs`                     | Brief history                        |
 
 **Location**: `%appdata%\trading-terminal\data\`
 
 **File References**:
+
 - Database initialization: `apps/desktop/src/main/database/init.ts`
 - Migration system: Using `better-sqlite3` with migration scripts
 - File: `apps/desktop/src/main/database/migrations/`
@@ -1606,21 +1699,22 @@ GET /api/ted/snapshot
 
 **Core Tables:**
 
-| Table | Columns | Purpose |
-|-------|---------|---------|
-| `users` | id, email, username, password_hash, 2fa_secret, created_at | User accounts |
-| `user_settings` | user_id, key, value, updated_at | Per-user config |
-| `trading_orders` | id, user_id, symbol, side, qty, price, status, filled_qty, created_at | Order history |
-| `trading_positions` | id, user_id, symbol, qty, avg_price, created_at, updated_at | Current positions |
-| `research_jobs` | id, user_id, type, status, result, created_at, completed_at | AI job tracking |
-| `research_briefs` | id, job_id, user_id, title, content, created_at | Generated briefs |
-| `congress_data` | id, member, symbol, action, value, date_filed | Congress transactions (cache) |
-| `gwmd_graphs` | id, user_id, owner_entity, nodes, edges, created_at | Synced GWMD graphs |
-| `tenant_context` | user_id, tenant_id, role, created_at | Multi-tenant mapping |
+| Table               | Columns                                                               | Purpose                       |
+| ------------------- | --------------------------------------------------------------------- | ----------------------------- |
+| `users`             | id, email, username, password_hash, 2fa_secret, created_at            | User accounts                 |
+| `user_settings`     | user_id, key, value, updated_at                                       | Per-user config               |
+| `trading_orders`    | id, user_id, symbol, side, qty, price, status, filled_qty, created_at | Order history                 |
+| `trading_positions` | id, user_id, symbol, qty, avg_price, created_at, updated_at           | Current positions             |
+| `research_jobs`     | id, user_id, type, status, result, created_at, completed_at           | AI job tracking               |
+| `research_briefs`   | id, job_id, user_id, title, content, created_at                       | Generated briefs              |
+| `congress_data`     | id, member, symbol, action, value, date_filed                         | Congress transactions (cache) |
+| `gwmd_graphs`       | id, user_id, owner_entity, nodes, edges, created_at                   | Synced GWMD graphs            |
+| `tenant_context`    | user_id, tenant_id, role, created_at                                  | Multi-tenant mapping          |
 
 **File**: `apps/backend/src/index.ts` (database pool init)
 
 **Optional Redis Cache**:
+
 - Session tokens
 - Calendar event cache
 - GWMD sync status
@@ -1651,11 +1745,13 @@ GET /api/ted/snapshot
    - Status: Ready for critical decisions
 
 **Local Graph Storage**:
+
 - Database: SQLite (desktop) or PostgreSQL (backend)
 - Tables: `graph_entities`, `graph_relationships`, `graph_evidence`
 - Indexing: On confidence, zone, source, freshness
 
 **Revalidation Pipeline**:
+
 - Endpoint: POST `/api/data-vault/revalidate`
 - Process: Re-check entities against current sources
 - Update confidence scores
@@ -1663,6 +1759,7 @@ GET /api/ted/snapshot
 - File: `src/services/dataVault/revalidateService.ts`
 
 **Export Capability**:
+
 - Format: JSON (with metadata), CSV (flat), GraphML (viz)
 - File: `src/services/dataVault/exportService.ts`
 
@@ -1675,23 +1772,27 @@ GET /api/ted/snapshot
 **Status**: PRODUCTION
 
 **Build Tools**:
+
 - Bundler: Vite (React), esbuild (backend compile)
 - Packager: electron-builder
 - Installer: NSIS (Windows EXE)
 - File: `apps/desktop/electron-builder.config.cjs`
 
 **Build Artifacts**:
+
 - Windows EXE installer: `Trading Cockpit Setup 0.0.1.exe`
 - Unpacked app directory: `win-unpacked/`
 - Update metadata: `latest.yml`, `.blockmap` files
 - Location: `apps/desktop/release/`
 
 **Code Signing** (Production Only):
+
 - Certificate: Windows code signing cert (if configured)
 - EV certificate recommended for UAC prompts
 - File: `electron-builder.config.cjs` (certificateFile, certificatePassword)
 
 **Auto-Update**:
+
 - Mechanism: electron-updater (checks `latest.yml`)
 - Frequency: Daily check at app start
 - File: `src/main/updater.ts`
@@ -1701,26 +1802,28 @@ GET /api/ted/snapshot
 **Status**: PRODUCTION
 
 **Build Process**:
+
 1. `npm run build` → Compile TypeScript to JS
 2. `npm run start` → Start Express server
 3. Docker: `docker build -f apps/backend/Dockerfile`
 
 **Dockerfile**:
+
 - Base: Node.js 18 LTS Alpine
 - Exposures: Port 3000 (HTTP)
 - File: `apps/backend/Dockerfile`
 
 **Environment Variables** (Docker/run):
 
-| Variable | Purpose | Example |
-|----------|---------|---------|
-| `DATABASE_URL` | PostgreSQL connection | `postgres://user:pass@localhost/tradingdb` |
-| `REDIS_URL` | Redis cache (optional) | `redis://localhost:6379` |
-| `JWT_SECRET` | Token signing key | 32+ char random string |
-| `AI_PROVIDER` | AI backend | `localai` / `openai` / `claude` |
-| `AI_ENDPOINT` | AI service URL | `http://localai:8080` |
-| `TED_API_KEY` | TED data feed | API key from provider |
-| `LOG_LEVEL` | Logging verbosity | `debug` / `info` / `warn` / `error` |
+| Variable       | Purpose                | Example                                    |
+| -------------- | ---------------------- | ------------------------------------------ |
+| `DATABASE_URL` | PostgreSQL connection  | `postgres://user:pass@localhost/tradingdb` |
+| `REDIS_URL`    | Redis cache (optional) | `redis://localhost:6379`                   |
+| `JWT_SECRET`   | Token signing key      | 32+ char random string                     |
+| `AI_PROVIDER`  | AI backend             | `localai` / `openai` / `claude`            |
+| `AI_ENDPOINT`  | AI service URL         | `http://localai:8080`                      |
+| `TED_API_KEY`  | TED data feed          | API key from provider                      |
+| `LOG_LEVEL`    | Logging verbosity      | `debug` / `info` / `warn` / `error`        |
 
 **File**: `apps/backend/Dockerfile`, environment examples in repo root
 
@@ -1729,27 +1832,29 @@ GET /api/ted/snapshot
 **Status**: PRODUCTION
 
 **Migration Files** (SQL):
+
 - Location: `apps/backend/migrations/`
 - Naming: `001_init.sql`, `002_add_table.sql`, etc.
 - Applied sequentially on startup
 
 **Key Migrations**:
 
-| # | Name | Timestamp | Purpose |
-|---|------|-----------|---------|
-| 001 | `normalized_core` | Initial | Core schema (users, orders, briefs) |
-| 002 | `migrate_from_user_state` | - | Legacy data conversion |
-| 003 | `ai_research_briefs` | - | Research job + brief tables |
-| 008 | `auth_identity_foundation` | - | Enhanced auth fields |
-| 009 | `auth_users_license_key` | - | License key support |
-| 010 | `tenant_id_foundation` | - | Multi-tenant columns |
-| 012 | `gwmd_cloud` | - | GWMD sync tables |
-| 013 | `ted_procurement_intel` | - | TED data tables |
-| 014 | `sec_edgar_vault_extension` | - | Security enrichment |
+| #   | Name                        | Timestamp | Purpose                             |
+| --- | --------------------------- | --------- | ----------------------------------- |
+| 001 | `normalized_core`           | Initial   | Core schema (users, orders, briefs) |
+| 002 | `migrate_from_user_state`   | -         | Legacy data conversion              |
+| 003 | `ai_research_briefs`        | -         | Research job + brief tables         |
+| 008 | `auth_identity_foundation`  | -         | Enhanced auth fields                |
+| 009 | `auth_users_license_key`    | -         | License key support                 |
+| 010 | `tenant_id_foundation`      | -         | Multi-tenant columns                |
+| 012 | `gwmd_cloud`                | -         | GWMD sync tables                    |
+| 013 | `ted_procurement_intel`     | -         | TED data tables                     |
+| 014 | `sec_edgar_vault_extension` | -         | Security enrichment                 |
 
 **Location**: `apps/backend/migrations/` directory
 
 **Monitoring**:
+
 - Track applied migrations: `schema_migrations` table
 - Automatic detection: Compare applied vs. filesystem on startup
 - Rollback: Manual if needed (not automated)
@@ -1760,24 +1865,24 @@ GET /api/ted/snapshot
 
 ### 8.1 By Feature Family
 
-| Family | Maturity | Status | Notes |
-|--------|----------|--------|-------|
-| **AI Intelligence** | Advanced Prototype → Production | 80% | Research queue, briefs, congress/calendar AI done. Steward/Orchestrator in production. |
-| **Graph & Data Vault** | Advanced Research Prototype | 70% | Local enrichment pipeline solid. Cloud sync conditional. |
-| **Supply Chain Intelligence** | Advanced Integrated Prototype | 75% | Map generation, shock analysis, TED overlay integrated. Performance-tested on 1K+ node graphs. |
-| **Core Trading Execution** | Usable Foundation | 60% | Order ticket, position sizing, journal solid. Risk calc (margin, Greeks) not yet. |
-| **Classical Markets** (Charting/Microstructure) | Early Prototype | 30% | MACRO (JOLTS) done. Microscape placeholder. Structure partial (no drawing tools). |
-| **Maritime/Aviation Maps** | Implemented, Unshipped | 50% | Cargo Flights + Oil Tanker pages coded, not in primary nav. Can be re-enabled. |
+| Family                                          | Maturity                        | Status | Notes                                                                                          |
+| ----------------------------------------------- | ------------------------------- | ------ | ---------------------------------------------------------------------------------------------- |
+| **AI Intelligence**                             | Advanced Prototype → Production | 80%    | Research queue, briefs, congress/calendar AI done. Steward/Orchestrator in production.         |
+| **Graph & Data Vault**                          | Advanced Research Prototype     | 70%    | Local enrichment pipeline solid. Cloud sync conditional.                                       |
+| **Supply Chain Intelligence**                   | Advanced Integrated Prototype   | 75%    | Map generation, shock analysis, TED overlay integrated. Performance-tested on 1K+ node graphs. |
+| **Core Trading Execution**                      | Usable Foundation               | 60%    | Order ticket, position sizing, journal solid. Risk calc (margin, Greeks) not yet.              |
+| **Classical Markets** (Charting/Microstructure) | Early Prototype                 | 30%    | MACRO (JOLTS) done. Microscape placeholder. Structure partial (no drawing tools).              |
+| **Maritime/Aviation Maps**                      | Implemented, Unshipped          | 50%    | Cargo Flights + Oil Tanker pages coded, not in primary nav. Can be re-enabled.                 |
 
 ### 8.2 Risk Zones
 
-| Zone | Risk Level | Mitigation |
-|------|-----------|------------|
-| **IPC Surface** | HIGH | Document critical paths; add integration tests |
-| **Multi-Tenant Auth** | MEDIUM | Audit tenant context propagation; unit test role gates |
-| **Graph Enrichment** | MEDIUM | Validate zone moves; confidence score audit trail |
-| **AI Fallback Chains** | MEDIUM | Log all fallback activations; monitor mock data usage |
-| **Market Data Feeds** | MEDIUM | Implement feed health checks; alert on stale data |
+| Zone                   | Risk Level | Mitigation                                             |
+| ---------------------- | ---------- | ------------------------------------------------------ |
+| **IPC Surface**        | HIGH       | Document critical paths; add integration tests         |
+| **Multi-Tenant Auth**  | MEDIUM     | Audit tenant context propagation; unit test role gates |
+| **Graph Enrichment**   | MEDIUM     | Validate zone moves; confidence score audit trail      |
+| **AI Fallback Chains** | MEDIUM     | Log all fallback activations; monitor mock data usage  |
+| **Market Data Feeds**  | MEDIUM     | Implement feed health checks; alert on stale data      |
 
 ---
 
@@ -1785,30 +1890,30 @@ GET /api/ted/snapshot
 
 ### 9.1 Immediate (Next Sprint)
 
-| Gap | Impact | Effort | Owner |
-|-----|--------|--------|-------|
-| **Tab model consolidation** | Tech debt | 2-4h | Desktop Team |
-| **Microscape pages stub** | UX gap | 4-8h | Desktop Team |
-| **IPC integration tests** | Quality | 8-16h | QA + Desktop |
-| **STRUCTURE drawing tools** | Feature | 20-30h | Desktop Team |
+| Gap                         | Impact    | Effort | Owner        |
+| --------------------------- | --------- | ------ | ------------ |
+| **Tab model consolidation** | Tech debt | 2-4h   | Desktop Team |
+| **Microscape pages stub**   | UX gap    | 4-8h   | Desktop Team |
+| **IPC integration tests**   | Quality   | 8-16h  | QA + Desktop |
+| **STRUCTURE drawing tools** | Feature   | 20-30h | Desktop Team |
 
 ### 9.2 Short Term (Q2 2026)
 
-| Gap | Impact | ETA | Owner |
-|-----|--------|-----|-------|
-| **Portfolio margin calculator** | Trading | 4 weeks | Quantitative Team |
-| **Options analytics (Greeks)** | Feature | 6 weeks | Options Team |
-| **Multi-leg strategy builder** | Feature | 8 weeks | Desktop + Backend |
-| **Custom market data feeds** | Integration | 8 weeks | Data Team |
+| Gap                             | Impact      | ETA     | Owner             |
+| ------------------------------- | ----------- | ------- | ----------------- |
+| **Portfolio margin calculator** | Trading     | 4 weeks | Quantitative Team |
+| **Options analytics (Greeks)**  | Feature     | 6 weeks | Options Team      |
+| **Multi-leg strategy builder**  | Feature     | 8 weeks | Desktop + Backend |
+| **Custom market data feeds**    | Integration | 8 weeks | Data Team         |
 
 ### 9.3 Medium Term (Q3-Q4 2026)
 
-| Gap | Impact | ETA | Owner |
-|-----|--------|-----|-------|
-| **Level 2 depth rendering** | Trading | 12 weeks | Desktop Team |
-| **Options P&L calculator** | Feature | 12 weeks | Quantitative |
-| **AI agent personality system** | Feature | 16 weeks | AI Team |
-| **Real-time market API** | Integration | 16 weeks | Infra + Data |
+| Gap                             | Impact      | ETA      | Owner        |
+| ------------------------------- | ----------- | -------- | ------------ |
+| **Level 2 depth rendering**     | Trading     | 12 weeks | Desktop Team |
+| **Options P&L calculator**      | Feature     | 12 weeks | Quantitative |
+| **AI agent personality system** | Feature     | 16 weeks | AI Team      |
+| **Real-time market API**        | Integration | 16 weeks | Infra + Data |
 
 ---
 
@@ -1818,7 +1923,7 @@ GET /api/ted/snapshot
 
 **Verification Steps** (for next release):
 
-- [ ] All 16 tabs render without errors
+- [ ] All 17 tabs render without errors
 - [ ] IPC health check (all critical channels respond)
 - [ ] Backend health endpoint returns 200
 - [ ] Auth flow: signup → login → 2FA → logout works
@@ -1835,10 +1940,10 @@ GET /api/ted/snapshot
 
 **Version History:**
 
-| Version | Date | Author | Summary |
-|---------|------|--------|---------|
-| 4.0 | 2026-03-22 | Dev Team | Initial V4 status baseline |
-| 5.0 | 2026-03-25 | Dev Team | Comprehensive feature audit, detailed maturity assessment |
+| Version | Date       | Author   | Summary                                                   |
+| ------- | ---------- | -------- | --------------------------------------------------------- |
+| 4.0     | 2026-03-22 | Dev Team | Initial V4 status baseline                                |
+| 5.0     | 2026-03-25 | Dev Team | Comprehensive feature audit, detailed maturity assessment |
 
 **Next Update**: April 1, 2026 (or post-release)
 
@@ -1850,14 +1955,14 @@ GET /api/ted/snapshot
 
 ### A.1 Required External Services
 
-| Service | Purpose | Fallback | Status |
-|---------|---------|----------|--------|
-| **PostgreSQL** | Backend data persistence | SQLite (desktop only) | Required |
-| **Redis** (optional) | Session/cache layer | In-memory store | Recommended |
-| **LocalAI** | Local LLM runtime | Cloud AI or mock | Optional w/ fallback |
-| **SEC EDGAR API** | Congress/flow data | Cached dump | Required (or cached) |
-| **FRED API** | Economic data | Demo data | Required (or demo) |
-| **TED Data Feed** | Threat intelligence | Mock data | Optional w/ fallback |
+| Service              | Purpose                  | Fallback              | Status               |
+| -------------------- | ------------------------ | --------------------- | -------------------- |
+| **PostgreSQL**       | Backend data persistence | SQLite (desktop only) | Required             |
+| **Redis** (optional) | Session/cache layer      | In-memory store       | Recommended          |
+| **LocalAI**          | Local LLM runtime        | Cloud AI or mock      | Optional w/ fallback |
+| **SEC EDGAR API**    | Congress/flow data       | Cached dump           | Required (or cached) |
+| **FRED API**         | Economic data            | Demo data             | Required (or demo)   |
+| **TED Data Feed**    | Threat intelligence      | Mock data             | Optional w/ fallback |
 
 ### A.2 Client Environment Requirements
 
@@ -1878,7 +1983,7 @@ apps/desktop/
 │   ├── main/           # Electron main process
 │   ├── preload/        # Preload scripts
 │   └── renderer/       # React frontend
-│       ├── pages/      # Tab pages (16 tabs)
+│       ├── pages/      # Tab pages (17 tabs)
 │       ├── stores/     # Zustand stores
 │       ├── components/ # Shared components
 │       └── services/   # Frontend service layer
@@ -1896,7 +2001,7 @@ apps/backend/
 │   ├── handlers/       # Request handlers
 │   ├── queue.ts        # Queue system
 │   └── infra.ts        # Database/Redis init
-├── migrations/         # SQL migration files (001-016)
+├── migrations/         # SQL migration files (001-017)
 ├── Dockerfile         # Container build
 └── package.json
 ```
@@ -1946,5 +2051,4 @@ packages/
 ---
 
 **End of Document**  
-*Treat as operational ground truth as of March 25, 2026.*
-
+_Treat as operational ground truth as of March 25, 2026._

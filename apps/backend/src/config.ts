@@ -115,6 +115,23 @@ const envSchema = z.object({
   TED_LIVE_AUTH_HEADER: z.string().min(1).default("x-api-key"),
   TED_LIVE_TIMEOUT_MS: z.coerce.number().int().positive().default(12000),
   TED_LIVE_WINDOW_QUERY_PARAM: z.string().min(1).default("window"),
+  EDGAR_USER_AGENT: z
+    .string()
+    .min(12)
+    .default("TradingTerminal/0.0.1 sec-ops@tradingcockpit.dev"),
+  EDGAR_WATCHER_ENABLED: envBool(false),
+  EDGAR_WATCHER_INTERVAL_SECONDS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(300),
+  EDGAR_WATCHER_CIKS: z.string().default(""),
+  EDGAR_WATCHER_BACKFILL_DAYS: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(365)
+    .default(90),
   OPENAI_API_KEY: z.string().min(16).optional(),
   GOOGLE_GEMINI_API_KEY: z.string().min(16).optional(),
   MICROSOFT_COPILOT_API_KEY: z.string().min(16).optional(),

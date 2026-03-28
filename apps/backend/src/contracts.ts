@@ -343,6 +343,491 @@ export const aiBriefDetailSchema = z.object({
   ),
 });
 
+// ============================================================================
+// STRATEGY CRUD AND VERSIONING
+// ============================================================================
+
+export const strategyStageSchema = z.enum([
+  "candidate",
+  "validation",
+  "production",
+  "retired",
+]);
+
+export const strategyDefinitionSchema = z.object({
+  id: z.string(),
+  name: z.string().min(1),
+  stage: strategyStageSchema,
+  tags: z.array(z.string()).default([]),
+  description: z.string().default(""),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+
+export const strategyVersionSchema = z.object({
+  id: z.string(),
+  strategyId: z.string(),
+  version: z.string(),
+  scriptLanguage: z.enum(["javascript", "typescript"]),
+  scriptSource: z.string(),
+  scriptChecksum: z.string(),
+  universe: z.array(z.string()),
+  assumptions: z.record(z.string(), z.unknown()).default({}),
+  createdAt: z.string().datetime(),
+});
+
+export const createStrategyRequestSchema = z.object({
+  name: z.string().min(1).max(200),
+  description: z.string().max(1000).optional(),
+});
+
+export const createStrategyResponseSchema = z.object({
+  strategy: strategyDefinitionSchema,
+});
+
+export const listStrategiesResponseSchema = z.object({
+  strategies: z.array(strategyDefinitionSchema),
+});
+
+export const getStrategyResponseSchema = z.object({
+  strategy: strategyDefinitionSchema,
+  version: strategyVersionSchema,
+});
+
+export const updateStrategyRequestSchema = z.object({
+  name: z.string().min(1).max(200).optional(),
+  description: z.string().max(1000).optional(),
+  stage: strategyStageSchema.optional(),
+  tags: z.array(z.string()).optional(),
+});
+
+export const createStrategyVersionRequestSchema = z.object({
+  scriptLanguage: z.enum(["javascript", "typescript"]).optional(),
+  scriptEntrypoint: z.string().min(1).default("onBar"),
+  scriptSource: z.string().min(1),
+  universe: z.array(z.string().min(1)).min(1),
+  assumptions: z.record(z.string(), z.unknown()).default({}),
+  notes: z.string().max(1000).optional(),
+});
+
+export const createStrategyVersionResponseSchema = z.object({
+  version: strategyVersionSchema,
+});
+
+export const getLatestVersionResponseSchema = z.object({
+  version: strategyVersionSchema,
+});
+
+// ============================================================================
+// STRATEGY BACKTESTING
+// ============================================================================
+
+export const strategyBacktestRunRequestSchema = z.object({
+  strategyId: z.string().min(1),
+  strategyVersion: z.string().min(1),
+  datasetSnapshotId: z.string().min(1),
+  executionMode: z
+    .enum(["desktop-local", "backend", "paper", "live"])
+    .default("backend"),
+  queuePriority: z.enum(["low", "normal", "high"]).default("normal"),
+  queueResourceClass: z.enum(["standard", "heavy"]).default("standard"),
+  maxAttempts: z.number().int().min(1).max(10).default(3),
+  assumptions: z
+    .object({
+      transactionCostBps: z.number().min(0).optional(),
+      slippageBps: z.number().min(0).optional(),
+      borrowCostBps: z.number().min(0).optional(),
+      spreadBps: z.number().min(0).optional(),
+      marketImpactBpsPer10PctADV: z.number().min(0).optional(),
+      liquidityCapPct: z.number().min(0).max(100).optional(),
+      maxParticipationPct: z.number().min(0).max(100).optional(),
+      fillPolicy: z.enum(["open", "close", "vwap", "custom"]).optional(),
+      customPriceFormula: z.enum(["hl2", "hlc3", "ohlc4"]).optional(),
+      benchmarkSymbol: z.string().min(1).optional(),
+      benchmarkWeights: z.record(z.string(), z.number()).optional(),
+      allowShorts: z.boolean().optional(),
+      hardToBorrowSymbols: z.array(z.string()).optional(),
+      borrowAvailableSymbols: z.array(z.string()).optional(),
+      shortBorrowRateBps: z.number().min(0).optional(),
+      shortBorrowMaxBps: z.number().min(0).optional(),
+      blockedDates: z.array(z.string()).optional(),
+      allowedTradingWeekdays: z
+        .array(z.number().int().min(0).max(6))
+        .optional(),
+      staleBarMaxGapDays: z.number().int().min(1).optional(),
+      staleBarPolicy: z.enum(["warn", "skip", "block"]).optional(),
+      missingBarPolicy: z.enum(["warn", "skip", "block"]).optional(),
+      symbolClassification: z
+        .record(
+          z.string(),
+          z.object({
+            sector: z.string().optional(),
+            industry: z.string().optional(),
+          }),
+        )
+        .optional(),
+      factorExposureMap: z
+        .record(z.string(), z.record(z.string(), z.number()))
+        .optional(),
+      executionTiming: z
+        .enum(["open", "close", "next-open", "next-close"])
+        .optional(),
+      rebalancingFrequency: z
+        .enum(["daily", "weekly", "monthly", "custom"])
+        .optional(),
+      customRebalanceDays: z
+        .array(z.number().int().positive())
+        .max(31)
+        .optional(),
+      riskControls: z
+        .object({
+          maxGrossExposurePct: z.number().min(0).max(1).optional(),
+          maxNetExposurePct: z.number().min(0).max(1).optional(),
+          maxPositionWeightPct: z.number().min(0).max(1).optional(),
+          maxSectorExposurePct: z.number().min(0).max(1).optional(),
+          maxIndustryExposurePct: z.number().min(0).max(1).optional(),
+          maxTurnoverPct: z.number().min(0).max(1).optional(),
+          stopLossPct: z.number().min(0).max(1).optional(),
+          maxDrawdownPct: z.number().min(0).max(1).optional(),
+          haltTradingOnDrawdownPct: z.number().min(0).max(1).optional(),
+          minCashBufferPct: z.number().min(0).max(1).optional(),
+          maxActiveWeightPct: z.number().min(0).max(1).optional(),
+          factorConstraints: z
+            .record(
+              z.string(),
+              z.object({
+                min: z.number().optional(),
+                max: z.number().optional(),
+              }),
+            )
+            .optional(),
+          maxConcurrentPositions: z.number().int().positive().optional(),
+        })
+        .optional(),
+    })
+    .passthrough()
+    .default({}),
+  idempotencyKey: z.string().min(1).max(256).optional(),
+});
+
+export const strategyRunStatusSchema = z.enum([
+  "queued",
+  "running",
+  "completed",
+  "failed",
+  "cancelled",
+]);
+
+export const strategyBacktestRunSummarySchema = z.object({
+  runId: z.string(),
+  strategyId: z.string(),
+  strategyVersion: z.string(),
+  datasetSnapshotId: z.string(),
+  executionMode: z.enum(["desktop-local", "backend", "paper", "live"]),
+  queueJobId: z.string().optional(),
+  queuePriority: z.enum(["low", "normal", "high"]).default("normal"),
+  queueResourceClass: z.enum(["standard", "heavy"]).default("standard"),
+  retryCount: z.number().int().nonnegative().default(0),
+  maxAttempts: z.number().int().positive().default(1),
+  lastRetryAt: z.string().nullable().optional(),
+  lastError: z.string().nullable().optional(),
+  status: strategyRunStatusSchema,
+  requestedAt: z.string(),
+  startedAt: z.string().nullable().optional(),
+  finishedAt: z.string().nullable().optional(),
+  error: z.string().nullable().optional(),
+  metrics: z.record(z.string(), z.unknown()).default({}),
+  runMetadata: z.record(z.string(), z.unknown()).default({}),
+});
+
+export const strategyBacktestRunEnqueueResponseSchema = z.object({
+  runId: z.string(),
+  status: strategyRunStatusSchema,
+});
+
+export const strategyDatasetSnapshotSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  version: z.string().min(1),
+  snapshotAtIso: z.string(),
+  rowCount: z.number().int().nonnegative().nullable().optional(),
+  sourceManifest: z.record(z.string(), z.unknown()).default({}),
+  checksumSha256: z.string().min(16),
+});
+
+export const strategyDatasetSnapshotsResponseSchema = z.object({
+  snapshots: z.array(strategyDatasetSnapshotSchema),
+});
+
+export const strategyBacktestRunStatusResponseSchema = z.object({
+  run: strategyBacktestRunSummarySchema,
+});
+
+export const strategyRunArtifactSchema = z.object({
+  artifactId: z.string(),
+  runId: z.string(),
+  artifactKind: z.string(),
+  artifactUri: z.string(),
+  checksumSha256: z.string().optional(),
+  sizeBytes: z.number().int().nonnegative().optional(),
+  payload: z.record(z.string(), z.unknown()).default({}),
+  createdAt: z.string(),
+});
+
+export const strategyBacktestArtifactsResponseSchema = z.object({
+  artifacts: z.array(strategyRunArtifactSchema),
+});
+
+export const strategyBacktestRobustnessRequestSchema = z
+  .object({
+    persistExperimentName: z.string().min(1).max(200).optional(),
+    tags: z.array(z.string().min(1)).max(32).optional(),
+    notes: z.string().max(4000).optional(),
+  })
+  .default({});
+
+export const strategyBacktestRobustnessResponseSchema = z.object({
+  report: z.record(z.string(), z.unknown()),
+});
+
+export const strategyBacktestCompareResponseSchema = z.object({
+  comparison: z.object({
+    runId: z.string(),
+    baselineRunId: z.string(),
+    deltas: z.record(z.string(), z.number()),
+    improved: z.array(z.string()),
+    degraded: z.array(z.string()),
+  }),
+  lineage: z.record(z.string(), z.unknown()).optional(),
+});
+
+export const strategyRunExperimentRequestSchema = z.object({
+  experimentName: z.string().min(1).max(200),
+  tags: z.array(z.string().min(1)).max(32).default([]),
+  notes: z.string().max(4000).default(""),
+  parameters: z.record(z.string(), z.unknown()).default({}),
+});
+
+export const strategyRunExperimentResponseSchema = z.object({
+  experiment: z
+    .object({
+      experimentId: z.string(),
+      runId: z.string(),
+      strategyId: z.string(),
+      experimentName: z.string(),
+      tags: z.array(z.string()),
+      notes: z.string(),
+      parameters: z.record(z.string(), z.unknown()),
+      createdAt: z.string(),
+      updatedAt: z.string(),
+    })
+    .nullable(),
+});
+
+export const strategyPromotionRequestSchema = z.object({
+  strategyId: z.string().min(1),
+  fromStage: z.enum(["candidate", "validation", "production", "retired"]),
+  toStage: z.enum(["candidate", "validation", "production", "retired"]),
+  sourceRunId: z.string().min(1).optional(),
+  baselineRunId: z.string().min(1).optional(),
+  governanceProfileId: z.string().min(1).optional(),
+  acceptancePackId: z.string().min(1).optional(),
+  autoGatePassed: z.boolean(),
+  manualApprovedBy: z.string().min(1).optional(),
+  checklist: z.record(z.string(), z.boolean()).default({}),
+  rationale: z.string().max(4000).default(""),
+});
+
+export const strategyConnectorTypeSchema = z.enum([
+  "data-provider",
+  "paper-broker",
+]);
+
+export const strategyConnectorStatusSchema = z.enum([
+  "not_configured",
+  "configured",
+  "disabled",
+]);
+
+export const strategyConnectorUpsertRequestSchema = z.object({
+  connectorId: z.string().min(1).optional(),
+  connectorType: strategyConnectorTypeSchema,
+  status: strategyConnectorStatusSchema,
+  displayName: z.string().max(120).default(""),
+  config: z.record(z.string(), z.unknown()).default({}),
+  capabilities: z.record(z.string(), z.unknown()).default({}),
+});
+
+export const strategyConnectorSummarySchema = z.object({
+  connectorId: z.string(),
+  tenantId: z.string(),
+  connectorType: strategyConnectorTypeSchema,
+  status: strategyConnectorStatusSchema,
+  displayName: z.string(),
+  config: z.record(z.string(), z.unknown()).default({}),
+  capabilities: z.record(z.string(), z.unknown()).default({}),
+  updatedAt: z.string(),
+});
+
+export const strategyConnectorListResponseSchema = z.object({
+  connectors: z.array(strategyConnectorSummarySchema),
+});
+
+export const strategyGovernanceProfileUpsertRequestSchema = z.object({
+  profileId: z.string().min(1).optional(),
+  profileName: z.string().min(1).max(120),
+  isDefault: z.boolean().default(false),
+  transitionRules: z.record(z.string(), z.unknown()).default({}),
+  requiredReportSections: z.array(z.string().min(1)).max(256).default([]),
+  benchmarkRequired: z.boolean().default(false),
+  oosMinimums: z.record(z.string(), z.number()).default({}),
+  drawdownHaltRules: z.record(z.string(), z.unknown()).default({}),
+  replayTolerance: z.record(z.string(), z.number()).default({}),
+});
+
+export const strategyGovernanceProfileSummarySchema = z.object({
+  profileId: z.string(),
+  tenantId: z.string(),
+  profileName: z.string(),
+  isDefault: z.boolean(),
+  transitionRules: z.record(z.string(), z.unknown()).default({}),
+  requiredReportSections: z.array(z.string()),
+  benchmarkRequired: z.boolean(),
+  oosMinimums: z.record(z.string(), z.number()),
+  drawdownHaltRules: z.record(z.string(), z.unknown()),
+  replayTolerance: z.record(z.string(), z.number()),
+  updatedAt: z.string(),
+});
+
+export const strategyGovernanceProfileListResponseSchema = z.object({
+  profiles: z.array(strategyGovernanceProfileSummarySchema),
+});
+
+export const strategyAcceptancePackUpsertRequestSchema = z.object({
+  packId: z.string().min(1).optional(),
+  packName: z.string().min(1).max(120),
+  isDefault: z.boolean().default(false),
+  goldenStrategies: z.array(z.string().min(1)).max(500).default([]),
+  requiredReportSections: z.array(z.string().min(1)).max(256).default([]),
+  replayTolerance: z.record(z.string(), z.number()).default({}),
+  promotionChecklist: z.record(z.string(), z.boolean()).default({}),
+  definitionOfDone: z.record(z.string(), z.unknown()).default({}),
+});
+
+export const strategyAcceptancePackSummarySchema = z.object({
+  packId: z.string(),
+  tenantId: z.string(),
+  packName: z.string(),
+  isDefault: z.boolean(),
+  goldenStrategies: z.array(z.string()),
+  requiredReportSections: z.array(z.string()),
+  replayTolerance: z.record(z.string(), z.number()),
+  promotionChecklist: z.record(z.string(), z.boolean()),
+  definitionOfDone: z.record(z.string(), z.unknown()),
+  updatedAt: z.string(),
+});
+
+export const strategyAcceptancePackListResponseSchema = z.object({
+  packs: z.array(strategyAcceptancePackSummarySchema),
+});
+
+export const strategyGovernanceReadinessResponseSchema = z.object({
+  executionMode: z.enum(["paper", "live"]),
+  ready: z.boolean(),
+  checks: z.array(
+    z.object({
+      code: z.string(),
+      passed: z.boolean(),
+      message: z.string(),
+    }),
+  ),
+  connectorStatuses: z.object({
+    dataProvider: strategyConnectorStatusSchema.optional(),
+    paperBroker: strategyConnectorStatusSchema.optional(),
+  }),
+  defaults: z.object({
+    governanceProfileId: z.string().nullable(),
+    acceptancePackId: z.string().nullable(),
+  }),
+});
+
+export const strategyForwardProfileCreateRequestSchema = z.object({
+  strategyId: z.string().min(1),
+  sourceRunId: z.string().min(1),
+  baselineRunId: z.string().min(1).optional(),
+  executionMode: z.enum(["paper", "live"]).default("paper"),
+  governanceProfileId: z.string().min(1).optional(),
+  acceptancePackId: z.string().min(1).optional(),
+  autoGatePassed: z.boolean().default(false),
+  manualApprovedBy: z.string().min(1).optional(),
+  checklist: z.record(z.string(), z.boolean()).default({}),
+  benchmark: z.string().min(1).default("SPY"),
+  rebalanceFrozenAt: z.string(),
+  metadata: z.record(z.string(), z.unknown()).default({}),
+});
+
+export const strategyForwardProfileStatusSchema = z.enum([
+  "active",
+  "paused",
+  "stopped",
+]);
+
+export const strategyForwardProfileSummarySchema = z.object({
+  profileId: z.string(),
+  strategyId: z.string(),
+  sourceRunId: z.string(),
+  executionMode: z.enum(["paper", "live"]),
+  status: strategyForwardProfileStatusSchema,
+  benchmark: z.string(),
+  rebalanceFrozenAt: z.string(),
+  startedAt: z.string(),
+  stoppedAt: z.string().nullable(),
+  governanceProfileId: z.string().nullable(),
+  acceptancePackId: z.string().nullable(),
+  metadata: z.record(z.string(), z.unknown()).default({}),
+});
+
+export const strategyForwardProfileListResponseSchema = z.object({
+  profiles: z.array(strategyForwardProfileSummarySchema),
+});
+
+export const strategyForwardProfileStatusUpdateRequestSchema = z.object({
+  status: strategyForwardProfileStatusSchema,
+  reason: z.string().max(1000).optional(),
+});
+
+export const strategyForwardProfileDriftResponseSchema = z.object({
+  profileId: z.string(),
+  sourceRunId: z.string(),
+  candidateRunId: z.string(),
+  withinTolerance: z.boolean(),
+  tolerance: z.record(z.string(), z.number()),
+  metrics: z.array(
+    z.object({
+      key: z.string(),
+      source: z.number(),
+      candidate: z.number(),
+      absoluteDelta: z.number(),
+      tolerance: z.number().nullable(),
+      withinTolerance: z.boolean(),
+    }),
+  ),
+  violations: z.array(z.string()),
+});
+
+export const strategyForwardProfileAlertsResponseSchema = z.object({
+  profileId: z.string(),
+  generatedAt: z.string(),
+  alerts: z.array(
+    z.object({
+      severity: z.enum(["info", "warning", "critical"]),
+      code: z.string(),
+      message: z.string(),
+      context: z.record(z.string(), z.unknown()).default({}),
+    }),
+  ),
+});
+
 export const wsClientSubscribeSchema = z.object({
   type: z.literal("subscribe"),
   symbols: z.array(z.string().min(1)).max(50),

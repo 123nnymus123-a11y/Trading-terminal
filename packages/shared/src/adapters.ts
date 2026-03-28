@@ -1,4 +1,4 @@
-﻿import type { MarketDataChannel, MarketDataEvent } from "./marketData";
+﻿import type { MarketDataChannel, MarketDataEvent } from "./marketData.js";
 
 export interface MarketDataAdapter {
   readonly id: string;

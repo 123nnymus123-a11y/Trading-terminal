@@ -6,6 +6,7 @@
 
 import React, { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useGwmdMapStore } from "../store/gwmdMapStore";
+import type { GwmdSourceMode } from "../store/gwmdMapStore";
 import { useSettingsStore } from "../store/settingsStore";
 import GwmdWorldMap from "../components/supplyChain/GwmdWorldMap";
 import ContextPanel from "../components/supplyChain/ContextPanel";
@@ -28,6 +29,67 @@ const COLORS = {
 const GWMD_VIEW_SNAPSHOT_KEY = "gwmd:display-snapshot:v1";
 const GWMD_VIEW_SNAPSHOT_TTL = 1000 * 60 * 20;
 const GWMD_WALL_SYNC_CHANNEL_PREFIX = "gwmd-wall-sync";
+const GWMD_USER_SETTINGS_KEY = "gwmd:user-settings:v1";
+
+type GwmdUserSettings = {
+  defaultHops: number;
+  defaultRelation: string;
+  defaultRegion: string;
+  minConfidence: number;
+  sourceMode: GwmdSourceMode;
+  showUnresolved: boolean;
+};
+
+const DEFAULT_GWMD_USER_SETTINGS: GwmdUserSettings = {
+  defaultHops: 2,
+  defaultRelation: "all",
+  defaultRegion: "All",
+  minConfidence: 0,
+  sourceMode: "hybrid",
+  showUnresolved: true,
+};
+
+function readGwmdUserSettings(): GwmdUserSettings {
+  if (typeof window === "undefined") return DEFAULT_GWMD_USER_SETTINGS;
+  try {
+    const raw = window.localStorage.getItem(GWMD_USER_SETTINGS_KEY);
+    if (!raw) return DEFAULT_GWMD_USER_SETTINGS;
+    const parsed = JSON.parse(raw) as Partial<GwmdUserSettings>;
+    const defaultHops =
+      typeof parsed.defaultHops === "number" && Number.isFinite(parsed.defaultHops)
+        ? Math.max(1, Math.min(3, Math.floor(parsed.defaultHops)))
+        : DEFAULT_GWMD_USER_SETTINGS.defaultHops;
+    const minConfidence =
+      typeof parsed.minConfidence === "number" && Number.isFinite(parsed.minConfidence)
+        ? Math.max(0, Math.min(1, parsed.minConfidence))
+        : DEFAULT_GWMD_USER_SETTINGS.minConfidence;
+    const sourceMode =
+      parsed.sourceMode === "cache_only" ||
+      parsed.sourceMode === "hybrid" ||
+      parsed.sourceMode === "fresh"
+        ? parsed.sourceMode
+        : DEFAULT_GWMD_USER_SETTINGS.sourceMode;
+    return {
+      defaultHops,
+      defaultRelation:
+        typeof parsed.defaultRelation === "string" && parsed.defaultRelation.trim()
+          ? parsed.defaultRelation
+          : DEFAULT_GWMD_USER_SETTINGS.defaultRelation,
+      defaultRegion:
+        typeof parsed.defaultRegion === "string" && parsed.defaultRegion.trim()
+          ? parsed.defaultRegion
+          : DEFAULT_GWMD_USER_SETTINGS.defaultRegion,
+      minConfidence,
+      sourceMode,
+      showUnresolved:
+        typeof parsed.showUnresolved === "boolean"
+          ? parsed.showUnresolved
+          : DEFAULT_GWMD_USER_SETTINGS.showUnresolved,
+    };
+  } catch {
+    return DEFAULT_GWMD_USER_SETTINGS;
+  }
+}
 
 type GwmdDisplayMonitor = {
   id: number;
@@ -64,6 +126,7 @@ export default function GwmdMapPage() {
     graph,
     companies,
     searchTicker,
+    setSearchTicker,
     search,
     reset,
     clearPersisted,
@@ -153,6 +216,19 @@ export default function GwmdMapPage() {
   const isWallPrimary = isDisplayMode && wallContext.wallRole !== "satellite";
 
   const [showTedOverlay, setShowTedOverlay] = useState(false);
+  const gwmdUserSettings = useMemo(() => readGwmdUserSettings(), []);
+
+  useEffect(() => {
+    setGwmdFilters({
+      ...useGwmdMapStore.getState().gwmdFilters,
+      hops: gwmdUserSettings.defaultHops,
+      relation: gwmdUserSettings.defaultRelation,
+      region: gwmdUserSettings.defaultRegion,
+      minConfidence: gwmdUserSettings.minConfidence,
+      sourceMode: gwmdUserSettings.sourceMode,
+      showUnresolved: gwmdUserSettings.showUnresolved,
+    });
+  }, [gwmdUserSettings, setGwmdFilters]);
 
   const restoreDisplaySnapshot = useCallback(() => {
     if (typeof window === "undefined") return false;
@@ -173,6 +249,9 @@ export default function GwmdMapPage() {
           showFlows: boolean;
           showOnlyImpacted: boolean;
           hops?: number;
+          minConfidence?: number;
+          showUnresolved?: boolean;
+          sourceMode?: GwmdSourceMode;
         };
       };
       const ts = typeof parsed.timestamp === "number" ? parsed.timestamp : 0;
@@ -461,6 +540,9 @@ export default function GwmdMapPage() {
             showFlows: boolean;
             showOnlyImpacted: boolean;
             hops?: number;
+            minConfidence?: number;
+            showUnresolved?: boolean;
+            sourceMode?: GwmdSourceMode;
           };
           showEmpty?: boolean;
           searchInput?: string;
@@ -667,11 +749,21 @@ export default function GwmdMapPage() {
     console.log("[GWMD] Searching for", normalizedTicker, "with model:", model || "default");
 
     try {
-      await search(normalizedTicker, { model, hops: requestedHops });
+      await search(normalizedTicker, {
+        model,
+        hops: requestedHops,
+        sourceMode: gwmdFilters.sourceMode,
+      });
     } finally {
       setSearchInFlight(false);
     }
-  }, [gwmdFilters.hops, search, resolveSelectedGwmdModel, searchInFlight]);
+  }, [
+    gwmdFilters.hops,
+    gwmdFilters.sourceMode,
+    search,
+    resolveSelectedGwmdModel,
+    searchInFlight,
+  ]);
 
   const handleSuggestionClick = useCallback(
     (ticker: string) => {
@@ -690,6 +782,8 @@ export default function GwmdMapPage() {
   const statusLine = useMemo(() => {
     const base = `Loaded: ${companies.length} companies • Relationships: ${(graph?.edges ?? []).length}`;
     const hopText = `Display hops: ${Math.max(1, Math.min(3, gwmdFilters.hops ?? 2))}`;
+    const sourceModeText = `Source mode: ${gwmdFilters.sourceMode}`;
+    const confidenceText = `Min confidence: ${Math.round((gwmdFilters.minConfidence ?? 0) * 100)}%`;
     const source = typeof runMeta?.source === "string" ? runMeta.source : "";
     const unlocatedCount = typeof runMeta?.unlocatedCount === "number" ? runMeta.unlocatedCount : undefined;
 
@@ -703,8 +797,16 @@ export default function GwmdMapPage() {
     const sourceText = source ? `Source: ${source}` : null;
     const unlocatedText = typeof unlocatedCount === "number" ? `Unlocated: ${unlocatedCount}` : null;
 
-    return [base, hopText, modeText, sourceText, unlocatedText].filter(Boolean).join(" • ");
-  }, [companies.length, graph, gwmdFilters.hops, runStatus, runMeta]);
+    return [base, hopText, sourceModeText, confidenceText, modeText, sourceText, unlocatedText].filter(Boolean).join(" • ");
+  }, [
+    companies.length,
+    graph,
+    gwmdFilters.hops,
+    gwmdFilters.sourceMode,
+    gwmdFilters.minConfidence,
+    runStatus,
+    runMeta,
+  ]);
 
   const showSearchLoadingBar = searchInFlight || (loading && Boolean(searchInput.trim()));
 
@@ -1079,6 +1181,95 @@ export default function GwmdMapPage() {
             </select>
           </label>
 
+          <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ color: COLORS.textMuted, fontSize: 12 }}>Source</span>
+            <select
+              value={gwmdFilters.sourceMode}
+              onChange={(e) => {
+                const value = e.target.value as GwmdSourceMode;
+                setGwmdFilters({
+                  ...gwmdFilters,
+                  sourceMode: value,
+                });
+              }}
+              style={{
+                padding: "7px 10px",
+                borderRadius: 6,
+                border: `1px solid ${COLORS.border}`,
+                background: COLORS.bgSecondary,
+                color: COLORS.text,
+                fontSize: 12,
+              }}
+            >
+              <option value="hybrid">Hybrid</option>
+              <option value="fresh">Fresh AI</option>
+              <option value="cache_only">Cache only</option>
+            </select>
+          </label>
+
+          <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ color: COLORS.textMuted, fontSize: 12 }}>Min conf.</span>
+            <select
+              value={String(gwmdFilters.minConfidence ?? 0)}
+              onChange={(e) => {
+                setGwmdFilters({
+                  ...gwmdFilters,
+                  minConfidence: Number(e.target.value),
+                });
+              }}
+              style={{
+                padding: "7px 10px",
+                borderRadius: 6,
+                border: `1px solid ${COLORS.border}`,
+                background: COLORS.bgSecondary,
+                color: COLORS.text,
+                fontSize: 12,
+              }}
+            >
+              <option value="0">0%</option>
+              <option value="0.2">20%</option>
+              <option value="0.4">40%</option>
+              <option value="0.6">60%</option>
+              <option value="0.8">80%</option>
+            </select>
+          </label>
+
+          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: COLORS.textMuted }}>
+            <input
+              type="checkbox"
+              checked={gwmdFilters.showUnresolved}
+              onChange={(e) => {
+                setGwmdFilters({
+                  ...gwmdFilters,
+                  showUnresolved: e.target.checked,
+                });
+              }}
+            />
+            Show unresolved
+          </label>
+
+          <button
+            onClick={async () => {
+              await loadFromDb();
+              setSearchTicker(null);
+              setSearchInput("");
+            }}
+            disabled={loading}
+            style={{
+              padding: "8px 16px",
+              borderRadius: 6,
+              border: `1px solid ${COLORS.success}`,
+              background: "transparent",
+              color: COLORS.success,
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: loading ? "not-allowed" : "pointer",
+              opacity: loading ? 0.65 : 1,
+            }}
+          >
+            Show All Nodes
+          </button>
+
           <button
             onClick={() => setShowExposureBrief(true)}
             disabled={!graph}
@@ -1416,11 +1607,15 @@ export default function GwmdMapPage() {
 
         {runStatus === "degraded_cache" && (
           <div style={{ padding: "8px 12px", borderRadius: 6, background: COLORS.warning + "22", color: COLORS.warning, fontSize: 12 }}>
-            Running in degraded mode from scoped cache. Unlocated: {String((runMeta?.unlocatedCount as number | undefined) ?? 0)} • Hypothesis ratio: {String((runMeta?.hypothesisRatio as number | undefined) ?? 0)}
+            Running in degraded mode from scoped cache.
+            {gwmdFilters.showUnresolved
+              ? ` Unlocated: ${String((runMeta?.unlocatedCount as number | undefined) ?? 0)} •`
+              : ""}{" "}
+            Hypothesis ratio: {String((runMeta?.hypothesisRatio as number | undefined) ?? 0)}
           </div>
         )}
 
-        {companies.length > 0 && geoStats.located === 0 && (
+        {gwmdFilters.showUnresolved && companies.length > 0 && geoStats.located === 0 && (
           <div
             style={{
               padding: "8px 12px",

@@ -3,10 +3,14 @@
  * Fetches macro event data from multiple sources and normalizes to EconomicEvent format
  */
 
-import { EconomicEvent, FetcherConfig, FetcherResult } from './economicCalendar';
-import { createLogger } from './logger';
+import {
+  EconomicEvent,
+  FetcherConfig,
+  FetcherResult,
+} from "./economicCalendar.js";
+import { createLogger } from "./logger.js";
 
-const logger = createLogger({ scope: 'EconCalendarAdapters' });
+const logger = createLogger({ scope: "EconCalendarAdapters" });
 
 type FredObservation = { date?: string; value?: string };
 type FredResponse = { observations?: FredObservation[] };
@@ -47,18 +51,20 @@ type FinnhubResponse = { economicCalendar?: FinnhubEvent[] };
 type AlphaVantagePoint = { date?: string; value?: string };
 type AlphaVantageResponse = { data?: AlphaVantagePoint[]; Note?: string };
 
-const parseNumber = (value: string | number | undefined | null): number | null => {
+const parseNumber = (
+  value: string | number | undefined | null,
+): number | null => {
   if (value === null || value === undefined) return null;
-  const num = typeof value === 'number' ? value : parseFloat(value);
+  const num = typeof value === "number" ? value : parseFloat(value);
   return Number.isFinite(num) ? num : null;
 };
 
 const parseDate = (value?: string | number): Date => {
-  if (typeof value === 'number') {
+  if (typeof value === "number") {
     const ms = value < 1e12 ? value * 1000 : value;
     return new Date(ms);
   }
-  if (typeof value === 'string') return new Date(value);
+  if (typeof value === "string") return new Date(value);
   return new Date();
 };
 
@@ -73,7 +79,12 @@ export interface FREDAdapter {
 export const fredAdapter: FREDAdapter = {
   async fetch(config: FetcherConfig): Promise<FetcherResult> {
     if (!config.enabled || !config.apiKey) {
-      return { events: [], source: 'FRED', fetchedAt: new Date(), errors: ['FRED disabled or no API key'] };
+      return {
+        events: [],
+        source: "FRED",
+        fetchedAt: new Date(),
+        errors: ["FRED disabled or no API key"],
+      };
     }
 
     try {
@@ -81,12 +92,28 @@ export const fredAdapter: FREDAdapter = {
 
       // Key FRED series for macro events
       const series = [
-        { id: 'CPIAUCSL', title: 'CPI - All Urban Consumers', category: 'inflation' as const },
-        { id: 'PAYEMS', title: 'Total Nonfarm Payroll', category: 'employment' as const },
-        { id: 'ICSA', title: 'Initial Claims', category: 'employment' as const },
-        { id: 'RSXFS', title: 'Retail Sales', category: 'growth' as const },
-        { id: 'HOUST', title: 'Housing Starts', category: 'housing' as const },
-        { id: 'UMCSENT', title: 'University of Michigan: Consumer Sentiment', category: 'confidence' as const },
+        {
+          id: "CPIAUCSL",
+          title: "CPI - All Urban Consumers",
+          category: "inflation" as const,
+        },
+        {
+          id: "PAYEMS",
+          title: "Total Nonfarm Payroll",
+          category: "employment" as const,
+        },
+        {
+          id: "ICSA",
+          title: "Initial Claims",
+          category: "employment" as const,
+        },
+        { id: "RSXFS", title: "Retail Sales", category: "growth" as const },
+        { id: "HOUST", title: "Housing Starts", category: "housing" as const },
+        {
+          id: "UMCSENT",
+          title: "University of Michigan: Consumer Sentiment",
+          category: "confidence" as const,
+        },
       ];
 
       for (const ser of series) {
@@ -105,16 +132,18 @@ export const fredAdapter: FREDAdapter = {
             const event: EconomicEvent = {
               id: `fred-${ser.id}-${latest.date}`,
               title: ser.title,
-              country: 'US',
+              country: "US",
               eventCategory: ser.category,
               releaseDateTime: parseDate(latest.date),
-              timezone: 'America/New_York',
+              timezone: "America/New_York",
               actualValue: parseNumber(latest.value),
               previousValue: parseNumber(prev?.value),
               importance: 2,
-              sources: [{ name: 'FRED', sourceId: ser.id, fetchedAt: new Date() }],
+              sources: [
+                { name: "FRED", sourceId: ser.id, fetchedAt: new Date() },
+              ],
               lastFetched: new Date(),
-              status: 'released',
+              status: "released",
             };
 
             events.push(event);
@@ -124,10 +153,15 @@ export const fredAdapter: FREDAdapter = {
         }
       }
 
-      return { events, source: 'FRED', fetchedAt: new Date() };
+      return { events, source: "FRED", fetchedAt: new Date() };
     } catch (error) {
-      logger.error('FRED adapter error:', error);
-      return { events: [], source: 'FRED', fetchedAt: new Date(), errors: [String(error)] };
+      logger.error("FRED adapter error:", error);
+      return {
+        events: [],
+        source: "FRED",
+        fetchedAt: new Date(),
+        errors: [String(error)],
+      };
     }
   },
 };
@@ -143,7 +177,12 @@ export interface BLSAdapter {
 export const blsAdapter: BLSAdapter = {
   async fetch(config: FetcherConfig): Promise<FetcherResult> {
     if (!config.enabled || !config.apiKey) {
-      return { events: [], source: 'BLS', fetchedAt: new Date(), errors: ['BLS disabled or no API key'] };
+      return {
+        events: [],
+        source: "BLS",
+        fetchedAt: new Date(),
+        errors: ["BLS disabled or no API key"],
+      };
     }
 
     try {
@@ -151,10 +190,26 @@ export const blsAdapter: BLSAdapter = {
 
       // Key BLS series (BLS series IDs)
       const series = [
-        { id: 'CUUR0000SA0', title: 'CPI-U - All Items', category: 'inflation' as const },
-        { id: 'CUUR0000SA0L1E', title: 'CPI-U - Core (ex-food,energy)', category: 'inflation' as const },
-        { id: 'CES0000000001', title: 'Total Nonfarm Employment', category: 'employment' as const },
-        { id: 'LNS14000000', title: 'Unemployment Rate', category: 'employment' as const },
+        {
+          id: "CUUR0000SA0",
+          title: "CPI-U - All Items",
+          category: "inflation" as const,
+        },
+        {
+          id: "CUUR0000SA0L1E",
+          title: "CPI-U - Core (ex-food,energy)",
+          category: "inflation" as const,
+        },
+        {
+          id: "CES0000000001",
+          title: "Total Nonfarm Employment",
+          category: "employment" as const,
+        },
+        {
+          id: "LNS14000000",
+          title: "Unemployment Rate",
+          category: "employment" as const,
+        },
       ];
 
       for (const ser of series) {
@@ -166,11 +221,14 @@ export const blsAdapter: BLSAdapter = {
             registrationkey: config.apiKey,
           };
 
-          const response = await fetch('https://api.bls.gov/publicAPI/v2/timeseries/data/', {
-            method: 'POST',
-            body: JSON.stringify(body),
-            headers: { 'Content-Type': 'application/json' },
-          });
+          const response = await fetch(
+            "https://api.bls.gov/publicAPI/v2/timeseries/data/",
+            {
+              method: "POST",
+              body: JSON.stringify(body),
+              headers: { "Content-Type": "application/json" },
+            },
+          );
 
           if (!response.ok) continue;
 
@@ -182,17 +240,19 @@ export const blsAdapter: BLSAdapter = {
             const event: EconomicEvent = {
               id: `bls-${ser.id}-${latest.periodName}`,
               title: ser.title,
-              country: 'US',
+              country: "US",
               eventCategory: ser.category,
               releaseDateTime: new Date(),
-              timezone: 'America/New_York',
+              timezone: "America/New_York",
               actualValue: latest.value ? parseFloat(latest.value) : null,
               previousValue: prev.value ? parseFloat(prev.value) : null,
               period: `${latest.periodName} ${latest.year}`,
               importance: 2,
-              sources: [{ name: 'BLS', sourceId: ser.id, fetchedAt: new Date() }],
+              sources: [
+                { name: "BLS", sourceId: ser.id, fetchedAt: new Date() },
+              ],
               lastFetched: new Date(),
-              status: 'released',
+              status: "released",
             };
 
             events.push(event);
@@ -202,10 +262,15 @@ export const blsAdapter: BLSAdapter = {
         }
       }
 
-      return { events, source: 'BLS', fetchedAt: new Date() };
+      return { events, source: "BLS", fetchedAt: new Date() };
     } catch (error) {
-      logger.error('BLS adapter error:', error);
-      return { events: [], source: 'BLS', fetchedAt: new Date(), errors: [String(error)] };
+      logger.error("BLS adapter error:", error);
+      return {
+        events: [],
+        source: "BLS",
+        fetchedAt: new Date(),
+        errors: [String(error)],
+      };
     }
   },
 };
@@ -221,7 +286,12 @@ export interface BEAAdapter {
 export const beaAdapter: BEAAdapter = {
   async fetch(config: FetcherConfig): Promise<FetcherResult> {
     if (!config.enabled || !config.apiKey) {
-      return { events: [], source: 'BEA', fetchedAt: new Date(), errors: ['BEA disabled or no API key'] };
+      return {
+        events: [],
+        source: "BEA",
+        fetchedAt: new Date(),
+        errors: ["BEA disabled or no API key"],
+      };
     }
 
     try {
@@ -229,8 +299,18 @@ export const beaAdapter: BEAAdapter = {
 
       // GDP and key trade series
       const datasets = [
-        { name: 'NIPA', table: 'T10101', title: 'Real GDP', category: 'growth' as const },
-        { name: 'ITA', table: 'ITAsb1', title: 'International Trade in Services', category: 'trade' as const },
+        {
+          name: "NIPA",
+          table: "T10101",
+          title: "Real GDP",
+          category: "growth" as const,
+        },
+        {
+          name: "ITA",
+          table: "ITAsb1",
+          title: "International Trade in Services",
+          category: "trade" as const,
+        },
       ];
 
       for (const ds of datasets) {
@@ -247,15 +327,17 @@ export const beaAdapter: BEAAdapter = {
             const event: EconomicEvent = {
               id: `bea-${ds.name}-${ds.table}`,
               title: ds.title,
-              country: 'US',
+              country: "US",
               eventCategory: ds.category,
               releaseDateTime: new Date(),
-              timezone: 'America/New_York',
+              timezone: "America/New_York",
               actualValue: parseNumber(latest.DataValue),
               importance: 3,
-              sources: [{ name: 'BEA', sourceId: ds.table, fetchedAt: new Date() }],
+              sources: [
+                { name: "BEA", sourceId: ds.table, fetchedAt: new Date() },
+              ],
               lastFetched: new Date(),
-              status: 'released',
+              status: "released",
             };
 
             if (latest.TimePeriod) {
@@ -269,10 +351,15 @@ export const beaAdapter: BEAAdapter = {
         }
       }
 
-      return { events, source: 'BEA', fetchedAt: new Date() };
+      return { events, source: "BEA", fetchedAt: new Date() };
     } catch (error) {
-      logger.error('BEA adapter error:', error);
-      return { events: [], source: 'BEA', fetchedAt: new Date(), errors: [String(error)] };
+      logger.error("BEA adapter error:", error);
+      return {
+        events: [],
+        source: "BEA",
+        fetchedAt: new Date(),
+        errors: [String(error)],
+      };
     }
   },
 };
@@ -288,7 +375,12 @@ export interface CensusAdapter {
 export const censusAdapter: CensusAdapter = {
   async fetch(config: FetcherConfig): Promise<FetcherResult> {
     if (!config.enabled || !config.apiKey) {
-      return { events: [], source: 'Census', fetchedAt: new Date(), errors: ['Census disabled or no API key'] };
+      return {
+        events: [],
+        source: "Census",
+        fetchedAt: new Date(),
+        errors: ["Census disabled or no API key"],
+      };
     }
 
     try {
@@ -296,9 +388,17 @@ export const censusAdapter: CensusAdapter = {
 
       // Sample Census series (Housing Starts, Building Permits, Retail Sales)
       const series = [
-        { id: 'HOUST', title: 'Housing Starts', category: 'housing' as const },
-        { id: 'PERMIT', title: 'Building Permits', category: 'housing' as const },
-        { id: 'RSXFS', title: 'Retail Sales - Total', category: 'growth' as const },
+        { id: "HOUST", title: "Housing Starts", category: "housing" as const },
+        {
+          id: "PERMIT",
+          title: "Building Permits",
+          category: "housing" as const,
+        },
+        {
+          id: "RSXFS",
+          title: "Retail Sales - Total",
+          category: "growth" as const,
+        },
       ];
 
       // Census API requires authenticated requests; simplified approach using public endpoints
@@ -317,15 +417,17 @@ export const censusAdapter: CensusAdapter = {
             const event: EconomicEvent = {
               id: `census-${ser.id}`,
               title: ser.title,
-              country: 'US',
+              country: "US",
               eventCategory: ser.category,
               releaseDateTime: new Date(),
-              timezone: 'America/New_York',
+              timezone: "America/New_York",
               actualValue: parseNumber(latest[3]),
               importance: 2,
-              sources: [{ name: 'Census', sourceId: ser.id, fetchedAt: new Date() }],
+              sources: [
+                { name: "Census", sourceId: ser.id, fetchedAt: new Date() },
+              ],
               lastFetched: new Date(),
-              status: 'released',
+              status: "released",
             };
 
             events.push(event);
@@ -335,10 +437,15 @@ export const censusAdapter: CensusAdapter = {
         }
       }
 
-      return { events, source: 'Census', fetchedAt: new Date() };
+      return { events, source: "Census", fetchedAt: new Date() };
     } catch (error) {
-      logger.error('Census adapter error:', error);
-      return { events: [], source: 'Census', fetchedAt: new Date(), errors: [String(error)] };
+      logger.error("Census adapter error:", error);
+      return {
+        events: [],
+        source: "Census",
+        fetchedAt: new Date(),
+        errors: [String(error)],
+      };
     }
   },
 };
@@ -356,9 +463,9 @@ export const tradingEconomicsAdapter: TradingEconomicsAdapter = {
     if (!config.enabled || !config.apiKey) {
       return {
         events: [],
-        source: 'TradingEconomics',
+        source: "TradingEconomics",
         fetchedAt: new Date(),
-        errors: ['Trading Economics disabled or no API key'],
+        errors: ["Trading Economics disabled or no API key"],
       };
     }
 
@@ -369,45 +476,60 @@ export const tradingEconomicsAdapter: TradingEconomicsAdapter = {
       const url = `https://api.tradingeconomics.com/calendar?c=${config.apiKey}`;
       const response = await fetch(url);
       if (!response.ok) {
-        return { events: [], source: 'TradingEconomics', fetchedAt: new Date(), errors: ['API call failed'] };
+        return {
+          events: [],
+          source: "TradingEconomics",
+          fetchedAt: new Date(),
+          errors: ["API call failed"],
+        };
       }
 
       const data: TradingEconomicsResponse = await response.json();
 
       if (Array.isArray(data)) {
-        const categoryMap: Record<string, EconomicEvent['eventCategory']> = {
-          inflation: 'inflation',
-          employment: 'employment',
-          growth: 'growth',
-          trade: 'trade',
-          housing: 'housing',
-          confidence: 'confidence',
+        const categoryMap: Record<string, EconomicEvent["eventCategory"]> = {
+          inflation: "inflation",
+          employment: "employment",
+          growth: "growth",
+          trade: "trade",
+          housing: "housing",
+          confidence: "confidence",
         };
 
         for (const item of data.slice(0, 50)) {
           // Limit to 50 most recent
           try {
-            const categoryKey = item.Category ? item.Category.toLowerCase() : undefined;
+            const categoryKey = item.Category
+              ? item.Category.toLowerCase()
+              : undefined;
             const event: EconomicEvent = {
-              id: `te-${item.CountryCode ?? 'XX'}-${item.Event ?? 'event'}-${item.DateTime ?? 'unknown'}`,
-              title: item.Event || 'Unknown Event',
-              country: item.CountryCode || 'Unknown',
-              eventCategory: categoryKey && categoryMap[categoryKey] ? categoryMap[categoryKey] : 'other',
+              id: `te-${item.CountryCode ?? "XX"}-${item.Event ?? "event"}-${item.DateTime ?? "unknown"}`,
+              title: item.Event || "Unknown Event",
+              country: item.CountryCode || "Unknown",
+              eventCategory:
+                categoryKey && categoryMap[categoryKey]
+                  ? categoryMap[categoryKey]
+                  : "other",
               releaseDateTime: parseDate(item.DateTime),
-              timezone: 'UTC',
+              timezone: "UTC",
               actualValue: parseNumber(item.Actual),
               forecastValue: parseNumber(item.Forecast),
               previousValue: parseNumber(item.Previous),
-              importance: item.Importance === 'High' ? 3 : item.Importance === 'Medium' ? 2 : 1,
+              importance:
+                item.Importance === "High"
+                  ? 3
+                  : item.Importance === "Medium"
+                    ? 2
+                    : 1,
               sources: [
                 {
-                  name: 'TradingEconomics',
+                  name: "TradingEconomics",
                   ...(item.Event ? { sourceId: item.Event } : {}),
                   fetchedAt: new Date(),
                 },
               ],
               lastFetched: new Date(),
-              status: item.Actual !== undefined ? 'released' : 'upcoming',
+              status: item.Actual !== undefined ? "released" : "upcoming",
             };
 
             if (item.Region) {
@@ -420,15 +542,20 @@ export const tradingEconomicsAdapter: TradingEconomicsAdapter = {
 
             events.push(event);
           } catch (e) {
-            logger.warn('Failed to parse Trading Economics event:', e);
+            logger.warn("Failed to parse Trading Economics event:", e);
           }
         }
       }
 
-      return { events, source: 'TradingEconomics', fetchedAt: new Date() };
+      return { events, source: "TradingEconomics", fetchedAt: new Date() };
     } catch (error) {
-      logger.error('Trading Economics adapter error:', error);
-      return { events: [], source: 'TradingEconomics', fetchedAt: new Date(), errors: [String(error)] };
+      logger.error("Trading Economics adapter error:", error);
+      return {
+        events: [],
+        source: "TradingEconomics",
+        fetchedAt: new Date(),
+        errors: [String(error)],
+      };
     }
   },
 };
@@ -444,7 +571,12 @@ export interface FinnhubAdapter {
 export const finnhubAdapter: FinnhubAdapter = {
   async fetch(config: FetcherConfig): Promise<FetcherResult> {
     if (!config.enabled || !config.apiKey) {
-      return { events: [], source: 'Finnhub', fetchedAt: new Date(), errors: ['Finnhub disabled or no API key'] };
+      return {
+        events: [],
+        source: "Finnhub",
+        fetchedAt: new Date(),
+        errors: ["Finnhub disabled or no API key"],
+      };
     }
 
     try {
@@ -454,7 +586,12 @@ export const finnhubAdapter: FinnhubAdapter = {
       const url = `https://finnhub.io/api/v1/calendar/economic?token=${config.apiKey}`;
       const response = await fetch(url);
       if (!response.ok) {
-        return { events: [], source: 'Finnhub', fetchedAt: new Date(), errors: ['API call failed'] };
+        return {
+          events: [],
+          source: "Finnhub",
+          fetchedAt: new Date(),
+          errors: ["API call failed"],
+        };
       }
 
       const data: FinnhubResponse = await response.json();
@@ -463,38 +600,44 @@ export const finnhubAdapter: FinnhubAdapter = {
         for (const item of data.economicCalendar.slice(0, 50)) {
           try {
             const event: EconomicEvent = {
-              id: `finnhub-${item.country ?? 'XX'}-${item.event ?? 'event'}-${item.date ?? 'unknown'}`,
-              title: item.event || 'Unknown Event',
-              country: item.country || 'Unknown',
-              eventCategory: 'other' as const, // Finnhub doesn't categorize; would need additional mapping
+              id: `finnhub-${item.country ?? "XX"}-${item.event ?? "event"}-${item.date ?? "unknown"}`,
+              title: item.event || "Unknown Event",
+              country: item.country || "Unknown",
+              eventCategory: "other" as const, // Finnhub doesn't categorize; would need additional mapping
               releaseDateTime: parseDate(item.date),
-              timezone: 'UTC',
+              timezone: "UTC",
               actualValue: parseNumber(item.actual),
               forecastValue: parseNumber(item.forecast),
               previousValue: parseNumber(item.previous),
-              importance: item.impact === 'High' ? 3 : item.impact === 'Medium' ? 2 : 1,
+              importance:
+                item.impact === "High" ? 3 : item.impact === "Medium" ? 2 : 1,
               sources: [
                 {
-                  name: 'Finnhub',
+                  name: "Finnhub",
                   ...(item.event ? { sourceId: item.event } : {}),
                   fetchedAt: new Date(),
                 },
               ],
               lastFetched: new Date(),
-              status: item.actual ? 'released' : 'upcoming',
+              status: item.actual ? "released" : "upcoming",
             };
 
             events.push(event);
           } catch (e) {
-            logger.warn('Failed to parse Finnhub event:', e);
+            logger.warn("Failed to parse Finnhub event:", e);
           }
         }
       }
 
-      return { events, source: 'Finnhub', fetchedAt: new Date() };
+      return { events, source: "Finnhub", fetchedAt: new Date() };
     } catch (error) {
-      logger.error('Finnhub adapter error:', error);
-      return { events: [], source: 'Finnhub', fetchedAt: new Date(), errors: [String(error)] };
+      logger.error("Finnhub adapter error:", error);
+      return {
+        events: [],
+        source: "Finnhub",
+        fetchedAt: new Date(),
+        errors: [String(error)],
+      };
     }
   },
 };
@@ -512,9 +655,9 @@ export const alphaVantageAdapter: AlphaVantageAdapter = {
     if (!config.enabled || !config.apiKey) {
       return {
         events: [],
-        source: 'AlphaVantage',
+        source: "AlphaVantage",
         fetchedAt: new Date(),
-        errors: ['Alpha Vantage disabled or no API key'],
+        errors: ["Alpha Vantage disabled or no API key"],
       };
     }
 
@@ -523,8 +666,16 @@ export const alphaVantageAdapter: AlphaVantageAdapter = {
 
       // Alpha Vantage offers inflation and employment data via TIME_SERIES_MONTHLY
       const indicators = [
-        { symbol: 'CPIAUCSL', title: 'CPI - All Urban Consumers', category: 'inflation' as const },
-        { symbol: 'UNRATE', title: 'Unemployment Rate', category: 'employment' as const },
+        {
+          symbol: "CPIAUCSL",
+          title: "CPI - All Urban Consumers",
+          category: "inflation" as const,
+        },
+        {
+          symbol: "UNRATE",
+          title: "Unemployment Rate",
+          category: "employment" as const,
+        },
       ];
 
       for (const ind of indicators) {
@@ -542,30 +693,43 @@ export const alphaVantageAdapter: AlphaVantageAdapter = {
             const event: EconomicEvent = {
               id: `av-${ind.symbol}-${latest.date}`,
               title: ind.title,
-              country: 'US',
+              country: "US",
               eventCategory: ind.category,
               releaseDateTime: parseDate(latest.date),
-              timezone: 'America/New_York',
+              timezone: "America/New_York",
               actualValue: parseNumber(latest.value),
               previousValue: parseNumber(prev?.value),
               importance: 2,
-              sources: [{ name: 'AlphaVantage', sourceId: ind.symbol, fetchedAt: new Date() }],
+              sources: [
+                {
+                  name: "AlphaVantage",
+                  sourceId: ind.symbol,
+                  fetchedAt: new Date(),
+                },
+              ],
               lastFetched: new Date(),
-              status: 'released',
+              status: "released",
             };
 
             events.push(event);
           }
         } catch (e) {
-          logger.warn(`Failed to fetch Alpha Vantage indicator ${ind.symbol}:`, e);
+          logger.warn(
+            `Failed to fetch Alpha Vantage indicator ${ind.symbol}:`,
+            e,
+          );
         }
       }
 
       // Also fetch stock prices: SPY, QQQ, IWM
       const stocks = [
-        { symbol: 'SPY', title: 'S&P 500 ETF', category: 'equity' as const },
-        { symbol: 'QQQ', title: 'Nasdaq 100 ETF', category: 'equity' as const },
-        { symbol: 'IWM', title: 'Russell 2000 ETF', category: 'equity' as const },
+        { symbol: "SPY", title: "S&P 500 ETF", category: "equity" as const },
+        { symbol: "QQQ", title: "Nasdaq 100 ETF", category: "equity" as const },
+        {
+          symbol: "IWM",
+          title: "Russell 2000 ETF",
+          category: "equity" as const,
+        },
       ];
 
       for (const stock of stocks) {
@@ -575,24 +739,30 @@ export const alphaVantageAdapter: AlphaVantageAdapter = {
           if (!response.ok) continue;
 
           const data: any = await response.json();
-          if (data['Global Quote'] && data['Global Quote'].price) {
-            const quote = data['Global Quote'];
+          if (data["Global Quote"] && data["Global Quote"].price) {
+            const quote = data["Global Quote"];
             const price = parseNumber(quote.price);
             const change = parseNumber(quote.change);
 
             const event: EconomicEvent = {
               id: `av-stock-${stock.symbol}-${new Date().toISOString()}`,
               title: `${stock.symbol} Trading Price`,
-              country: 'US',
-              eventCategory: 'other' as EconomicEvent['eventCategory'],
+              country: "US",
+              eventCategory: "other" as EconomicEvent["eventCategory"],
               releaseDateTime: new Date(),
-              timezone: 'America/New_York',
+              timezone: "America/New_York",
               actualValue: price,
               previousValue: price && change ? price - change : null,
               importance: 1,
-              sources: [{ name: 'AlphaVantage', sourceId: stock.symbol, fetchedAt: new Date() }],
+              sources: [
+                {
+                  name: "AlphaVantage",
+                  sourceId: stock.symbol,
+                  fetchedAt: new Date(),
+                },
+              ],
               lastFetched: new Date(),
-              status: 'released',
+              status: "released",
             };
 
             events.push(event);
@@ -602,10 +772,15 @@ export const alphaVantageAdapter: AlphaVantageAdapter = {
         }
       }
 
-      return { events, source: 'AlphaVantage', fetchedAt: new Date() };
+      return { events, source: "AlphaVantage", fetchedAt: new Date() };
     } catch (error) {
-      logger.error('Alpha Vantage adapter error:', error);
-      return { events: [], source: 'AlphaVantage', fetchedAt: new Date(), errors: [String(error)] };
+      logger.error("Alpha Vantage adapter error:", error);
+      return {
+        events: [],
+        source: "AlphaVantage",
+        fetchedAt: new Date(),
+        errors: [String(error)],
+      };
     }
   },
 };

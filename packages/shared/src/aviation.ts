@@ -1,7 +1,7 @@
-import { CargoFlightSchema } from "./maritime";
+import { CargoFlightSchema as MaritimeCargoFlightSchema } from "./maritime.js";
 
-export { CargoFlightSchema };
-export type { CargoFlight } from "./maritime";
+export const AviationCargoFlightSchema = MaritimeCargoFlightSchema;
+export type AviationCargoFlight = import("./maritime.js").CargoFlight;
 
 /**
  * Aviation data sources and APIs
@@ -28,18 +28,35 @@ export const AVIATION_DATA_SOURCES = {
  * Common cargo airline codes
  */
 export const CARGO_AIRLINES = [
-  "DHL", "FDX", "AAL", "SWR", "KLM", "SWA", "ABX",
-  "CPZ", "CPA", "SCA", "ACA", "VIR", "EIN", "LAN",
-  "CHH", "CES", "CSN", "RYR", "VLI", "TAP"
+  "DHL",
+  "FDX",
+  "AAL",
+  "SWR",
+  "KLM",
+  "SWA",
+  "ABX",
+  "CPZ",
+  "CPA",
+  "SCA",
+  "ACA",
+  "VIR",
+  "EIN",
+  "LAN",
+  "CHH",
+  "CES",
+  "CSN",
+  "RYR",
+  "VLI",
+  "TAP",
 ] as const;
 
 /**
  * Status descriptions for aviation
  */
 export const FLIGHT_STATUS_ICONS: Record<string, string> = {
-  "climbing": "📈",
-  "cruise": "→",
-  "descending": "📉",
-  "ground": "🛬",
-  "unknown": "❓",
+  climbing: "📈",
+  cruise: "→",
+  descending: "📉",
+  ground: "🛬",
+  unknown: "❓",
 };

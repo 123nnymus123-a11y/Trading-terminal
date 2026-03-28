@@ -9,11 +9,18 @@ import {
   calendarInsightRequestSchema,
   calendarInsightResponseSchema,
   congressTradesResponseSchema,
+  createStrategyRequestSchema,
+  createStrategyResponseSchema,
+  createStrategyVersionRequestSchema,
+  createStrategyVersionResponseSchema,
+  getLatestVersionResponseSchema,
+  getStrategyResponseSchema,
   gwmdSyncPullResponseSchema,
   gwmdSyncPushRequestSchema,
   gwmdSyncPushResponseSchema,
   gwmdSyncStatusResponseSchema,
   healthResponseSchema,
+  listStrategiesResponseSchema,
   loginRequestSchema,
   loginResponseSchema,
   logoutRequestSchema,
@@ -21,6 +28,30 @@ import {
   publicFlowEventsResponseSchema,
   refreshTokenRequestSchema,
   runtimeFlagsResponseSchema,
+  strategyBacktestRunEnqueueResponseSchema,
+  strategyBacktestRunRequestSchema,
+  strategyBacktestRunStatusResponseSchema,
+  strategyDatasetSnapshotsResponseSchema,
+  strategyBacktestArtifactsResponseSchema,
+  strategyBacktestCompareResponseSchema,
+  strategyBacktestRobustnessRequestSchema,
+  strategyBacktestRobustnessResponseSchema,
+  strategyConnectorListResponseSchema,
+  strategyConnectorUpsertRequestSchema,
+  strategyForwardProfileAlertsResponseSchema,
+  strategyForwardProfileCreateRequestSchema,
+  strategyForwardProfileDriftResponseSchema,
+  strategyForwardProfileListResponseSchema,
+  strategyForwardProfileStatusUpdateRequestSchema,
+  strategyGovernanceReadinessResponseSchema,
+  strategyGovernanceProfileListResponseSchema,
+  strategyGovernanceProfileUpsertRequestSchema,
+  strategyPromotionRequestSchema,
+  strategyAcceptancePackListResponseSchema,
+  strategyAcceptancePackUpsertRequestSchema,
+  strategyRunExperimentRequestSchema,
+  strategyRunExperimentResponseSchema,
+  updateStrategyRequestSchema,
   signupRequestSchema,
   totpDisableRequestSchema,
   totpVerifyRequestSchema,
@@ -62,11 +93,21 @@ import { createGwmdCloudService } from "./services/gwmd/gwmdCloudService.js";
 import { createAiOrchestratorService } from "./services/orchestrator/aiOrchestratorService.js";
 import { createAiStewardService } from "./services/steward/aiStewardService.js";
 import { createEconomicInsightsService } from "./services/economicCalendar/economicInsightsService.js";
+import { buildTedIntelSnapshot } from "./services/tedIntel/tedIntel.js";
 import {
   applyTedLiveConfigPatch,
-  fetchLiveTedSnapshot,
+  fetchLiveTedSnapshotStrict,
   getTedLiveConfigStatus,
+  TedLiveError,
 } from "./services/tedIntel/tedIntelLive.js";
+import { createProcurementIntelService } from "./services/procurementIntel/procurementIntelService.js";
+import { createEdgarIntelService } from "./services/edgarIntel/edgarIntelService.js";
+import { createBacktestingService } from "./services/backtesting/backtestingService.js";
+import { createLineageDiffService } from "./services/backtesting/lineageDiffService.js";
+import { createBacktestWorker } from "./services/backtesting/backtestWorker.js";
+import { BacktestingRepo } from "./services/backtesting/backtestingRepo.js";
+import { createBacktestRobustnessService } from "./services/backtesting/backtestRobustnessService.js";
+import { compareRunMetrics } from "./services/backtesting/backtestAnalytics.js";
 import { AuthSessionStore, isRefreshTokenMatch } from "./authSessionStore.js";
 import {
   buildOtpAuthUrl,
@@ -78,6 +119,14 @@ import {
   verifyTotpCode,
 } from "./totp.js";
 import { randomUUID } from "node:crypto";
+import type {
+  EdgarFlowAnomalyFinding,
+  EdgarFlowIntelPayload,
+} from "@tc/shared";
+import {
+  buildFlowAnomalyFingerprint,
+  buildFlowIntelPayload,
+} from "./services/edgarIntel/flowIntelEngine.js";
 import { createAuthEmailService } from "./authEmail.js";
 import metricsRegistry, {
   aiQueueGauge,
@@ -89,6 +138,11 @@ import metricsRegistry, {
 import DurableJobQueue from "./queue.js";
 
 const logger = createLogger("http");
+
+function toIsoDay(now: Date, daysBack: number): string {
+  const since = new Date(now.getTime() - daysBack * 24 * 60 * 60 * 1000);
+  return since.toISOString().slice(0, 10);
+}
 
 export function createServer(
   version: string,
@@ -144,7 +198,17 @@ export function createServer(
   const aiOrchestrator = infra.pool
     ? createAiOrchestratorService(infra.pool, env)
     : null;
-  const aiSteward = infra.pool ? createAiStewardService(infra.pool, env) : null;
+  const aiSteward = infra.pool
+    ? createAiStewardService(infra.pool, env, async () => ({
+        queueDepth: await aiQueue.getQueueDepth(),
+        queueRunning: aiQueue.getRunningCount(),
+        migrationFlags: {
+          backendOnlyProcessing: env.MIGRATION_BACKEND_ONLY_PROCESSING,
+          desktopLocalFallback: env.MIGRATION_DESKTOP_LOCAL_FALLBACK,
+          webPrimaryRouting: env.MIGRATION_WEB_PRIMARY_ROUTING,
+        },
+      }))
+    : null;
   const economicInsights = createEconomicInsightsService(env);
   const authSessionStore =
     env.AUTH_SESSION_STORE_ENABLED && infra.pool
@@ -157,6 +221,319 @@ export function createServer(
     authHeader: env.TED_LIVE_AUTH_HEADER,
     timeoutMs: env.TED_LIVE_TIMEOUT_MS,
     windowQueryParam: env.TED_LIVE_WINDOW_QUERY_PARAM,
+  };
+  const procurementIntel = createProcurementIntelService(
+    infra.pool,
+    env,
+    () => tedLiveConfig,
+  );
+  const edgarIntel = createEdgarIntelService(infra.pool, env);
+
+  // Backtest queue and service setup
+  const backtestQueue = new DurableJobQueue({
+    concurrency: 2,
+    maxQueue: 100,
+    retryLimit: 2,
+    jobTtlSeconds: 7200, // 2 hours
+    ...(env.REDIS_URL ? { redisUrl: env.REDIS_URL } : {}),
+    namespace: "tcq:backtest",
+  });
+
+  const backtesting = infra.pool
+    ? createBacktestingService(infra.pool, backtestQueue)
+    : null;
+  const backtestingRepo = infra.pool ? new BacktestingRepo(infra.pool) : null;
+  const lineageDiff = infra.pool ? createLineageDiffService(infra.pool) : null;
+  const backtestRobustness = infra.pool
+    ? createBacktestRobustnessService(infra.pool)
+    : null;
+
+  if (backtesting && infra.pool) {
+    createBacktestWorker(infra.pool, backtestQueue, "database");
+    logger.info("backtest_worker_initialized", {
+      concurrency: 2,
+      dataProvider: "database",
+    });
+  }
+  const defaultEdgarCiks = env.EDGAR_WATCHER_CIKS.split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  if (env.EDGAR_WATCHER_ENABLED && defaultEdgarCiks.length) {
+    void edgarIntel
+      .startWatcher("global", {
+        ciks: defaultEdgarCiks,
+        forms: ["8-K", "10-K", "10-Q", "4"],
+        intervalSec: env.EDGAR_WATCHER_INTERVAL_SECONDS,
+        perCikLimit: 20,
+      })
+      .then(() => {
+        logger.info("edgar_watcher_autostarted", {
+          ciks: defaultEdgarCiks.length,
+          intervalSec: env.EDGAR_WATCHER_INTERVAL_SECONDS,
+        });
+      })
+      .catch((error) => {
+        logger.error("edgar_watcher_autostart_failed", {
+          error: error instanceof Error ? error.message : "unknown_error",
+        });
+      });
+  }
+
+  const parseCsvQuery = (value: unknown): string[] => {
+    if (Array.isArray(value)) {
+      return value
+        .flatMap((part) => (typeof part === "string" ? part.split(",") : []))
+        .map((part) => part.trim())
+        .filter(Boolean);
+    }
+    if (typeof value === "string") {
+      return value
+        .split(",")
+        .map((part) => part.trim())
+        .filter(Boolean);
+    }
+    return [];
+  };
+
+  const parseProcurementFilters = (req: Request) => {
+    const minValue = Number(req.query.minValue);
+    const maxValue = Number(req.query.maxValue);
+    const minConfidence = Number(req.query.minConfidence);
+    const limit = Number(req.query.limit);
+    return {
+      ...(parseCsvQuery(req.query.country).length
+        ? { country: parseCsvQuery(req.query.country) }
+        : {}),
+      ...(parseCsvQuery(req.query.region).length
+        ? { region: parseCsvQuery(req.query.region) }
+        : {}),
+      ...(parseCsvQuery(req.query.cpv).length
+        ? { cpv: parseCsvQuery(req.query.cpv) }
+        : {}),
+      ...(parseCsvQuery(req.query.sectorTag).length
+        ? { sector_tag: parseCsvQuery(req.query.sectorTag) }
+        : {}),
+      ...(parseCsvQuery(req.query.themeTag).length
+        ? { theme_tag: parseCsvQuery(req.query.themeTag) }
+        : {}),
+      ...(parseCsvQuery(req.query.commodityTag).length
+        ? { commodity_tag: parseCsvQuery(req.query.commodityTag) }
+        : {}),
+      ...(parseCsvQuery(req.query.buyer).length
+        ? { buyer: parseCsvQuery(req.query.buyer) }
+        : {}),
+      ...(parseCsvQuery(req.query.supplier).length
+        ? { supplier: parseCsvQuery(req.query.supplier) }
+        : {}),
+      ...(Number.isFinite(minValue) ? { min_value: minValue } : {}),
+      ...(Number.isFinite(maxValue) ? { max_value: maxValue } : {}),
+      ...(Number.isFinite(minConfidence)
+        ? { min_confidence: minConfidence }
+        : {}),
+      ...(parseCsvQuery(req.query.strategicImportance).length
+        ? {
+            strategic_importance: parseCsvQuery(req.query.strategicImportance),
+          }
+        : {}),
+      ...(typeof req.query.fromDate === "string"
+        ? { from_date: req.query.fromDate }
+        : {}),
+      ...(typeof req.query.toDate === "string"
+        ? { to_date: req.query.toDate }
+        : {}),
+      ...(Number.isFinite(limit) ? { limit } : {}),
+    };
+  };
+
+  const parseEdgarFilters = (req: Request) => {
+    const limit = Number(req.query.limit);
+    const minScore = Number(req.query.minScore);
+    const formTypeRaw =
+      typeof req.query.formType === "string"
+        ? req.query.formType.trim().toUpperCase()
+        : "";
+    const formType =
+      formTypeRaw === "8-K" ||
+      formTypeRaw === "10-K" ||
+      formTypeRaw === "10-Q" ||
+      formTypeRaw === "4"
+        ? formTypeRaw
+        : undefined;
+    return {
+      ...(typeof req.query.cik === "string" ? { cik: req.query.cik } : {}),
+      ...(typeof req.query.ticker === "string"
+        ? { ticker: req.query.ticker }
+        : {}),
+      ...(formType ? { formType } : {}),
+      ...(typeof req.query.fromDate === "string"
+        ? { fromDate: req.query.fromDate }
+        : {}),
+      ...(typeof req.query.toDate === "string"
+        ? { toDate: req.query.toDate }
+        : {}),
+      ...(Number.isFinite(minScore) ? { minScore } : {}),
+      ...(Number.isFinite(limit) ? { limit } : {}),
+    };
+  };
+
+  const persistFlowAnomalyReports = async (
+    scopeId: string,
+    payload: EdgarFlowIntelPayload,
+    cooldownHours: number,
+  ) => {
+    if (!infra.pool) {
+      return { inserted: 0, suppressed: payload.anomalies.length };
+    }
+
+    const scope = scopeId.trim() || "global";
+    let inserted = 0;
+    let suppressed = 0;
+
+    try {
+      for (const anomaly of payload.anomalies) {
+        const fingerprint = buildFlowAnomalyFingerprint(anomaly);
+        const existing = await infra.pool.query<{ id: string }>(
+          `SELECT id
+             FROM edgar_flow_anomaly_report
+            WHERE scope_id = $1
+              AND fingerprint = $2
+              AND reported_at >= NOW() - ($3 * INTERVAL '1 hour')
+            LIMIT 1`,
+          [scope, fingerprint, cooldownHours],
+        );
+
+        if (existing.rowCount && existing.rowCount > 0) {
+          suppressed += 1;
+          continue;
+        }
+
+        await infra.pool.query(
+          `INSERT INTO edgar_flow_anomaly_report (
+             scope_id,
+             filing_id,
+             ticker,
+             company_name,
+             severity,
+             anomaly_score,
+             triggers,
+             rationale,
+             filed_at,
+             fingerprint,
+             window_days,
+             source_payload
+           ) VALUES (
+             $1,
+             $2,
+             $3,
+             $4,
+             $5,
+             $6,
+             $7::jsonb,
+             $8,
+             $9::timestamptz,
+             $10,
+             $11,
+             $12::jsonb
+           )`,
+          [
+            scope,
+            anomaly.filing_id,
+            anomaly.ticker ?? null,
+            anomaly.company_name,
+            anomaly.severity,
+            anomaly.anomaly_score,
+            JSON.stringify(anomaly.triggers),
+            anomaly.rationale,
+            anomaly.filed_at,
+            fingerprint,
+            payload.window_days,
+            JSON.stringify(anomaly),
+          ],
+        );
+        inserted += 1;
+      }
+    } catch (error) {
+      const code =
+        error && typeof error === "object" && "code" in error
+          ? String((error as { code?: unknown }).code ?? "")
+          : "";
+      if (code === "42P01") {
+        logger.warn("edgar_flow_anomaly_report_table_missing", {
+          scope,
+          table: "edgar_flow_anomaly_report",
+        });
+        return { inserted: 0, suppressed: payload.anomalies.length };
+      }
+      throw error;
+    }
+
+    return { inserted, suppressed };
+  };
+
+  const listRecentFlowAnomalyReports = async (
+    scopeId: string,
+    limit: number,
+  ): Promise<EdgarFlowAnomalyFinding[]> => {
+    if (!infra.pool) {
+      return [];
+    }
+
+    const scope = scopeId.trim() || "global";
+    const safeLimit = Math.max(1, Math.min(100, Math.floor(limit)));
+    let result;
+    try {
+      result = await infra.pool.query<{
+        filing_id: string;
+        ticker: string | null;
+        company_name: string;
+        severity: "info" | "warning" | "critical";
+        anomaly_score: number;
+        triggers: string[];
+        rationale: string;
+        filed_at: string;
+        reported_at: string;
+      }>(
+        `SELECT filing_id,
+                ticker,
+                company_name,
+                severity,
+                anomaly_score,
+                triggers,
+                rationale,
+                filed_at::text,
+                reported_at::text
+           FROM edgar_flow_anomaly_report
+          WHERE scope_id = $1
+          ORDER BY reported_at DESC
+          LIMIT $2`,
+        [scope, safeLimit],
+      );
+    } catch (error) {
+      const code =
+        error && typeof error === "object" && "code" in error
+          ? String((error as { code?: unknown }).code ?? "")
+          : "";
+      if (code === "42P01") {
+        logger.warn("edgar_flow_anomaly_report_table_missing", {
+          scope,
+          table: "edgar_flow_anomaly_report",
+        });
+        return [];
+      }
+      throw error;
+    }
+
+    return result.rows.map((row) => ({
+      id: `report:${row.filing_id}:${row.reported_at}`,
+      filing_id: row.filing_id,
+      ...(row.ticker ? { ticker: row.ticker } : {}),
+      company_name: row.company_name,
+      severity: row.severity,
+      anomaly_score: Number(row.anomaly_score),
+      triggers: Array.isArray(row.triggers) ? row.triggers : [],
+      rationale: row.rationale,
+      filed_at: row.filed_at,
+    }));
   };
 
   async function syncDomainUser(
@@ -1116,6 +1493,7 @@ export function createServer(
         return;
       }
       const tenantId = req.tenantContext?.tenantId ?? env.DEFAULT_TENANT_ID;
+      const userId = req.user.id;
       const settings = await infra.storage.getSettings(req.user.id, tenantId);
       res.status(200).json({ settings });
     },
@@ -1304,6 +1682,7 @@ export function createServer(
       }
 
       const tenantId = req.tenantContext?.tenantId ?? env.DEFAULT_TENANT_ID;
+      const userId = req.user.id;
       const order = await infra.storage.placeOrder(
         req.user.id,
         {
@@ -1563,24 +1942,54 @@ export function createServer(
           ? rawWindow
           : "90d";
 
-      if (!tedLiveConfig.enabled || !tedLiveConfig.baseUrl) {
-        res.status(503).json({
-          error:
-            "TED live feed is not configured. Add the TED endpoint and API key in Settings or API Hub.",
-        });
-        return;
-      }
-
-      const liveSnapshot = await fetchLiveTedSnapshot(tedLiveConfig, window);
-      if (liveSnapshot) {
+      try {
+        const liveSnapshot = await fetchLiveTedSnapshotStrict(
+          tedLiveConfig,
+          window,
+        );
         res.status(200).json(liveSnapshot);
-        return;
-      }
+      } catch (error) {
+        if (error instanceof TedLiveError) {
+          const configMissing =
+            error.code === "ted_live_disabled" ||
+            error.code === "ted_base_url_missing" ||
+            error.code === "ted_api_key_missing";
 
-      res.status(502).json({
-        error:
-          "TED live feed request failed. Check the TED endpoint, API key, and auth header in Settings or API Hub.",
-      });
+          if (configMissing) {
+            logger.info("ted_live_snapshot_fallback_mock", {
+              code: error.code,
+              window,
+            });
+            res.status(200).json(buildTedIntelSnapshot(window));
+            return;
+          }
+
+          logger.warn("ted_live_snapshot_unavailable", {
+            code: error.code,
+            status: error.status,
+            upstreamStatus: error.upstreamStatus,
+            message: error.message,
+            baseUrl: tedLiveConfig.baseUrl,
+            authHeader: tedLiveConfig.authHeader,
+            timeoutMs: tedLiveConfig.timeoutMs,
+            window,
+          });
+          res.status(error.status).json({
+            error: error.code,
+            message: error.message,
+            ...(typeof error.upstreamStatus === "number"
+              ? { upstreamStatus: error.upstreamStatus }
+              : {}),
+          });
+          return;
+        }
+
+        logger.error("ted_live_snapshot_unexpected_error", {
+          window,
+          error: error instanceof Error ? error.message : "unknown_error",
+        });
+        res.status(500).json({ error: "ted_snapshot_unexpected_error" });
+      }
     },
   );
 
@@ -1609,6 +2018,606 @@ export function createServer(
 
     res.status(200).json(getTedLiveConfigStatus(tedLiveConfig));
   });
+
+  app.post(
+    "/api/procurement/intel/ingest",
+    authGuard,
+    operatorOrAdminGuard,
+    async (req: Request, res: Response) => {
+      const tenantId = req.tenantContext?.tenantId ?? env.DEFAULT_TENANT_ID;
+      const window =
+        req.body?.window === "7d" ||
+        req.body?.window === "30d" ||
+        req.body?.window === "90d" ||
+        req.body?.window === "1y"
+          ? req.body.window
+          : "90d";
+
+      try {
+        const result = await procurementIntel.ingest(tenantId, window);
+        res.status(200).json({ ok: true, result });
+      } catch (error) {
+        if (error instanceof TedLiveError) {
+          logger.warn("procurement_intel_ingest_blocked_ted_error", {
+            tenantId,
+            code: error.code,
+            status: error.status,
+            upstreamStatus: error.upstreamStatus,
+            message: error.message,
+          });
+          res.status(error.status).json({
+            error: error.code,
+            message: error.message,
+            ...(typeof error.upstreamStatus === "number"
+              ? { upstreamStatus: error.upstreamStatus }
+              : {}),
+          });
+          return;
+        }
+
+        logger.error("procurement_intel_ingest_failed", {
+          tenantId,
+          error: error instanceof Error ? error.message : "unknown_error",
+        });
+        res.status(500).json({ error: "procurement_intel_ingest_failed" });
+      }
+    },
+  );
+
+  app.post(
+    "/api/procurement/intel/reprocess",
+    authGuard,
+    operatorOrAdminGuard,
+    async (req: Request, res: Response) => {
+      const tenantId = req.tenantContext?.tenantId ?? env.DEFAULT_TENANT_ID;
+      const noticeIds = Array.isArray(req.body?.noticeIds)
+        ? req.body.noticeIds.filter(
+            (value: unknown): value is string => typeof value === "string",
+          )
+        : undefined;
+
+      try {
+        const result = await procurementIntel.reprocess(tenantId, noticeIds);
+        res.status(200).json({ ok: true, result });
+      } catch (error) {
+        logger.error("procurement_intel_reprocess_failed", {
+          tenantId,
+          error: error instanceof Error ? error.message : "unknown_error",
+        });
+        res.status(500).json({ error: "procurement_intel_reprocess_failed" });
+      }
+    },
+  );
+
+  app.get(
+    "/api/procurement/intel/notices",
+    authGuard,
+    async (req: Request, res: Response) => {
+      const tenantId = req.tenantContext?.tenantId ?? env.DEFAULT_TENANT_ID;
+      try {
+        const filters = parseProcurementFilters(req);
+        const items = await procurementIntel.listNotices(tenantId, filters);
+        res.status(200).json({ items, total: items.length, filters });
+      } catch (error) {
+        logger.error("procurement_intel_list_failed", {
+          tenantId,
+          error: error instanceof Error ? error.message : "unknown_error",
+        });
+        res.status(500).json({ error: "procurement_intel_list_failed" });
+      }
+    },
+  );
+
+  app.get(
+    "/api/procurement/intel/summary",
+    authGuard,
+    async (req: Request, res: Response) => {
+      const tenantId = req.tenantContext?.tenantId ?? env.DEFAULT_TENANT_ID;
+      try {
+        const filters = parseProcurementFilters(req);
+        const summary = await procurementIntel.getAggregations(
+          tenantId,
+          filters,
+        );
+        res.status(200).json({ summary, filters });
+      } catch (error) {
+        logger.error("procurement_intel_summary_failed", {
+          tenantId,
+          error: error instanceof Error ? error.message : "unknown_error",
+        });
+        res.status(500).json({ error: "procurement_intel_summary_failed" });
+      }
+    },
+  );
+
+  app.get(
+    "/api/procurement/intel/graph",
+    authGuard,
+    async (req: Request, res: Response) => {
+      const tenantId = req.tenantContext?.tenantId ?? env.DEFAULT_TENANT_ID;
+      try {
+        const filters = parseProcurementFilters(req);
+        const relations = await procurementIntel.getGraphRelations(
+          tenantId,
+          filters,
+        );
+        res.status(200).json({ relations, total: relations.length, filters });
+      } catch (error) {
+        logger.error("procurement_intel_graph_failed", {
+          tenantId,
+          error: error instanceof Error ? error.message : "unknown_error",
+        });
+        res.status(500).json({ error: "procurement_intel_graph_failed" });
+      }
+    },
+  );
+
+  app.get(
+    "/api/procurement/intel/integrations",
+    authGuard,
+    async (req: Request, res: Response) => {
+      const tenantId = req.tenantContext?.tenantId ?? env.DEFAULT_TENANT_ID;
+      try {
+        const filters = parseProcurementFilters(req);
+        const feeds = await procurementIntel.getIntegrationFeeds(
+          tenantId,
+          filters,
+        );
+        res.status(200).json({ feeds, filters });
+      } catch (error) {
+        logger.error("procurement_intel_integrations_failed", {
+          tenantId,
+          error: error instanceof Error ? error.message : "unknown_error",
+        });
+        res
+          .status(500)
+          .json({ error: "procurement_intel_integrations_failed" });
+      }
+    },
+  );
+
+  app.get(
+    "/api/procurement/intel/raw/:rawId",
+    authGuard,
+    operatorOrAdminGuard,
+    async (req: Request, res: Response) => {
+      const tenantId = req.tenantContext?.tenantId ?? env.DEFAULT_TENANT_ID;
+      const rawId = req.params.rawId;
+      if (!rawId) {
+        res.status(400).json({ error: "missing_raw_id" });
+        return;
+      }
+      try {
+        const raw = await procurementIntel.getRawNotice(tenantId, rawId);
+        if (!raw) {
+          res.status(404).json({ error: "raw_notice_not_found" });
+          return;
+        }
+        res.status(200).json({ raw });
+      } catch (error) {
+        logger.error("procurement_intel_raw_notice_failed", {
+          tenantId,
+          rawId,
+          error: error instanceof Error ? error.message : "unknown_error",
+        });
+        res.status(500).json({ error: "procurement_intel_raw_notice_failed" });
+      }
+    },
+  );
+
+  app.get(
+    "/api/procurement/intel/diagnostics",
+    authGuard,
+    operatorOrAdminGuard,
+    async (req: Request, res: Response) => {
+      const tenantId = req.tenantContext?.tenantId ?? env.DEFAULT_TENANT_ID;
+      try {
+        const diagnostics = await procurementIntel.getDiagnostics(tenantId);
+        res.status(200).json({ diagnostics });
+      } catch (error) {
+        logger.error("procurement_intel_diagnostics_failed", {
+          tenantId,
+          error: error instanceof Error ? error.message : "unknown_error",
+        });
+        res.status(500).json({ error: "procurement_intel_diagnostics_failed" });
+      }
+    },
+  );
+
+  app.post(
+    "/api/sec/edgar/ingest",
+    authGuard,
+    operatorOrAdminGuard,
+    async (req: Request, res: Response) => {
+      const scopeId = "global";
+      const filings = Array.isArray(req.body?.filings)
+        ? req.body.filings.filter(
+            (
+              value: unknown,
+            ): value is {
+              company_name: string;
+              cik: string;
+              accession_number: string;
+              filing_date: string;
+              form_type: "8-K" | "10-K" | "10-Q" | "4";
+              raw_content: string;
+              accepted_at?: string;
+              period_of_report?: string;
+              ticker?: string;
+              primary_document_url?: string;
+              filing_detail_url?: string;
+              source_links?: string[];
+              metadata?: Record<string, unknown>;
+            } =>
+              Boolean(
+                value &&
+                typeof value === "object" &&
+                typeof (value as { company_name?: unknown }).company_name ===
+                  "string" &&
+                typeof (value as { cik?: unknown }).cik === "string" &&
+                typeof (value as { accession_number?: unknown })
+                  .accession_number === "string" &&
+                typeof (value as { filing_date?: unknown }).filing_date ===
+                  "string" &&
+                typeof (value as { form_type?: unknown }).form_type ===
+                  "string" &&
+                typeof (value as { raw_content?: unknown }).raw_content ===
+                  "string",
+              ),
+          )
+        : [];
+
+      if (!filings.length) {
+        res.status(400).json({ error: "missing_filings" });
+        return;
+      }
+
+      try {
+        const result = await edgarIntel.ingest(scopeId, filings);
+        res.status(200).json({ ok: true, result });
+      } catch (error) {
+        logger.error("edgar_ingest_failed", {
+          scopeId,
+          error: error instanceof Error ? error.message : "unknown_error",
+        });
+        res.status(500).json({ error: "edgar_ingest_failed" });
+      }
+    },
+  );
+
+  app.post(
+    "/api/sec/edgar/watcher/run",
+    authGuard,
+    operatorOrAdminGuard,
+    async (req: Request, res: Response) => {
+      const ciks = Array.isArray(req.body?.ciks)
+        ? req.body.ciks.filter(
+            (value: unknown): value is string => typeof value === "string",
+          )
+        : [];
+      const forms = Array.isArray(req.body?.forms)
+        ? req.body.forms.filter(
+            (value: unknown): value is "8-K" | "10-K" | "10-Q" | "4" =>
+              value === "8-K" ||
+              value === "10-K" ||
+              value === "10-Q" ||
+              value === "4",
+          )
+        : undefined;
+      const perCikLimit = Number(req.body?.perCikLimit);
+
+      if (!ciks.length) {
+        res.status(400).json({ error: "missing_ciks" });
+        return;
+      }
+
+      try {
+        const result = await edgarIntel.runWatcherOnce("global", {
+          ciks,
+          ...(forms?.length ? { forms } : {}),
+          ...(Number.isFinite(perCikLimit) ? { perCikLimit } : {}),
+        });
+        res.status(200).json({ ok: true, result });
+      } catch (error) {
+        logger.error("edgar_watcher_run_failed", {
+          error: error instanceof Error ? error.message : "unknown_error",
+        });
+        res.status(500).json({ error: "edgar_watcher_run_failed" });
+      }
+    },
+  );
+
+  app.post(
+    "/api/sec/edgar/watcher/start",
+    authGuard,
+    operatorOrAdminGuard,
+    async (req: Request, res: Response) => {
+      const ciks = Array.isArray(req.body?.ciks)
+        ? req.body.ciks.filter(
+            (value: unknown): value is string => typeof value === "string",
+          )
+        : [];
+      if (!ciks.length) {
+        res.status(400).json({ error: "missing_ciks" });
+        return;
+      }
+      const forms = Array.isArray(req.body?.forms)
+        ? req.body.forms.filter(
+            (value: unknown): value is "8-K" | "10-K" | "10-Q" | "4" =>
+              value === "8-K" ||
+              value === "10-K" ||
+              value === "10-Q" ||
+              value === "4",
+          )
+        : ["8-K", "10-K", "10-Q", "4"];
+      const intervalSecRaw = Number(req.body?.intervalSec);
+      const perCikLimitRaw = Number(req.body?.perCikLimit);
+
+      try {
+        const status = await edgarIntel.startWatcher("global", {
+          ciks,
+          forms,
+          intervalSec: Number.isFinite(intervalSecRaw)
+            ? Math.max(60, Math.min(3600, intervalSecRaw))
+            : env.EDGAR_WATCHER_INTERVAL_SECONDS,
+          perCikLimit: Number.isFinite(perCikLimitRaw)
+            ? Math.max(1, Math.min(50, perCikLimitRaw))
+            : 20,
+        });
+        res.status(200).json({ ok: true, status });
+      } catch (error) {
+        logger.error("edgar_watcher_start_failed", {
+          error: error instanceof Error ? error.message : "unknown_error",
+        });
+        res.status(500).json({ error: "edgar_watcher_start_failed" });
+      }
+    },
+  );
+
+  app.post(
+    "/api/sec/edgar/watcher/stop",
+    authGuard,
+    operatorOrAdminGuard,
+    (_req: Request, res: Response) => {
+      const status = edgarIntel.stopWatcher();
+      res.status(200).json({ ok: true, status });
+    },
+  );
+
+  app.get(
+    "/api/sec/edgar/watcher/status",
+    authGuard,
+    (_req: Request, res: Response) => {
+      const status = edgarIntel.getWatcherStatus();
+      res.status(200).json({ status });
+    },
+  );
+
+  app.get(
+    "/api/sec/edgar/filings",
+    authGuard,
+    async (req: Request, res: Response) => {
+      try {
+        const filters = parseEdgarFilters(req);
+        const items = await edgarIntel.listFilings("global", filters);
+        res.status(200).json({ items, total: items.length, filters });
+      } catch (error) {
+        logger.error("edgar_filing_list_failed", {
+          error: error instanceof Error ? error.message : "unknown_error",
+        });
+        res.status(500).json({ error: "edgar_filing_list_failed" });
+      }
+    },
+  );
+
+  app.get(
+    "/api/sec/edgar/filings/:filingId/intelligence",
+    authGuard,
+    async (req: Request, res: Response) => {
+      const filingId =
+        typeof req.params.filingId === "string" ? req.params.filingId : "";
+      if (!filingId) {
+        res.status(400).json({ error: "missing_filing_id" });
+        return;
+      }
+
+      try {
+        const view = await edgarIntel.getFilingIntelligenceView(
+          "global",
+          filingId,
+        );
+        if (!view) {
+          res.status(404).json({ error: "filing_not_found" });
+          return;
+        }
+        res.status(200).json({ view });
+      } catch (error) {
+        logger.error("edgar_filing_intelligence_view_failed", {
+          filingId,
+          error: error instanceof Error ? error.message : "unknown_error",
+        });
+        res
+          .status(500)
+          .json({ error: "edgar_filing_intelligence_view_failed" });
+      }
+    },
+  );
+
+  app.post(
+    "/api/sec/edgar/reprocess",
+    authGuard,
+    operatorOrAdminGuard,
+    async (req: Request, res: Response) => {
+      const filingIds = Array.isArray(req.body?.filingIds)
+        ? req.body.filingIds.filter(
+            (value: unknown): value is string =>
+              typeof value === "string" && Boolean(value),
+          )
+        : undefined;
+      const cik = typeof req.body?.cik === "string" ? req.body.cik : undefined;
+      const formTypeRaw =
+        typeof req.body?.formType === "string"
+          ? req.body.formType.trim().toUpperCase()
+          : "";
+      const formType =
+        formTypeRaw === "8-K" ||
+        formTypeRaw === "10-K" ||
+        formTypeRaw === "10-Q" ||
+        formTypeRaw === "4"
+          ? formTypeRaw
+          : undefined;
+      const limit = Number(req.body?.limit);
+
+      try {
+        const result = await edgarIntel.reprocess("global", {
+          ...(filingIds?.length ? { filingIds } : {}),
+          ...(cik ? { cik } : {}),
+          ...(formType ? { formType } : {}),
+          ...(Number.isFinite(limit) ? { limit } : {}),
+        });
+        res.status(200).json({ ok: true, result });
+      } catch (error) {
+        logger.error("edgar_reprocess_failed", {
+          error: error instanceof Error ? error.message : "unknown_error",
+        });
+        res.status(500).json({ error: "edgar_reprocess_failed" });
+      }
+    },
+  );
+
+  app.get(
+    "/api/sec/edgar/routes",
+    authGuard,
+    async (req: Request, res: Response) => {
+      const surfaceRaw =
+        typeof req.query.surface === "string"
+          ? req.query.surface.trim().toLowerCase()
+          : "all";
+      const surface =
+        surfaceRaw === "flow" ||
+        surfaceRaw === "intelligence" ||
+        surfaceRaw === "gwmd" ||
+        surfaceRaw === "all"
+          ? surfaceRaw
+          : "all";
+      const limitRaw = Number(req.query.limit);
+      const limit = Number.isFinite(limitRaw)
+        ? Math.max(1, Math.min(500, limitRaw))
+        : 100;
+
+      try {
+        const items = await edgarIntel.listRouting(
+          "global",
+          surface as "flow" | "intelligence" | "gwmd" | "all",
+          limit,
+        );
+        res.status(200).json({ surface, items, total: items.length });
+      } catch (error) {
+        logger.error("edgar_route_list_failed", {
+          surface,
+          error: error instanceof Error ? error.message : "unknown_error",
+        });
+        res.status(500).json({ error: "edgar_route_list_failed" });
+      }
+    },
+  );
+
+  app.get(
+    "/api/sec/edgar/snapshot",
+    authGuard,
+    async (req: Request, res: Response) => {
+      const windowDaysRaw = Number(req.query.windowDays);
+      const windowDays = Number.isFinite(windowDaysRaw)
+        ? Math.max(1, Math.min(365, Math.floor(windowDaysRaw)))
+        : env.EDGAR_WATCHER_BACKFILL_DAYS;
+      try {
+        const snapshot = await edgarIntel.getSnapshot("global", windowDays);
+        res.status(200).json({ snapshot });
+      } catch (error) {
+        logger.error("edgar_snapshot_failed", {
+          error: error instanceof Error ? error.message : "unknown_error",
+        });
+        res.status(500).json({ error: "edgar_snapshot_failed" });
+      }
+    },
+  );
+
+  app.get(
+    "/api/sec/edgar/flow-intel",
+    authGuard,
+    async (req: Request, res: Response) => {
+      const scopeId =
+        typeof req.query.scopeId === "string" && req.query.scopeId.trim()
+          ? req.query.scopeId.trim()
+          : "global";
+      const windowDaysRaw = Number(req.query.windowDays);
+      const windowDays = Number.isFinite(windowDaysRaw)
+        ? Math.max(1, Math.min(90, Math.floor(windowDaysRaw)))
+        : 14;
+      const limitRaw = Number(req.query.limit);
+      const limit = Number.isFinite(limitRaw)
+        ? Math.max(20, Math.min(400, Math.floor(limitRaw)))
+        : 180;
+      const cooldownHoursRaw = Number(req.query.cooldownHours);
+      const cooldownHours = Number.isFinite(cooldownHoursRaw)
+        ? Math.max(1, Math.min(168, Math.floor(cooldownHoursRaw)))
+        : 24;
+      const persistReports = req.query.persist !== "false";
+
+      try {
+        const filings = await edgarIntel.listFilings(scopeId, {
+          fromDate: toIsoDay(new Date(), windowDays),
+          limit,
+        });
+        const payload = buildFlowIntelPayload(filings, windowDays);
+        const persistence = persistReports
+          ? await persistFlowAnomalyReports(scopeId, payload, cooldownHours)
+          : { inserted: 0, suppressed: payload.anomalies.length };
+
+        res.status(200).json({ payload, persistence });
+      } catch (error) {
+        logger.error("edgar_flow_intel_failed", {
+          scopeId,
+          windowDays,
+          limit,
+          error: error instanceof Error ? error.message : "unknown_error",
+        });
+        res.status(500).json({ error: "edgar_flow_intel_failed" });
+      }
+    },
+  );
+
+  app.get(
+    "/api/sec/edgar/flow-intel/digest",
+    authGuard,
+    async (req: Request, res: Response) => {
+      const scopeId =
+        typeof req.query.scopeId === "string" && req.query.scopeId.trim()
+          ? req.query.scopeId.trim()
+          : "global";
+      const limitRaw = Number(req.query.limit);
+      const limit = Number.isFinite(limitRaw)
+        ? Math.max(1, Math.min(25, Math.floor(limitRaw)))
+        : 8;
+
+      try {
+        const items = await listRecentFlowAnomalyReports(scopeId, limit);
+        res.status(200).json({
+          scopeId,
+          items,
+          total: items.length,
+          generatedAt: new Date().toISOString(),
+        });
+      } catch (error) {
+        logger.error("edgar_flow_intel_digest_failed", {
+          scopeId,
+          limit,
+          error: error instanceof Error ? error.message : "unknown_error",
+        });
+        res.status(500).json({ error: "edgar_flow_intel_digest_failed" });
+      }
+    },
+  );
 
   app.post(
     "/api/supplychain/generate",
@@ -1863,6 +2872,1723 @@ export function createServer(
       }
 
       res.status(200).json({ ok: true });
+    },
+  );
+
+  app.post(
+    "/api/strategies",
+    authGuard,
+    async (req: Request, res: Response) => {
+      if (!backtesting) {
+        res.status(503).json({ error: "backtesting_unavailable_no_database" });
+        return;
+      }
+
+      if (!req.user) {
+        res.status(401).json({ error: "unauthorized" });
+        return;
+      }
+
+      if (!req.user) {
+        res.status(401).json({ error: "unauthorized" });
+        return;
+      }
+
+      const parsed = createStrategyRequestSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res
+          .status(400)
+          .json({ error: "invalid_request", details: parsed.error.flatten() });
+        return;
+      }
+
+      try {
+        const tenantId = req.tenantContext?.tenantId ?? env.DEFAULT_TENANT_ID;
+        const strategy = await backtesting.createStrategy({
+          tenantId,
+          userId: req.user.id,
+          name: parsed.data.name,
+          description: parsed.data.description,
+        });
+
+        const response = createStrategyResponseSchema.parse({
+          strategy: {
+            id: strategy.strategyId,
+            name: strategy.name,
+            stage: strategy.stage,
+            tags: strategy.tags,
+            description: strategy.description,
+            createdAt: strategy.createdAt,
+            updatedAt: strategy.updatedAt,
+          },
+        });
+        res.status(201).json(response);
+      } catch (error) {
+        logger.error("strategy_create_failed", {
+          error: error instanceof Error ? error.message : "unknown_error",
+        });
+        res.status(500).json({ error: "strategy_create_failed" });
+      }
+    },
+  );
+
+  app.get("/api/strategies", authGuard, async (req: Request, res: Response) => {
+    if (!backtesting) {
+      res.status(503).json({ error: "backtesting_unavailable_no_database" });
+      return;
+    }
+
+    if (!req.user) {
+      res.status(401).json({ error: "unauthorized" });
+      return;
+    }
+
+    try {
+      const tenantId = req.tenantContext?.tenantId ?? env.DEFAULT_TENANT_ID;
+      const limit = Number(req.query.limit);
+      const strategies = await backtesting.listStrategies(
+        req.user.id,
+        tenantId,
+        Number.isFinite(limit) ? limit : 100,
+      );
+
+      const response = listStrategiesResponseSchema.parse({
+        strategies: strategies.map((s) => ({
+          id: s.strategyId,
+          name: s.name,
+          stage: s.stage,
+          tags: s.tags,
+          description: s.description,
+          createdAt: s.createdAt,
+          updatedAt: s.updatedAt,
+        })),
+      });
+      res.status(200).json(response);
+    } catch (error) {
+      logger.error("strategy_list_failed", {
+        error: error instanceof Error ? error.message : "unknown_error",
+      });
+      res.status(500).json({ error: "strategy_list_failed" });
+    }
+  });
+
+  app.get(
+    "/api/strategies/:strategyId",
+    authGuard,
+    async (req: Request, res: Response) => {
+      if (!backtesting) {
+        res.status(503).json({ error: "backtesting_unavailable_no_database" });
+        return;
+      }
+
+      if (!req.user) {
+        res.status(401).json({ error: "unauthorized" });
+        return;
+      }
+
+      const strategyId = req.params.strategyId;
+      if (!strategyId) {
+        res.status(400).json({ error: "missing_strategy_id" });
+        return;
+      }
+
+      try {
+        const tenantId = req.tenantContext?.tenantId ?? env.DEFAULT_TENANT_ID;
+        const strategy = await backtesting.getStrategy(
+          strategyId,
+          req.user.id,
+          tenantId,
+        );
+        if (!strategy) {
+          res.status(404).json({ error: "strategy_not_found" });
+          return;
+        }
+
+        const version = await backtesting.getLatestStrategyVersion(
+          strategyId,
+          req.user.id,
+          tenantId,
+        );
+
+        const response = getStrategyResponseSchema.parse({
+          strategy: {
+            id: strategy.strategyId,
+            name: strategy.name,
+            stage: strategy.stage,
+            tags: strategy.tags,
+            description: strategy.description,
+            createdAt: strategy.createdAt,
+            updatedAt: strategy.updatedAt,
+          },
+          version: version
+            ? {
+                id: `${version.strategyId}-${version.version}`,
+                strategyId: version.strategyId,
+                version: version.version,
+                scriptLanguage: version.scriptLanguage,
+                scriptSource: version.scriptSource,
+                scriptChecksum: version.scriptChecksum,
+                universe: version.universe,
+                assumptions: version.assumptions,
+                createdAt: version.createdAt,
+              }
+            : {
+                id: "",
+                strategyId,
+                version: "",
+                scriptLanguage: "javascript",
+                scriptSource: "",
+                scriptChecksum: "",
+                universe: [],
+                assumptions: {},
+                createdAt: new Date().toISOString(),
+              },
+        });
+        res.status(200).json(response);
+      } catch (error) {
+        logger.error("strategy_get_failed", {
+          error: error instanceof Error ? error.message : "unknown_error",
+        });
+        res.status(500).json({ error: "strategy_get_failed" });
+      }
+    },
+  );
+
+  app.patch(
+    "/api/strategies/:strategyId",
+    authGuard,
+    async (req: Request, res: Response) => {
+      if (!backtesting) {
+        res.status(503).json({ error: "backtesting_unavailable_no_database" });
+        return;
+      }
+
+      if (!req.user) {
+        res.status(401).json({ error: "unauthorized" });
+        return;
+      }
+
+      const strategyId = req.params.strategyId;
+      if (!strategyId) {
+        res.status(400).json({ error: "missing_strategy_id" });
+        return;
+      }
+
+      const parsed = updateStrategyRequestSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res
+          .status(400)
+          .json({ error: "invalid_request", details: parsed.error.flatten() });
+        return;
+      }
+
+      try {
+        const tenantId = req.tenantContext?.tenantId ?? env.DEFAULT_TENANT_ID;
+        const updated = await backtesting.updateStrategy({
+          strategyId,
+          userId: req.user.id,
+          tenantId,
+          name: parsed.data.name,
+          description: parsed.data.description,
+          stage: parsed.data.stage,
+          tags: parsed.data.tags,
+          metadata: undefined,
+        });
+
+        if (!updated) {
+          res.status(404).json({ error: "strategy_not_found" });
+          return;
+        }
+
+        const response = createStrategyResponseSchema.parse({
+          strategy: {
+            id: updated.strategyId,
+            name: updated.name,
+            stage: updated.stage,
+            tags: updated.tags,
+            description: updated.description,
+            createdAt: updated.createdAt,
+            updatedAt: updated.updatedAt,
+          },
+        });
+        res.status(200).json(response);
+      } catch (error) {
+        logger.error("strategy_update_failed", {
+          error: error instanceof Error ? error.message : "unknown_error",
+        });
+        res.status(500).json({ error: "strategy_update_failed" });
+      }
+    },
+  );
+
+  app.post(
+    "/api/strategy/versions",
+    authGuard,
+    async (req: Request, res: Response) => {
+      if (!backtesting) {
+        res.status(503).json({ error: "backtesting_unavailable_no_database" });
+        return;
+      }
+
+      if (!req.user) {
+        res.status(401).json({ error: "unauthorized" });
+        return;
+      }
+
+      const strategyId =
+        typeof req.body?.strategyId === "string" ? req.body.strategyId : "";
+      if (!strategyId) {
+        res.status(400).json({ error: "missing_strategy_id" });
+        return;
+      }
+
+      const parsed = createStrategyVersionRequestSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res
+          .status(400)
+          .json({ error: "invalid_request", details: parsed.error.flatten() });
+        return;
+      }
+
+      try {
+        const tenantId = req.tenantContext?.tenantId ?? env.DEFAULT_TENANT_ID;
+        const version = await backtesting.createStrategyVersion({
+          strategyId,
+          userId: req.user.id,
+          tenantId,
+          scriptLanguage: parsed.data.scriptLanguage ?? "javascript",
+          scriptEntrypoint: parsed.data.scriptEntrypoint,
+          scriptSource: parsed.data.scriptSource,
+          universe: parsed.data.universe,
+          assumptions: parsed.data.assumptions,
+          notes: parsed.data.notes,
+        });
+
+        const response = createStrategyVersionResponseSchema.parse({
+          version: {
+            id: `${version.strategyId}-${version.version}`,
+            strategyId: version.strategyId,
+            version: version.version,
+            scriptLanguage: version.scriptLanguage,
+            scriptSource: version.scriptSource,
+            scriptChecksum: version.scriptChecksum,
+            universe: version.universe,
+            assumptions: version.assumptions,
+            createdAt: version.createdAt,
+          },
+        });
+        res.status(201).json(response);
+      } catch (error) {
+        logger.error("strategy_version_create_failed", {
+          error: error instanceof Error ? error.message : "unknown_error",
+        });
+        res.status(500).json({ error: "strategy_version_create_failed" });
+      }
+    },
+  );
+
+  app.get(
+    "/api/strategy/versions/:strategyId/latest",
+    authGuard,
+    async (req: Request, res: Response) => {
+      if (!backtesting) {
+        res.status(503).json({ error: "backtesting_unavailable_no_database" });
+        return;
+      }
+
+      if (!req.user) {
+        res.status(401).json({ error: "unauthorized" });
+        return;
+      }
+
+      const strategyId = req.params.strategyId;
+      if (!strategyId) {
+        res.status(400).json({ error: "missing_strategy_id" });
+        return;
+      }
+
+      try {
+        const tenantId = req.tenantContext?.tenantId ?? env.DEFAULT_TENANT_ID;
+        const version = await backtesting.getLatestStrategyVersion(
+          strategyId,
+          req.user.id,
+          tenantId,
+        );
+
+        if (!version) {
+          res.status(404).json({ error: "version_not_found" });
+          return;
+        }
+
+        const response = getLatestVersionResponseSchema.parse({
+          version: {
+            id: `${version.strategyId}-${version.version}`,
+            strategyId: version.strategyId,
+            version: version.version,
+            scriptLanguage: version.scriptLanguage,
+            scriptSource: version.scriptSource,
+            scriptChecksum: version.scriptChecksum,
+            universe: version.universe,
+            assumptions: version.assumptions,
+            createdAt: version.createdAt,
+          },
+        });
+        res.status(200).json(response);
+      } catch (error) {
+        logger.error("strategy_version_get_failed", {
+          error: error instanceof Error ? error.message : "unknown_error",
+        });
+        res.status(500).json({ error: "strategy_version_get_failed" });
+      }
+    },
+  );
+
+  app.post(
+    "/api/strategy/backtest/runs",
+    authGuard,
+    async (req: Request, res: Response) => {
+      if (!backtesting) {
+        res.status(503).json({ error: "backtesting_unavailable_no_database" });
+        return;
+      }
+
+      if (!req.user) {
+        res.status(401).json({ error: "unauthorized" });
+        return;
+      }
+
+      const parsed = strategyBacktestRunRequestSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res
+          .status(400)
+          .json({ error: "invalid_request", details: parsed.error.flatten() });
+        return;
+      }
+
+      try {
+        const tenantId = req.tenantContext?.tenantId ?? env.DEFAULT_TENANT_ID;
+        const enqueuePayload = {
+          tenantId,
+          userId: req.user.id,
+          strategyId: parsed.data.strategyId,
+          strategyVersion: parsed.data.strategyVersion,
+          datasetSnapshotId: parsed.data.datasetSnapshotId,
+          executionMode: parsed.data.executionMode,
+          queuePriority: parsed.data.queuePriority,
+          queueResourceClass: parsed.data.queueResourceClass,
+          maxAttempts: parsed.data.maxAttempts,
+          assumptions: parsed.data.assumptions,
+          ...(parsed.data.idempotencyKey
+            ? { idempotencyKey: parsed.data.idempotencyKey }
+            : {}),
+        };
+
+        const diagnostics = await backtesting.validateRunInput(enqueuePayload);
+        if (!diagnostics.ok) {
+          res.status(422).json({
+            error: "backtest_pre_run_validation_failed",
+            diagnostics,
+          });
+          return;
+        }
+
+        const run = await backtesting.enqueueRun(enqueuePayload);
+
+        const payload = strategyBacktestRunEnqueueResponseSchema.parse({
+          runId: run.runId,
+          status: run.status,
+        });
+        res.status(202).json(payload);
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "unknown_error";
+        if (
+          message === "backtest_resource_limit_user_queue" ||
+          message === "backtest_resource_limit_tenant_queue" ||
+          message === "backtest_resource_limit_tenant_running"
+        ) {
+          res.status(429).json({ error: message });
+          return;
+        }
+        logger.error("strategy_backtest_enqueue_failed", {
+          error: message,
+        });
+        res.status(500).json({ error: "strategy_backtest_enqueue_failed" });
+      }
+    },
+  );
+
+  app.get(
+    "/api/strategy/backtest/datasets",
+    authGuard,
+    async (req: Request, res: Response) => {
+      if (!backtesting) {
+        res.status(503).json({ error: "backtesting_unavailable_no_database" });
+        return;
+      }
+
+      if (!req.user) {
+        res.status(401).json({ error: "unauthorized" });
+        return;
+      }
+
+      try {
+        const tenantId = req.tenantContext?.tenantId ?? env.DEFAULT_TENANT_ID;
+        const limit = Number(req.query.limit);
+        const snapshots = await backtesting.listDatasetSnapshots(
+          req.user.id,
+          tenantId,
+          Number.isFinite(limit) ? limit : 100,
+        );
+        const payload = strategyDatasetSnapshotsResponseSchema.parse({
+          snapshots: snapshots.map((item) => ({
+            id: item.snapshotId,
+            name: item.datasetName,
+            version: item.datasetVersion,
+            snapshotAtIso: item.snapshotAt,
+            rowCount: item.rowCount ?? null,
+            sourceManifest: item.sourceManifest ?? {},
+            checksumSha256: item.checksumSha256,
+          })),
+        });
+        res.status(200).json(payload);
+      } catch (error) {
+        logger.error("strategy_backtest_datasets_list_failed", {
+          error: error instanceof Error ? error.message : "unknown_error",
+        });
+        res
+          .status(500)
+          .json({ error: "strategy_backtest_datasets_list_failed" });
+      }
+    },
+  );
+
+  app.get(
+    "/api/strategy/backtest/runs",
+    authGuard,
+    async (req: Request, res: Response) => {
+      if (!backtesting) {
+        res.status(503).json({ error: "backtesting_unavailable_no_database" });
+        return;
+      }
+
+      if (!req.user) {
+        res.status(401).json({ error: "unauthorized" });
+        return;
+      }
+
+      try {
+        const tenantId = req.tenantContext?.tenantId ?? env.DEFAULT_TENANT_ID;
+        const strategyId =
+          typeof req.query.strategyId === "string"
+            ? req.query.strategyId
+            : undefined;
+        const limit = Number(req.query.limit);
+        const runs = await backtesting.listRuns(
+          req.user.id,
+          tenantId,
+          strategyId,
+          Number.isFinite(limit) ? limit : 50,
+        );
+        res.status(200).json({ runs });
+      } catch (error) {
+        logger.error("strategy_backtest_list_failed", {
+          error: error instanceof Error ? error.message : "unknown_error",
+        });
+        res.status(500).json({ error: "strategy_backtest_list_failed" });
+      }
+    },
+  );
+
+  app.get(
+    "/api/strategy/backtest/runs/:runId",
+    authGuard,
+    async (req: Request, res: Response) => {
+      if (!backtesting) {
+        res.status(503).json({ error: "backtesting_unavailable_no_database" });
+        return;
+      }
+
+      if (!req.user) {
+        res.status(401).json({ error: "unauthorized" });
+        return;
+      }
+
+      const runId = req.params.runId;
+      if (!runId) {
+        res.status(400).json({ error: "missing_run_id" });
+        return;
+      }
+
+      try {
+        const tenantId = req.tenantContext?.tenantId ?? env.DEFAULT_TENANT_ID;
+        const run = await backtesting.getRun(runId, req.user.id, tenantId);
+        if (!run) {
+          res.status(404).json({ error: "run_not_found" });
+          return;
+        }
+        const payload = strategyBacktestRunStatusResponseSchema.parse({ run });
+        res.status(200).json(payload);
+      } catch (error) {
+        logger.error("strategy_backtest_get_failed", {
+          error: error instanceof Error ? error.message : "unknown_error",
+        });
+        res.status(500).json({ error: "strategy_backtest_get_failed" });
+      }
+    },
+  );
+
+  app.get(
+    "/api/strategy/backtest/runs/:runId/stream",
+    authGuard,
+    async (req: Request, res: Response) => {
+      if (!backtesting) {
+        res.status(503).json({ error: "backtesting_unavailable_no_database" });
+        return;
+      }
+
+      if (!req.user) {
+        res.status(401).json({ error: "unauthorized" });
+        return;
+      }
+
+      const runId = req.params.runId;
+      if (!runId) {
+        res.status(400).json({ error: "missing_run_id" });
+        return;
+      }
+
+      const tenantId = req.tenantContext?.tenantId ?? env.DEFAULT_TENANT_ID;
+      const userId = req.user.id;
+
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection", "keep-alive");
+      res.setHeader("X-Accel-Buffering", "no");
+      res.flushHeaders?.();
+
+      let closed = false;
+      const writeHeartbeat = () => {
+        if (closed) return;
+        res.write(
+          `event: heartbeat\ndata: ${JSON.stringify({ ts: new Date().toISOString() })}\n\n`,
+        );
+      };
+
+      const toProgressPct = (status: string): number => {
+        if (status === "queued") return 10;
+        if (status === "running") return 60;
+        return 100;
+      };
+
+      const emitSnapshot = async () => {
+        if (closed) return false;
+        try {
+          const run = await backtesting.getRun(runId, userId, tenantId);
+          if (!run) {
+            res.write(
+              `event: error\ndata: ${JSON.stringify({ error: "run_not_found" })}\n\n`,
+            );
+            return true;
+          }
+
+          const payload = {
+            runId: run.runId,
+            status: run.status,
+            progressPct: toProgressPct(run.status),
+            queueJobId: run.queueJobId,
+            queuePriority: run.queuePriority,
+            queueResourceClass: run.queueResourceClass,
+            retryCount: run.retryCount,
+            maxAttempts: run.maxAttempts,
+            lastRetryAt: run.lastRetryAt,
+            lastError: run.lastError,
+            requestedAt: run.requestedAt,
+            startedAt: run.startedAt,
+            finishedAt: run.finishedAt,
+            error: run.error,
+            metrics: run.metrics,
+            ts: new Date().toISOString(),
+          };
+
+          res.write(`event: progress\ndata: ${JSON.stringify(payload)}\n\n`);
+          return (
+            run.status === "completed" ||
+            run.status === "failed" ||
+            run.status === "cancelled"
+          );
+        } catch (error) {
+          res.write(
+            `event: error\ndata: ${JSON.stringify({ error: error instanceof Error ? error.message : "stream_error" })}\n\n`,
+          );
+          return true;
+        }
+      };
+
+      const tick = setInterval(() => {
+        void emitSnapshot().then((done) => {
+          if (done && !closed) {
+            res.write("event: end\ndata: {}\n\n");
+            clearInterval(tick);
+            clearInterval(heartbeats);
+            res.end();
+            closed = true;
+          }
+        });
+      }, 1000);
+
+      const heartbeats = setInterval(writeHeartbeat, 15000);
+
+      void emitSnapshot();
+
+      req.on("close", () => {
+        closed = true;
+        clearInterval(tick);
+        clearInterval(heartbeats);
+      });
+    },
+  );
+
+  app.get(
+    "/api/strategy/backtest/runs/:runId/lineage/diff",
+    authGuard,
+    async (req: Request, res: Response) => {
+      if (!lineageDiff) {
+        res.status(503).json({ error: "backtesting_unavailable_no_database" });
+        return;
+      }
+
+      if (!req.user) {
+        res.status(401).json({ error: "unauthorized" });
+        return;
+      }
+
+      const runIdA = req.params.runId;
+      const runIdB =
+        typeof req.query.compareToRunId === "string"
+          ? req.query.compareToRunId.trim()
+          : "";
+
+      if (!runIdA || !runIdB) {
+        res.status(400).json({ error: "missing_run_id_or_compare_to_run_id" });
+        return;
+      }
+
+      try {
+        const tenantId = req.tenantContext?.tenantId ?? env.DEFAULT_TENANT_ID;
+        const result = await lineageDiff.diff(
+          runIdA,
+          runIdB,
+          req.user.id,
+          tenantId,
+        );
+        res.status(200).json(result);
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "unknown_error";
+        if (message.startsWith("lineage_diff_run_not_found:")) {
+          res.status(404).json({ error: message });
+          return;
+        }
+        logger.error("lineage_diff_failed", { error: message });
+        res.status(500).json({ error: "lineage_diff_failed" });
+      }
+    },
+  );
+
+  app.get(
+    "/api/strategy/backtest/runs/:runId/artifacts",
+    authGuard,
+    async (req: Request, res: Response) => {
+      if (!backtestingRepo) {
+        res.status(503).json({ error: "backtesting_unavailable_no_database" });
+        return;
+      }
+
+      if (!req.user) {
+        res.status(401).json({ error: "unauthorized" });
+        return;
+      }
+
+      const runId = req.params.runId;
+      if (!runId) {
+        res.status(400).json({ error: "missing_run_id" });
+        return;
+      }
+
+      try {
+        const tenantId = req.tenantContext?.tenantId ?? env.DEFAULT_TENANT_ID;
+        const artifacts = await backtestingRepo.listArtifacts(
+          runId,
+          req.user.id,
+          tenantId,
+        );
+        const payload = strategyBacktestArtifactsResponseSchema.parse({
+          artifacts,
+        });
+        res.status(200).json(payload);
+      } catch (error) {
+        logger.error("strategy_backtest_artifacts_failed", {
+          error: error instanceof Error ? error.message : "unknown_error",
+        });
+        res.status(500).json({ error: "strategy_backtest_artifacts_failed" });
+      }
+    },
+  );
+
+  app.post(
+    "/api/strategy/backtest/runs/:runId/robustness",
+    authGuard,
+    async (req: Request, res: Response) => {
+      if (!backtestRobustness || !backtestingRepo) {
+        res.status(503).json({ error: "backtesting_unavailable_no_database" });
+        return;
+      }
+
+      if (!req.user) {
+        res.status(401).json({ error: "unauthorized" });
+        return;
+      }
+
+      const runId = req.params.runId;
+      if (!runId) {
+        res.status(400).json({ error: "missing_run_id" });
+        return;
+      }
+
+      const parsed = strategyBacktestRobustnessRequestSchema.safeParse(
+        req.body ?? {},
+      );
+      if (!parsed.success) {
+        res
+          .status(400)
+          .json({ error: "invalid_request", details: parsed.error.flatten() });
+        return;
+      }
+
+      try {
+        const tenantId = req.tenantContext?.tenantId ?? env.DEFAULT_TENANT_ID;
+        const report = await backtestRobustness.runSuite({
+          runId,
+          userId: req.user.id,
+          tenantId,
+        });
+
+        if (parsed.data.persistExperimentName) {
+          const run = await backtestingRepo.getRun(
+            runId,
+            req.user.id,
+            tenantId,
+          );
+          if (!run) {
+            res.status(404).json({ error: "run_not_found" });
+            return;
+          }
+          await backtestingRepo.upsertExperiment({
+            experimentId: randomUUID(),
+            tenantId,
+            userId: req.user.id,
+            strategyId: run.strategyId,
+            runId,
+            experimentName: parsed.data.persistExperimentName,
+            tags: parsed.data.tags ?? [],
+            notes: parsed.data.notes ?? "",
+            parameters: {
+              robustnessReport: report,
+            },
+          });
+        }
+
+        const payload = strategyBacktestRobustnessResponseSchema.parse({
+          report,
+        });
+        res.status(200).json(payload);
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "unknown_error";
+        if (
+          message === "robustness_run_not_found" ||
+          message === "robustness_strategy_version_not_found" ||
+          message === "robustness_snapshot_not_found"
+        ) {
+          res.status(404).json({ error: message });
+          return;
+        }
+        logger.error("strategy_backtest_robustness_failed", {
+          error: message,
+        });
+        res.status(500).json({ error: "strategy_backtest_robustness_failed" });
+      }
+    },
+  );
+
+  app.get(
+    "/api/strategy/backtest/runs/:runId/compare",
+    authGuard,
+    async (req: Request, res: Response) => {
+      if (!backtestingRepo) {
+        res.status(503).json({ error: "backtesting_unavailable_no_database" });
+        return;
+      }
+
+      if (!req.user) {
+        res.status(401).json({ error: "unauthorized" });
+        return;
+      }
+
+      const runId = req.params.runId;
+      const baselineRunId =
+        typeof req.query.baselineRunId === "string"
+          ? req.query.baselineRunId.trim()
+          : typeof req.query.compareToRunId === "string"
+            ? req.query.compareToRunId.trim()
+            : "";
+      if (!runId || !baselineRunId) {
+        res.status(400).json({ error: "missing_run_id_or_baseline_run_id" });
+        return;
+      }
+
+      try {
+        const tenantId = req.tenantContext?.tenantId ?? env.DEFAULT_TENANT_ID;
+        const [run, baselineRun] = await Promise.all([
+          backtestingRepo.getRun(runId, req.user.id, tenantId),
+          backtestingRepo.getRun(baselineRunId, req.user.id, tenantId),
+        ]);
+        if (!run || !baselineRun) {
+          res.status(404).json({ error: "run_not_found" });
+          return;
+        }
+
+        const comparison = compareRunMetrics({
+          runId,
+          baselineRunId,
+          runMetrics: run.metrics ?? {},
+          baselineMetrics: baselineRun.metrics ?? {},
+          trackedFields: [
+            "totalReturn",
+            "annualizedReturn",
+            "sharpeRatio",
+            "maxDrawdown",
+            "winRate",
+            "annualizedVolatility",
+            "turnoverPct",
+            "exposureUtilizationPct",
+            "expectancy",
+            "cagr",
+            "sortinoRatio",
+            "calmarRatio",
+          ],
+        });
+        const includeLineage =
+          req.query.includeLineage === "1" ||
+          req.query.includeLineage === "true";
+        const lineage =
+          includeLineage && lineageDiff
+            ? await lineageDiff.diff(
+                runId,
+                baselineRunId,
+                req.user.id,
+                tenantId,
+              )
+            : undefined;
+        const payload = strategyBacktestCompareResponseSchema.parse({
+          comparison,
+          ...(lineage ? { lineage } : {}),
+        });
+        res.status(200).json(payload);
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "unknown_error";
+        logger.error("strategy_backtest_compare_failed", { error: message });
+        res.status(500).json({ error: "strategy_backtest_compare_failed" });
+      }
+    },
+  );
+
+  app.get(
+    "/api/strategy/backtest/runs/:runId/experiment",
+    authGuard,
+    async (req: Request, res: Response) => {
+      if (!backtestingRepo) {
+        res.status(503).json({ error: "backtesting_unavailable_no_database" });
+        return;
+      }
+
+      if (!req.user) {
+        res.status(401).json({ error: "unauthorized" });
+        return;
+      }
+
+      const runId = req.params.runId;
+      if (!runId) {
+        res.status(400).json({ error: "missing_run_id" });
+        return;
+      }
+
+      try {
+        const tenantId = req.tenantContext?.tenantId ?? env.DEFAULT_TENANT_ID;
+        const experiment = await backtestingRepo.getExperiment(
+          runId,
+          req.user.id,
+          tenantId,
+        );
+        const payload = strategyRunExperimentResponseSchema.parse({
+          experiment,
+        });
+        res.status(200).json(payload);
+      } catch (error) {
+        logger.error("strategy_backtest_experiment_get_failed", {
+          error: error instanceof Error ? error.message : "unknown_error",
+        });
+        res
+          .status(500)
+          .json({ error: "strategy_backtest_experiment_get_failed" });
+      }
+    },
+  );
+
+  app.put(
+    "/api/strategy/backtest/runs/:runId/experiment",
+    authGuard,
+    async (req: Request, res: Response) => {
+      if (!backtestingRepo) {
+        res.status(503).json({ error: "backtesting_unavailable_no_database" });
+        return;
+      }
+
+      if (!req.user) {
+        res.status(401).json({ error: "unauthorized" });
+        return;
+      }
+
+      const runId = req.params.runId;
+      if (!runId) {
+        res.status(400).json({ error: "missing_run_id" });
+        return;
+      }
+
+      const parsed = strategyRunExperimentRequestSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res
+          .status(400)
+          .json({ error: "invalid_request", details: parsed.error.flatten() });
+        return;
+      }
+
+      try {
+        const tenantId = req.tenantContext?.tenantId ?? env.DEFAULT_TENANT_ID;
+        const run = await backtestingRepo.getRun(runId, req.user.id, tenantId);
+        if (!run) {
+          res.status(404).json({ error: "run_not_found" });
+          return;
+        }
+        const existing = await backtestingRepo.getExperiment(
+          runId,
+          req.user.id,
+          tenantId,
+        );
+        const experimentId = existing?.experimentId ?? randomUUID();
+        await backtestingRepo.upsertExperiment({
+          experimentId,
+          tenantId,
+          userId: req.user.id,
+          strategyId: run.strategyId,
+          runId,
+          experimentName: parsed.data.experimentName,
+          tags: parsed.data.tags,
+          notes: parsed.data.notes,
+          parameters: parsed.data.parameters,
+        });
+        const experiment = await backtestingRepo.getExperiment(
+          runId,
+          req.user.id,
+          tenantId,
+        );
+        const payload = strategyRunExperimentResponseSchema.parse({
+          experiment,
+        });
+        res.status(200).json(payload);
+      } catch (error) {
+        logger.error("strategy_backtest_experiment_upsert_failed", {
+          error: error instanceof Error ? error.message : "unknown_error",
+        });
+        res
+          .status(500)
+          .json({ error: "strategy_backtest_experiment_upsert_failed" });
+      }
+    },
+  );
+
+  app.post(
+    "/api/strategy/promotions",
+    authGuard,
+    async (req: Request, res: Response) => {
+      if (!backtesting) {
+        res.status(503).json({ error: "backtesting_unavailable_no_database" });
+        return;
+      }
+
+      if (!req.user) {
+        res.status(401).json({ error: "unauthorized" });
+        return;
+      }
+
+      const parsed = strategyPromotionRequestSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res
+          .status(400)
+          .json({ error: "invalid_request", details: parsed.error.flatten() });
+        return;
+      }
+
+      try {
+        const tenantId = req.tenantContext?.tenantId ?? env.DEFAULT_TENANT_ID;
+        const promotionPayload = {
+          tenantId,
+          userId: req.user.id,
+          strategyId: parsed.data.strategyId,
+          fromStage: parsed.data.fromStage,
+          toStage: parsed.data.toStage,
+          ...(parsed.data.sourceRunId
+            ? { sourceRunId: parsed.data.sourceRunId }
+            : {}),
+          ...(parsed.data.baselineRunId
+            ? { baselineRunId: parsed.data.baselineRunId }
+            : {}),
+          ...(parsed.data.governanceProfileId
+            ? { governanceProfileId: parsed.data.governanceProfileId }
+            : {}),
+          ...(parsed.data.acceptancePackId
+            ? { acceptancePackId: parsed.data.acceptancePackId }
+            : {}),
+          autoGatePassed: parsed.data.autoGatePassed,
+          checklist: parsed.data.checklist,
+          rationale: parsed.data.rationale,
+          ...(parsed.data.manualApprovedBy
+            ? { manualApprovedBy: parsed.data.manualApprovedBy }
+            : {}),
+        };
+        const result = await backtesting.promoteStrategy(promotionPayload);
+        res.status(200).json({ ok: true, eventId: result.eventId });
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "unknown_error";
+        if (
+          message === "governance_profile_default_missing" ||
+          message === "acceptance_pack_default_missing"
+        ) {
+          res.status(422).json({ error: message });
+          return;
+        }
+        if (
+          message === "governance_auto_gate_required" ||
+          message === "governance_manual_approval_required" ||
+          message === "governance_transition_disallowed" ||
+          message === "governance_benchmark_required" ||
+          message === "governance_source_run_required_for_oos" ||
+          message === "governance_source_run_required_for_replay_tolerance" ||
+          message.startsWith("governance_checklist_incomplete") ||
+          message.startsWith("governance_required_reports_incomplete") ||
+          message.startsWith("governance_oos_minimums_failed") ||
+          message.startsWith("governance_replay_tolerance_failed")
+        ) {
+          res.status(409).json({ error: message });
+          return;
+        }
+        if (
+          message === "governance_source_run_not_found" ||
+          message === "governance_baseline_run_not_found"
+        ) {
+          res.status(404).json({ error: message });
+          return;
+        }
+        if (
+          message === "governance_source_run_strategy_mismatch" ||
+          message === "governance_source_run_not_completed" ||
+          message === "governance_baseline_run_strategy_mismatch"
+        ) {
+          res.status(400).json({ error: message });
+          return;
+        }
+        logger.error("strategy_promotion_failed", {
+          error: message,
+        });
+        res.status(500).json({ error: "strategy_promotion_failed" });
+      }
+    },
+  );
+
+  app.put(
+    "/api/strategy/connectors",
+    authGuard,
+    async (req: Request, res: Response) => {
+      if (!backtesting) {
+        res.status(503).json({ error: "backtesting_unavailable_no_database" });
+        return;
+      }
+
+      const parsed = strategyConnectorUpsertRequestSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res
+          .status(400)
+          .json({ error: "invalid_request", details: parsed.error.flatten() });
+        return;
+      }
+
+      try {
+        const tenantId = req.tenantContext?.tenantId ?? env.DEFAULT_TENANT_ID;
+        const result = await backtesting.upsertConnector({
+          ...(parsed.data.connectorId
+            ? { connectorId: parsed.data.connectorId }
+            : {}),
+          tenantId,
+          connectorType: parsed.data.connectorType,
+          status: parsed.data.status,
+          displayName: parsed.data.displayName,
+          config: parsed.data.config,
+          capabilities: parsed.data.capabilities,
+        });
+        res.status(200).json({ ok: true, connectorId: result.connectorId });
+      } catch (error) {
+        logger.error("strategy_connector_upsert_failed", {
+          error: error instanceof Error ? error.message : "unknown_error",
+        });
+        res.status(500).json({ error: "strategy_connector_upsert_failed" });
+      }
+    },
+  );
+
+  app.get(
+    "/api/strategy/connectors",
+    authGuard,
+    async (req: Request, res: Response) => {
+      if (!backtesting) {
+        res.status(503).json({ error: "backtesting_unavailable_no_database" });
+        return;
+      }
+
+      try {
+        const tenantId = req.tenantContext?.tenantId ?? env.DEFAULT_TENANT_ID;
+        const connectors = await backtesting.listConnectors(tenantId);
+        const payload = strategyConnectorListResponseSchema.parse({
+          connectors,
+        });
+        res.status(200).json(payload);
+      } catch (error) {
+        logger.error("strategy_connector_list_failed", {
+          error: error instanceof Error ? error.message : "unknown_error",
+        });
+        res.status(500).json({ error: "strategy_connector_list_failed" });
+      }
+    },
+  );
+
+  app.put(
+    "/api/strategy/governance-profiles",
+    authGuard,
+    async (req: Request, res: Response) => {
+      if (!backtesting) {
+        res.status(503).json({ error: "backtesting_unavailable_no_database" });
+        return;
+      }
+
+      const parsed = strategyGovernanceProfileUpsertRequestSchema.safeParse(
+        req.body,
+      );
+      if (!parsed.success) {
+        res
+          .status(400)
+          .json({ error: "invalid_request", details: parsed.error.flatten() });
+        return;
+      }
+
+      try {
+        const tenantId = req.tenantContext?.tenantId ?? env.DEFAULT_TENANT_ID;
+        const result = await backtesting.upsertGovernanceProfile({
+          ...(parsed.data.profileId
+            ? { profileId: parsed.data.profileId }
+            : {}),
+          tenantId,
+          profileName: parsed.data.profileName,
+          isDefault: parsed.data.isDefault,
+          transitionRules: parsed.data.transitionRules,
+          requiredReportSections: parsed.data.requiredReportSections,
+          benchmarkRequired: parsed.data.benchmarkRequired,
+          oosMinimums: parsed.data.oosMinimums,
+          drawdownHaltRules: parsed.data.drawdownHaltRules,
+          replayTolerance: parsed.data.replayTolerance,
+        });
+        res.status(200).json({ ok: true, profileId: result.profileId });
+      } catch (error) {
+        logger.error("strategy_governance_profile_upsert_failed", {
+          error: error instanceof Error ? error.message : "unknown_error",
+        });
+        res
+          .status(500)
+          .json({ error: "strategy_governance_profile_upsert_failed" });
+      }
+    },
+  );
+
+  app.get(
+    "/api/strategy/governance-profiles",
+    authGuard,
+    async (req: Request, res: Response) => {
+      if (!backtesting) {
+        res.status(503).json({ error: "backtesting_unavailable_no_database" });
+        return;
+      }
+
+      try {
+        const tenantId = req.tenantContext?.tenantId ?? env.DEFAULT_TENANT_ID;
+        const profiles = await backtesting.listGovernanceProfiles(tenantId);
+        const payload = strategyGovernanceProfileListResponseSchema.parse({
+          profiles,
+        });
+        res.status(200).json(payload);
+      } catch (error) {
+        logger.error("strategy_governance_profile_list_failed", {
+          error: error instanceof Error ? error.message : "unknown_error",
+        });
+        res
+          .status(500)
+          .json({ error: "strategy_governance_profile_list_failed" });
+      }
+    },
+  );
+
+  app.put(
+    "/api/strategy/acceptance-packs",
+    authGuard,
+    async (req: Request, res: Response) => {
+      if (!backtesting) {
+        res.status(503).json({ error: "backtesting_unavailable_no_database" });
+        return;
+      }
+
+      const parsed = strategyAcceptancePackUpsertRequestSchema.safeParse(
+        req.body,
+      );
+      if (!parsed.success) {
+        res
+          .status(400)
+          .json({ error: "invalid_request", details: parsed.error.flatten() });
+        return;
+      }
+
+      try {
+        const tenantId = req.tenantContext?.tenantId ?? env.DEFAULT_TENANT_ID;
+        const result = await backtesting.upsertAcceptancePack({
+          ...(parsed.data.packId ? { packId: parsed.data.packId } : {}),
+          tenantId,
+          packName: parsed.data.packName,
+          isDefault: parsed.data.isDefault,
+          goldenStrategies: parsed.data.goldenStrategies,
+          requiredReportSections: parsed.data.requiredReportSections,
+          replayTolerance: parsed.data.replayTolerance,
+          promotionChecklist: parsed.data.promotionChecklist,
+          definitionOfDone: parsed.data.definitionOfDone,
+        });
+        res.status(200).json({ ok: true, packId: result.packId });
+      } catch (error) {
+        logger.error("strategy_acceptance_pack_upsert_failed", {
+          error: error instanceof Error ? error.message : "unknown_error",
+        });
+        res
+          .status(500)
+          .json({ error: "strategy_acceptance_pack_upsert_failed" });
+      }
+    },
+  );
+
+  app.get(
+    "/api/strategy/acceptance-packs",
+    authGuard,
+    async (req: Request, res: Response) => {
+      if (!backtesting) {
+        res.status(503).json({ error: "backtesting_unavailable_no_database" });
+        return;
+      }
+
+      try {
+        const tenantId = req.tenantContext?.tenantId ?? env.DEFAULT_TENANT_ID;
+        const packs = await backtesting.listAcceptancePacks(tenantId);
+        const payload = strategyAcceptancePackListResponseSchema.parse({
+          packs,
+        });
+        res.status(200).json(payload);
+      } catch (error) {
+        logger.error("strategy_acceptance_pack_list_failed", {
+          error: error instanceof Error ? error.message : "unknown_error",
+        });
+        res.status(500).json({ error: "strategy_acceptance_pack_list_failed" });
+      }
+    },
+  );
+
+  app.get(
+    "/api/strategy/governance/readiness",
+    authGuard,
+    async (req: Request, res: Response) => {
+      if (!backtesting) {
+        res.status(503).json({ error: "backtesting_unavailable_no_database" });
+        return;
+      }
+
+      const executionModeRaw =
+        typeof req.query.executionMode === "string"
+          ? req.query.executionMode.trim().toLowerCase()
+          : "";
+      if (executionModeRaw !== "paper" && executionModeRaw !== "live") {
+        res
+          .status(400)
+          .json({ error: "invalid_execution_mode_expected_paper_or_live" });
+        return;
+      }
+
+      try {
+        const tenantId = req.tenantContext?.tenantId ?? env.DEFAULT_TENANT_ID;
+        const readiness = await backtesting.getGovernanceReadiness({
+          tenantId,
+          executionMode: executionModeRaw,
+        });
+        const payload =
+          strategyGovernanceReadinessResponseSchema.parse(readiness);
+        res.status(200).json(payload);
+      } catch (error) {
+        logger.error("strategy_governance_readiness_failed", {
+          error: error instanceof Error ? error.message : "unknown_error",
+        });
+        res.status(500).json({ error: "strategy_governance_readiness_failed" });
+      }
+    },
+  );
+
+  app.post(
+    "/api/strategy/forward-profiles",
+    authGuard,
+    async (req: Request, res: Response) => {
+      if (!backtesting) {
+        res.status(503).json({ error: "backtesting_unavailable_no_database" });
+        return;
+      }
+
+      if (!req.user) {
+        res.status(401).json({ error: "unauthorized" });
+        return;
+      }
+
+      const parsed = strategyForwardProfileCreateRequestSchema.safeParse(
+        req.body,
+      );
+      if (!parsed.success) {
+        res
+          .status(400)
+          .json({ error: "invalid_request", details: parsed.error.flatten() });
+        return;
+      }
+
+      try {
+        const tenantId = req.tenantContext?.tenantId ?? env.DEFAULT_TENANT_ID;
+        const result = await backtesting.createForwardProfile({
+          tenantId,
+          userId: req.user.id,
+          strategyId: parsed.data.strategyId,
+          sourceRunId: parsed.data.sourceRunId,
+          ...(parsed.data.baselineRunId
+            ? { baselineRunId: parsed.data.baselineRunId }
+            : {}),
+          executionMode: parsed.data.executionMode,
+          ...(parsed.data.governanceProfileId
+            ? { governanceProfileId: parsed.data.governanceProfileId }
+            : {}),
+          ...(parsed.data.acceptancePackId
+            ? { acceptancePackId: parsed.data.acceptancePackId }
+            : {}),
+          autoGatePassed: parsed.data.autoGatePassed,
+          checklist: parsed.data.checklist,
+          ...(parsed.data.manualApprovedBy
+            ? { manualApprovedBy: parsed.data.manualApprovedBy }
+            : {}),
+          benchmark: parsed.data.benchmark,
+          rebalanceFrozenAt: parsed.data.rebalanceFrozenAt,
+          metadata: parsed.data.metadata,
+        });
+        res.status(200).json({ ok: true, profileId: result.profileId });
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "unknown_error";
+        if (
+          message === "source_run_not_found" ||
+          message === "strategy_not_found" ||
+          message === "governance_baseline_run_not_found"
+        ) {
+          res.status(404).json({ error: message });
+          return;
+        }
+        if (
+          message === "source_run_strategy_mismatch" ||
+          message === "source_run_not_completed" ||
+          message === "strategy_stage_not_ready_for_handoff" ||
+          message === "strategy_stage_not_ready_for_live_activation" ||
+          message === "governance_baseline_run_strategy_mismatch" ||
+          message === "governance_baseline_run_not_completed"
+        ) {
+          res.status(400).json({ error: message });
+          return;
+        }
+        if (
+          message === "governance_profile_default_missing" ||
+          message === "acceptance_pack_default_missing"
+        ) {
+          res.status(422).json({ error: message });
+          return;
+        }
+        if (
+          message === "governance_auto_gate_required" ||
+          message === "governance_manual_approval_required" ||
+          message === "governance_transition_disallowed" ||
+          message === "governance_benchmark_required" ||
+          message === "governance_baseline_run_required_for_replay_tolerance" ||
+          message.startsWith("governance_checklist_incomplete") ||
+          message.startsWith("governance_definition_of_done_incomplete") ||
+          message.startsWith("governance_required_reports_incomplete") ||
+          message.startsWith("governance_oos_minimums_failed") ||
+          message.startsWith("governance_replay_tolerance_failed")
+        ) {
+          res.status(409).json({ error: message });
+          return;
+        }
+        logger.error("strategy_forward_profile_create_failed", {
+          error: message,
+        });
+        res
+          .status(500)
+          .json({ error: "strategy_forward_profile_create_failed" });
+      }
+    },
+  );
+
+  app.get(
+    "/api/strategy/forward-profiles",
+    authGuard,
+    async (req: Request, res: Response) => {
+      if (!backtesting) {
+        res.status(503).json({ error: "backtesting_unavailable_no_database" });
+        return;
+      }
+
+      if (!req.user) {
+        res.status(401).json({ error: "unauthorized" });
+        return;
+      }
+
+      const strategyId =
+        typeof req.query.strategyId === "string" && req.query.strategyId.trim()
+          ? req.query.strategyId.trim()
+          : undefined;
+      const limitRaw =
+        typeof req.query.limit === "string" ? Number(req.query.limit) : 100;
+      const limit = Number.isFinite(limitRaw) ? Number(limitRaw) : 100;
+
+      try {
+        const tenantId = req.tenantContext?.tenantId ?? env.DEFAULT_TENANT_ID;
+        const profiles = await backtesting.listForwardProfiles({
+          tenantId,
+          userId: req.user.id,
+          ...(strategyId ? { strategyId } : {}),
+          limit,
+        });
+        const payload = strategyForwardProfileListResponseSchema.parse({
+          profiles,
+        });
+        res.status(200).json(payload);
+      } catch (error) {
+        logger.error("strategy_forward_profile_list_failed", {
+          error: error instanceof Error ? error.message : "unknown_error",
+        });
+        res.status(500).json({ error: "strategy_forward_profile_list_failed" });
+      }
+    },
+  );
+
+  app.patch(
+    "/api/strategy/forward-profiles/:profileId/status",
+    authGuard,
+    async (req: Request, res: Response) => {
+      if (!backtesting) {
+        res.status(503).json({ error: "backtesting_unavailable_no_database" });
+        return;
+      }
+
+      if (!req.user) {
+        res.status(401).json({ error: "unauthorized" });
+        return;
+      }
+
+      const profileId = String(req.params.profileId ?? "").trim();
+      if (!profileId) {
+        res.status(400).json({ error: "invalid_profile_id" });
+        return;
+      }
+
+      const parsed = strategyForwardProfileStatusUpdateRequestSchema.safeParse(
+        req.body,
+      );
+      if (!parsed.success) {
+        res
+          .status(400)
+          .json({ error: "invalid_request", details: parsed.error.flatten() });
+        return;
+      }
+
+      try {
+        const tenantId = req.tenantContext?.tenantId ?? env.DEFAULT_TENANT_ID;
+        await backtesting.setForwardProfileStatus({
+          tenantId,
+          userId: req.user.id,
+          profileId,
+          status: parsed.data.status,
+          ...(parsed.data.reason ? { reason: parsed.data.reason } : {}),
+        });
+        res
+          .status(200)
+          .json({ ok: true, profileId, status: parsed.data.status });
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "unknown_error";
+        if (message === "forward_profile_not_found") {
+          res.status(404).json({ error: message });
+          return;
+        }
+        if (message === "forward_profile_stopped_terminal_state") {
+          res.status(409).json({ error: message });
+          return;
+        }
+        logger.error("strategy_forward_profile_status_update_failed", {
+          error: message,
+        });
+        res
+          .status(500)
+          .json({ error: "strategy_forward_profile_status_update_failed" });
+      }
+    },
+  );
+
+  app.get(
+    "/api/strategy/forward-profiles/:profileId/drift",
+    authGuard,
+    async (req: Request, res: Response) => {
+      if (!backtesting) {
+        res.status(503).json({ error: "backtesting_unavailable_no_database" });
+        return;
+      }
+
+      if (!req.user) {
+        res.status(401).json({ error: "unauthorized" });
+        return;
+      }
+
+      const profileId = String(req.params.profileId ?? "").trim();
+      if (!profileId) {
+        res.status(400).json({ error: "invalid_profile_id" });
+        return;
+      }
+
+      const candidateRunId =
+        typeof req.query.runId === "string" && req.query.runId.trim().length > 0
+          ? req.query.runId.trim()
+          : undefined;
+
+      try {
+        const tenantId = req.tenantContext?.tenantId ?? env.DEFAULT_TENANT_ID;
+        const drift = await backtesting.getForwardProfileDrift({
+          tenantId,
+          userId: req.user.id,
+          profileId,
+          ...(candidateRunId ? { candidateRunId } : {}),
+        });
+        const payload = strategyForwardProfileDriftResponseSchema.parse(drift);
+        res.status(200).json(payload);
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "unknown_error";
+        if (
+          message === "forward_profile_not_found" ||
+          message === "forward_profile_source_run_not_found"
+        ) {
+          res.status(404).json({ error: message });
+          return;
+        }
+        if (
+          message === "forward_profile_source_run_not_completed" ||
+          message === "forward_profile_drift_candidate_run_missing" ||
+          message === "forward_profile_drift_candidate_run_not_completed" ||
+          message === "forward_profile_drift_candidate_strategy_mismatch"
+        ) {
+          res.status(400).json({ error: message });
+          return;
+        }
+        logger.error("strategy_forward_profile_drift_failed", {
+          error: message,
+        });
+        res
+          .status(500)
+          .json({ error: "strategy_forward_profile_drift_failed" });
+      }
+    },
+  );
+
+  app.get(
+    "/api/strategy/forward-profiles/:profileId/alerts",
+    authGuard,
+    async (req: Request, res: Response) => {
+      if (!backtesting) {
+        res.status(503).json({ error: "backtesting_unavailable_no_database" });
+        return;
+      }
+
+      if (!req.user) {
+        res.status(401).json({ error: "unauthorized" });
+        return;
+      }
+
+      const profileId = String(req.params.profileId ?? "").trim();
+      if (!profileId) {
+        res.status(400).json({ error: "invalid_profile_id" });
+        return;
+      }
+
+      const candidateRunId =
+        typeof req.query.runId === "string" && req.query.runId.trim().length > 0
+          ? req.query.runId.trim()
+          : undefined;
+
+      try {
+        const tenantId = req.tenantContext?.tenantId ?? env.DEFAULT_TENANT_ID;
+        const alerts = await backtesting.getForwardProfileAlerts({
+          tenantId,
+          userId: req.user.id,
+          profileId,
+          ...(candidateRunId ? { candidateRunId } : {}),
+        });
+        const payload =
+          strategyForwardProfileAlertsResponseSchema.parse(alerts);
+        res.status(200).json(payload);
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "unknown_error";
+        if (message === "forward_profile_not_found") {
+          res.status(404).json({ error: message });
+          return;
+        }
+        logger.error("strategy_forward_profile_alerts_failed", {
+          error: message,
+        });
+        res
+          .status(500)
+          .json({ error: "strategy_forward_profile_alerts_failed" });
+      }
     },
   );
 
@@ -2718,6 +5444,99 @@ export function createServer(
       const tenantId = req.tenantContext?.tenantId ?? env.DEFAULT_TENANT_ID;
       const config = await aiSteward.getConfig(req.user.id, tenantId);
       res.status(200).json({ ok: true, data: config });
+    },
+  );
+
+  app.get(
+    "/api/ai/steward/health",
+    authGuard,
+    async (req: Request, res: Response) => {
+      if (!req.user) {
+        res.status(401).json({ error: "unauthorized" });
+        return;
+      }
+
+      const health = aiSteward
+        ? await aiSteward.getHealthStatus(
+            req.user.id,
+            req.tenantContext?.tenantId ?? env.DEFAULT_TENANT_ID,
+          )
+        : {
+            generatedAt: new Date().toISOString(),
+            overall: {
+              state: "unavailable",
+              severity: "critical",
+              score: 0,
+            },
+            incidents: {
+              totalOpen: 1,
+              bySeverity: {
+                info: 0,
+                warning: 0,
+                high: 0,
+                critical: 1,
+              },
+              pendingTasks: 0,
+            },
+            runtime: {
+              queueDepth: await aiQueue.getQueueDepth(),
+              queueRunning: aiQueue.getRunningCount(),
+              migrationFlags,
+            },
+            modules: [
+              {
+                module: "steward",
+                state: "unavailable",
+                severity: "critical",
+                probableCause:
+                  "Database-backed steward service is not configured",
+                attemptedRepairs: [],
+                owner: "admin",
+              },
+            ],
+          };
+      res.status(200).json({ ok: true, data: health });
+    },
+  );
+
+  app.get(
+    "/api/ai/steward/incident-digest",
+    authGuard,
+    async (req: Request, res: Response) => {
+      if (!aiSteward) {
+        res.status(503).json({ error: "steward_unavailable_no_database" });
+        return;
+      }
+
+      if (!req.user) {
+        res.status(401).json({ error: "unauthorized" });
+        return;
+      }
+
+      const tenantId = req.tenantContext?.tenantId ?? env.DEFAULT_TENANT_ID;
+      const digest = await aiSteward.getIncidentDigest(req.user.id, tenantId);
+      res.status(200).json({ ok: true, data: digest });
+    },
+  );
+
+  app.post(
+    "/api/ai/steward/check-health",
+    authGuard,
+    operatorOrAdminGuard,
+    async (req: Request, res: Response) => {
+      if (!aiSteward) {
+        res.status(503).json({ error: "steward_unavailable_no_database" });
+        return;
+      }
+
+      if (!req.user) {
+        res.status(401).json({ error: "unauthorized" });
+        return;
+      }
+
+      const tenantId = req.tenantContext?.tenantId ?? env.DEFAULT_TENANT_ID;
+      const result = await aiSteward.runHealthCheck(req.user.id, tenantId);
+      res.status(result.ok ? 200 : 500).json(result);
     },
   );
 

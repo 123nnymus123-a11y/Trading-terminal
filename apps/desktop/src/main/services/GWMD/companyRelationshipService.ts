@@ -917,46 +917,64 @@ Requirements:
     strict: boolean,
     minRelationships = 1,
   ): Promise<NormalizedRelationship[]> {
-    const parseAndFilter = (aiResponse: string): NormalizedRelationship[] => {
+    const parseAndFilter = (
+      aiResponse: string,
+    ): {
+      relationships: NormalizedRelationship[];
+      parsedCount: number;
+      qualityRetainedCount: number;
+      nonSelfCount: number;
+    } => {
       const parsed = this.parseRelationships(aiResponse);
       const filtered = this.applyRelationshipQualityGate(parsed, strict);
       const normalizedSourceTicker = this.normalizeTicker(ticker);
       const nonSelf = filtered.filter(
         (rel) => this.normalizeTicker(rel.ticker) !== normalizedSourceTicker,
       );
-      return nonSelf;
+      return {
+        relationships: nonSelf,
+        parsedCount: parsed.length,
+        qualityRetainedCount: filtered.length,
+        nonSelfCount: nonSelf.length,
+      };
     };
 
     const firstResponse = await this.callAiForRelationships(ticker, model);
     const firstPass = parseAndFilter(firstResponse);
+    console.log(
+      `[CompanyRelationshipService] Relationship pipeline for ${ticker}: parsed=${firstPass.parsedCount}, quality_retained=${firstPass.qualityRetainedCount}, non_self=${firstPass.nonSelfCount}`,
+    );
 
-    if (firstPass.length >= minRelationships) {
-      if (firstPass.length < 3) {
+    if (firstPass.relationships.length >= minRelationships) {
+      if (firstPass.relationships.length < 3) {
         console.warn(
-          `[CompanyRelationshipService] Low relationship breadth for ${ticker}: ${firstPass.length}`,
+          `[CompanyRelationshipService] Low relationship breadth for ${ticker}: ${firstPass.relationships.length}`,
         );
       }
-      return firstPass;
+      return firstPass.relationships;
     }
 
     console.warn(
-      `[CompanyRelationshipService] Retry due to thin relationship set for ${ticker} (${firstPass.length}/${minRelationships})`,
+      `[CompanyRelationshipService] Retry due to thin relationship set for ${ticker} (${firstPass.relationships.length}/${minRelationships})`,
     );
     const retryResponse = await this.callAiForRelationships(ticker, model);
     const retryPass = parseAndFilter(retryResponse);
+    console.log(
+      `[CompanyRelationshipService] Retry relationship pipeline for ${ticker}: parsed=${retryPass.parsedCount}, quality_retained=${retryPass.qualityRetainedCount}, non_self=${retryPass.nonSelfCount}`,
+    );
 
-    if (retryPass.length >= minRelationships) {
-      return retryPass;
+    if (retryPass.relationships.length >= minRelationships) {
+      return retryPass.relationships;
     }
 
-    if (retryPass.length === 0) {
+    if (retryPass.relationships.length === 0) {
       throw new GwmdParseError(
         `No valid non-self relationships after quality checks for ${ticker}`,
       );
     }
 
     throw new GwmdParseError(
-      `Insufficient relationship breadth for ${ticker}: ${retryPass.length} (minimum ${minRelationships})`,
+      `Insufficient relationship breadth for ${ticker}: ${retryPass.relationships.length} (minimum ${minRelationships})`,
     );
   }
 
@@ -1079,16 +1097,33 @@ Requirements:
     relationships: NormalizedRelationship[],
     strict: boolean,
   ): NormalizedRelationship[] {
-    const minConfidence = strict ? 0.6 : 0.45;
-    const minEvidenceLength = strict ? 20 : 10;
+    const minConfidence = strict ? 0.6 : 0.35;
+    const minEvidenceLength = strict ? 20 : 6;
 
-    return relationships.filter((rel) => {
+    let rejectedLowConfidence = 0;
+    let rejectedShortEvidence = 0;
+
+    const filtered = relationships.filter((rel) => {
       const confidence = rel.confidence ?? 0;
       const evidence = (rel.evidence ?? "").trim();
-      if (confidence < minConfidence) return false;
-      if (evidence.length < minEvidenceLength) return false;
+      if (confidence < minConfidence) {
+        rejectedLowConfidence += 1;
+        return false;
+      }
+      if (evidence.length < minEvidenceLength) {
+        rejectedShortEvidence += 1;
+        return false;
+      }
       return true;
     });
+
+    if (relationships.length > 0) {
+      console.log(
+        `[CompanyRelationshipService] Quality gate: input=${relationships.length}, kept=${filtered.length}, rejected_confidence=${rejectedLowConfidence}, rejected_evidence=${rejectedShortEvidence}, strict=${strict}`,
+      );
+    }
+
+    return filtered;
   }
 
   /**

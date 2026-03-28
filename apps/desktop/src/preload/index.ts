@@ -559,6 +559,86 @@ const cockpitApi = {
       return () => ipcRenderer.off("ai:progress", ipcListener);
     },
   },
+  strategyResearch: {
+    async loadLocalWorkspace() {
+      return ipcRenderer.invoke("strategyResearch:loadLocalWorkspace");
+    },
+    async upsertLocalStrategy(strategy: {
+      id: string;
+      name: string;
+      description?: string;
+      stage: "draft" | "candidate" | "validation" | "production" | "retired";
+      tags: string[];
+      createdAt: string;
+      updatedAt: string;
+    }) {
+      return ipcRenderer.invoke("strategyResearch:upsertLocalStrategy", {
+        strategy,
+      });
+    },
+    async upsertLocalVersion(version: {
+      id: string;
+      strategyId: string;
+      version: string;
+      scriptLanguage: "javascript" | "typescript";
+      scriptSource: string;
+      scriptChecksum: string;
+      universe: string[];
+      assumptions: Record<string, unknown>;
+      createdAt: string;
+    }) {
+      return ipcRenderer.invoke("strategyResearch:upsertLocalVersion", {
+        version,
+      });
+    },
+    async upsertLocalRun(run: {
+      runId: string;
+      strategyId: string;
+      strategyVersion: string;
+      status: "queued" | "running" | "completed" | "failed" | "cancelled";
+      executionMode: "desktop-local" | "backend";
+      requestedAt?: string;
+      startedAt?: string;
+      finishedAt?: string;
+      error?: string;
+      metrics?: Record<string, unknown>;
+      equityCurve?: Array<{ timestamp: string; value: number }>;
+      trades?: Array<Record<string, unknown>>;
+      historicalData?: Record<string, unknown>;
+      runMetadata?: Record<string, unknown>;
+      runLogs?: string[];
+    }) {
+      return ipcRenderer.invoke("strategyResearch:upsertLocalRun", { run });
+    },
+    async upsertLocalComparisonNote(comparisonNote: {
+      id: string;
+      strategyId: string;
+      primaryRunId: string;
+      baselineRunId: string;
+      note: string;
+      createdAt: string;
+      updatedAt: string;
+    }) {
+      return ipcRenderer.invoke("strategyResearch:upsertLocalComparisonNote", {
+        comparisonNote,
+      });
+    },
+    async downloadHistoricalData(symbols: string[]) {
+      return ipcRenderer.invoke("strategyResearch:downloadHistoricalData", {
+        symbols,
+      });
+    },
+    async runLocalBacktest(payload: {
+      runId: string;
+      strategyId: string;
+      strategyVersion: string;
+      scriptSource: string;
+      universe: string[];
+      assumptions?: Record<string, unknown>;
+    }) {
+      return ipcRenderer.invoke("strategyResearch:runLocalBacktest", payload);
+    },
+  },
   aiSteward: {
     async getOverview(authToken?: string) {
       const resolvedToken = await resolveAuthToken(authToken);
@@ -569,6 +649,44 @@ const cockpitApi = {
     async getConfig(authToken?: string) {
       const resolvedToken = await resolveAuthToken(authToken);
       return ipcRenderer.invoke("aiSteward:getConfig", {
+        authToken: resolvedToken,
+      });
+    },
+    async getHealth(authToken?: string) {
+      const resolvedToken = await resolveAuthToken(authToken);
+      return ipcRenderer.invoke("aiSteward:getHealth", {
+        authToken: resolvedToken,
+      });
+    },
+    async getIncidentDigest(authToken?: string) {
+      const resolvedToken = await resolveAuthToken(authToken);
+      return ipcRenderer.invoke("aiSteward:getIncidentDigest", {
+        authToken: resolvedToken,
+      });
+    },
+    async getFindings(module?: string, authToken?: string) {
+      const resolvedToken = await resolveAuthToken(authToken);
+      return ipcRenderer.invoke("aiSteward:getFindings", {
+        module,
+        authToken: resolvedToken,
+      });
+    },
+    async getTasks(authToken?: string) {
+      const resolvedToken = await resolveAuthToken(authToken);
+      return ipcRenderer.invoke("aiSteward:getTasks", {
+        authToken: resolvedToken,
+      });
+    },
+    async dismissFinding(findingId: string, authToken?: string) {
+      const resolvedToken = await resolveAuthToken(authToken);
+      return ipcRenderer.invoke("aiSteward:dismissFinding", {
+        findingId,
+        authToken: resolvedToken,
+      });
+    },
+    async checkHealth(authToken?: string) {
+      const resolvedToken = await resolveAuthToken(authToken);
+      return ipcRenderer.invoke("aiSteward:checkHealth", {
         authToken: resolvedToken,
       });
     },
@@ -698,11 +816,21 @@ const cockpitApi = {
     },
   },
   gwmdMap: {
-    async search(ticker: string, options: { model: unknown; hops?: number }) {
+    async search(
+      ticker: string,
+      options?: {
+        model: unknown;
+        hops?: number;
+        refresh?: boolean;
+        sourceMode?: "cache_only" | "hybrid" | "fresh";
+      },
+    ) {
       return ipcRenderer.invoke("gwmdMap:search", {
         ticker,
-        model: options.model,
-        hops: options.hops,
+        model: options?.model,
+        hops: options?.hops,
+        refresh: options?.refresh,
+        sourceMode: options?.sourceMode,
       });
     },
     async loadAll() {

@@ -1,4 +1,4 @@
-﻿import type { ReplayStatus } from "./events";
+﻿import type { ReplayStatus } from "./events.js";
 
 export type StreamSource = "demo" | "replay";
 export type StreamStatus = {
@@ -25,8 +25,24 @@ export const LEGACY_IPC_ALIASES = {
   EVENTS: ["tc:events", "cockpit:events", "streaming:events"],
   SET_SOURCE: ["tc:setSource", "cockpit:setSource", "streaming:setSource"],
   GET_STATUS: ["tc:getStatus", "cockpit:getStatus", "streaming:getStatus"],
-  REPLAY_PLAY: ["tc:replay:play", "cockpit:replay:play", "streaming:replay:play"],
-  REPLAY_PAUSE: ["tc:replay:pause", "cockpit:replay:pause", "streaming:replay:pause"],
-  REPLAY_SET_SPEED: ["tc:replay:setSpeed", "cockpit:replay:setSpeed", "streaming:replay:setSpeed"],
-  REPLAY_SCRUB_TO: ["tc:replay:scrubTo", "cockpit:replay:scrubTo", "streaming:replay:scrubTo"],
+  REPLAY_PLAY: [
+    "tc:replay:play",
+    "cockpit:replay:play",
+    "streaming:replay:play",
+  ],
+  REPLAY_PAUSE: [
+    "tc:replay:pause",
+    "cockpit:replay:pause",
+    "streaming:replay:pause",
+  ],
+  REPLAY_SET_SPEED: [
+    "tc:replay:setSpeed",
+    "cockpit:replay:setSpeed",
+    "streaming:replay:setSpeed",
+  ],
+  REPLAY_SCRUB_TO: [
+    "tc:replay:scrubTo",
+    "cockpit:replay:scrubTo",
+    "streaming:replay:scrubTo",
+  ],
 } as const;

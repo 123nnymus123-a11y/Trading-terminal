@@ -1,12 +1,19 @@
-import { randomUUID } from 'node:crypto';
-import Redis from 'ioredis';
-import type { Redis as RedisClient } from 'ioredis';
+import { randomUUID } from "node:crypto";
+import Redis from "ioredis";
+import type { Redis as RedisClient } from "ioredis";
 
-export type QueueJobStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+export type QueueJobStatus =
+  | "queued"
+  | "running"
+  | "completed"
+  | "failed"
+  | "cancelled";
+export type QueueJobPriority = "low" | "normal" | "high";
 
 export type QueueJobRecord<TResult = unknown, TPayload = unknown> = {
   id: string;
   queue: string;
+  priority: QueueJobPriority;
   status: QueueJobStatus;
   attempts: number;
   maxAttempts: number;
@@ -25,7 +32,7 @@ type QueueProcessor<TPayload = unknown, TResult = unknown> = (
   job: QueueJobRecord<TResult, TPayload>,
 ) => Promise<TResult>;
 
-type QueueJobBase = Omit<QueueJobRecord, 'result' | 'payload'> & {
+type QueueJobBase = Omit<QueueJobRecord, "result" | "payload"> & {
   payloadJson?: string;
   resultJson?: string;
 };
@@ -42,6 +49,7 @@ type QueueOptions = {
 type EnqueueOptions = {
   idempotencyKey?: string;
   maxAttempts?: number;
+  priority?: QueueJobPriority;
 };
 
 const POLL_INTERVAL_MS = 200;
@@ -55,7 +63,11 @@ export class DurableJobQueue {
   private running = 0;
   private closing = false;
   private readonly processors = new Map<string, QueueProcessor>();
-  private readonly memoryPending: string[] = [];
+  private readonly memoryPending: Record<QueueJobPriority, string[]> = {
+    high: [],
+    normal: [],
+    low: [],
+  };
   private readonly memoryJobs = new Map<string, QueueJobBase>();
   private readonly redis?: RedisClient;
   private readonly pumpTimer: NodeJS.Timeout;
@@ -65,7 +77,7 @@ export class DurableJobQueue {
     this.maxQueue = options.maxQueue ?? 50;
     this.retryLimit = options.retryLimit ?? 2;
     this.jobTtlSeconds = options.jobTtlSeconds ?? 3600;
-    this.namespace = options.namespace ?? 'tcq';
+    this.namespace = options.namespace ?? "tcq";
     if (options.redisUrl) {
       const RedisCtor = Redis as unknown as { new (url: string): RedisClient };
       this.redis = new RedisCtor(options.redisUrl);
@@ -98,14 +110,15 @@ export class DurableJobQueue {
     }
 
     if ((await this.getQueueDepth()) >= this.maxQueue) {
-      throw new Error('queue_full');
+      throw new Error("queue_full");
     }
 
     const nowIso = new Date().toISOString();
     const job: QueueJobBase = {
       id: randomUUID(),
       queue,
-      status: 'queued',
+      priority: options.priority ?? "normal",
+      status: "queued",
       attempts: 0,
       maxAttempts: options.maxAttempts ?? this.retryLimit,
       ...(idempotencyKey ? { idempotencyKey } : {}),
@@ -115,7 +128,7 @@ export class DurableJobQueue {
     };
 
     await this.saveJob(job);
-    await this.pushPending(job.queue, job.id);
+    await this.pushPending(job.queue, job.id, job.priority);
     if (idempotencyKey) {
       await this.saveIdempotencyKey(queue, idempotencyKey, job.id);
     }
@@ -144,7 +157,7 @@ export class DurableJobQueue {
       if (!current) {
         return null;
       }
-      if (['completed', 'failed', 'cancelled'].includes(current.status)) {
+      if (["completed", "failed", "cancelled"].includes(current.status)) {
         return current;
       }
       await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
@@ -157,12 +170,12 @@ export class DurableJobQueue {
     if (!job) {
       return false;
     }
-    if (job.status === 'completed' || job.status === 'failed') {
+    if (job.status === "completed" || job.status === "failed") {
       return false;
     }
     const next: QueueJobBase = {
       ...job,
-      status: 'cancelled',
+      status: "cancelled",
       cancelRequested: true,
       updatedAtIso: new Date().toISOString(),
       completedAtIso: new Date().toISOString(),
@@ -173,10 +186,18 @@ export class DurableJobQueue {
 
   async getQueueDepth(): Promise<number> {
     if (this.redis) {
-      const key = this.pendingKey();
-      return this.redis.llen(key);
+      const [highDepth, normalDepth, lowDepth] = await Promise.all([
+        this.redis.llen(this.pendingKey("high")),
+        this.redis.llen(this.pendingKey("normal")),
+        this.redis.llen(this.pendingKey("low")),
+      ]);
+      return highDepth + normalDepth + lowDepth;
     }
-    return this.memoryPending.length;
+    return (
+      this.memoryPending.high.length +
+      this.memoryPending.normal.length +
+      this.memoryPending.low.length
+    );
   }
 
   getRunningCount(): number {
@@ -219,21 +240,21 @@ export class DurableJobQueue {
       return;
     }
 
-    if (current.cancelRequested || current.status === 'cancelled') {
+    if (current.cancelRequested || current.status === "cancelled") {
       await this.ackProcessing(jobId);
       return;
     }
 
     const processor = this.processors.get(current.queue);
     if (!processor) {
-      await this.failWithoutRetry(current, 'processor_not_registered');
+      await this.failWithoutRetry(current, "processor_not_registered");
       await this.ackProcessing(jobId);
       return;
     }
 
     const running: QueueJobBase = {
       ...current,
-      status: 'running',
+      status: "running",
       attempts: current.attempts + 1,
       updatedAtIso: new Date().toISOString(),
     };
@@ -244,19 +265,19 @@ export class DurableJobQueue {
       const result = await processor(payload, this.deserialize(running));
       const completed: QueueJobBase = {
         ...running,
-        status: 'completed',
+        status: "completed",
         resultJson: JSON.stringify(result),
         completedAtIso: new Date().toISOString(),
         updatedAtIso: new Date().toISOString(),
       };
       await this.saveJob(completed);
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'job_failed';
+      const message = error instanceof Error ? error.message : "job_failed";
       const exhausted = running.attempts >= running.maxAttempts;
       if (exhausted) {
         const failed: QueueJobBase = {
           ...running,
-          status: 'failed',
+          status: "failed",
           error: message,
           completedAtIso: new Date().toISOString(),
           updatedAtIso: new Date().toISOString(),
@@ -265,22 +286,29 @@ export class DurableJobQueue {
       } else {
         const retryQueued: QueueJobBase = {
           ...running,
-          status: 'queued',
+          status: "queued",
           error: message,
           updatedAtIso: new Date().toISOString(),
         };
         await this.saveJob(retryQueued);
-        await this.pushPending(retryQueued.queue, retryQueued.id);
+        await this.pushPending(
+          retryQueued.queue,
+          retryQueued.id,
+          retryQueued.priority,
+        );
       }
     } finally {
       await this.ackProcessing(jobId);
     }
   }
 
-  private async failWithoutRetry(job: QueueJobBase, error: string): Promise<void> {
+  private async failWithoutRetry(
+    job: QueueJobBase,
+    error: string,
+  ): Promise<void> {
     const failed: QueueJobBase = {
       ...job,
-      status: 'failed',
+      status: "failed",
       attempts: job.maxAttempts,
       error,
       completedAtIso: new Date().toISOString(),
@@ -295,14 +323,19 @@ export class DurableJobQueue {
     return {
       id: job.id,
       queue: job.queue,
+      priority: job.priority,
       status: job.status,
       attempts: job.attempts,
       maxAttempts: job.maxAttempts,
       ...(job.idempotencyKey ? { idempotencyKey: job.idempotencyKey } : {}),
       ...(job.error ? { error: job.error } : {}),
       ...(job.completedAtIso ? { completedAtIso: job.completedAtIso } : {}),
-      ...(job.resultJson ? { result: this.deserializeJson<TResult>(job.resultJson) } : {}),
-      ...(job.payloadJson ? { payload: this.deserializeJson<TPayload>(job.payloadJson) } : {}),
+      ...(job.resultJson
+        ? { result: this.deserializeJson<TResult>(job.resultJson) }
+        : {}),
+      ...(job.payloadJson
+        ? { payload: this.deserializeJson<TPayload>(job.payloadJson) }
+        : {}),
       createdAtIso: job.createdAtIso,
       updatedAtIso: job.updatedAtIso,
     };
@@ -327,8 +360,8 @@ export class DurableJobQueue {
     return `${this.namespace}:job:${jobId}`;
   }
 
-  private pendingKey(): string {
-    return `${this.namespace}:pending`;
+  private pendingKey(priority: QueueJobPriority): string {
+    return `${this.namespace}:pending:${priority}`;
   }
 
   private processingKey(): string {
@@ -345,17 +378,18 @@ export class DurableJobQueue {
       await this.redis.hset(key, {
         id: job.id,
         queue: job.queue,
+        priority: job.priority,
         status: job.status,
         attempts: String(job.attempts),
         maxAttempts: String(job.maxAttempts),
-        idempotencyKey: job.idempotencyKey ?? '',
-        payloadJson: job.payloadJson ?? '',
-        resultJson: job.resultJson ?? '',
-        error: job.error ?? '',
-        cancelRequested: job.cancelRequested ? '1' : '0',
+        idempotencyKey: job.idempotencyKey ?? "",
+        payloadJson: job.payloadJson ?? "",
+        resultJson: job.resultJson ?? "",
+        error: job.error ?? "",
+        cancelRequested: job.cancelRequested ? "1" : "0",
         createdAtIso: job.createdAtIso,
         updatedAtIso: job.updatedAtIso,
-        completedAtIso: job.completedAtIso ?? '',
+        completedAtIso: job.completedAtIso ?? "",
       });
       await this.redis.expire(key, this.jobTtlSeconds);
       return;
@@ -372,8 +406,9 @@ export class DurableJobQueue {
       }
       return {
         id: hash.id,
-        queue: hash.queue ?? 'default',
-        status: (hash.status as QueueJobStatus) ?? 'queued',
+        queue: hash.queue ?? "default",
+        priority: (hash.priority as QueueJobPriority) ?? "normal",
+        status: (hash.status as QueueJobStatus) ?? "queued",
         attempts: Number(hash.attempts ?? 0),
         maxAttempts: Number(hash.maxAttempts ?? this.retryLimit),
         ...(hash.idempotencyKey ? { idempotencyKey: hash.idempotencyKey } : {}),
@@ -381,7 +416,7 @@ export class DurableJobQueue {
         ...(hash.resultJson ? { resultJson: hash.resultJson } : {}),
         ...(hash.error ? { error: hash.error } : {}),
         ...(hash.completedAtIso ? { completedAtIso: hash.completedAtIso } : {}),
-        cancelRequested: hash.cancelRequested === '1',
+        cancelRequested: hash.cancelRequested === "1",
         createdAtIso: hash.createdAtIso ?? new Date().toISOString(),
         updatedAtIso: hash.updatedAtIso ?? new Date().toISOString(),
       };
@@ -389,20 +424,37 @@ export class DurableJobQueue {
     return this.memoryJobs.get(jobId) ?? null;
   }
 
-  private async pushPending(_queue: string, jobId: string): Promise<void> {
+  private async pushPending(
+    _queue: string,
+    jobId: string,
+    priority: QueueJobPriority,
+  ): Promise<void> {
     if (this.redis) {
-      await this.redis.lpush(this.pendingKey(), jobId);
+      await this.redis.lpush(this.pendingKey(priority), jobId);
       return;
     }
-    this.memoryPending.push(jobId);
+    this.memoryPending[priority].push(jobId);
   }
 
   private async popPending(): Promise<string | null> {
     if (this.redis) {
-      const jobId = await this.redis.rpoplpush(this.pendingKey(), this.processingKey());
-      return jobId;
+      for (const priority of ["high", "normal", "low"] as const) {
+        const jobId = await this.redis.rpoplpush(
+          this.pendingKey(priority),
+          this.processingKey(),
+        );
+        if (jobId) {
+          return jobId;
+        }
+      }
+      return null;
     }
-    return this.memoryPending.shift() ?? null;
+    return (
+      this.memoryPending.high.shift() ??
+      this.memoryPending.normal.shift() ??
+      this.memoryPending.low.shift() ??
+      null
+    );
   }
 
   private async ackProcessing(jobId: string): Promise<void> {
@@ -412,9 +464,18 @@ export class DurableJobQueue {
     await this.redis.lrem(this.processingKey(), 1, jobId);
   }
 
-  private async saveIdempotencyKey(queue: string, idempotencyKey: string, jobId: string) {
+  private async saveIdempotencyKey(
+    queue: string,
+    idempotencyKey: string,
+    jobId: string,
+  ) {
     if (this.redis) {
-      await this.redis.set(this.idempotencyKey(queue, idempotencyKey), jobId, 'EX', this.jobTtlSeconds);
+      await this.redis.set(
+        this.idempotencyKey(queue, idempotencyKey),
+        jobId,
+        "EX",
+        this.jobTtlSeconds,
+      );
       return;
     }
   }
@@ -426,7 +487,9 @@ export class DurableJobQueue {
     if (!this.redis) {
       return null;
     }
-    const jobId = await this.redis.get(this.idempotencyKey(queue, idempotencyKey));
+    const jobId = await this.redis.get(
+      this.idempotencyKey(queue, idempotencyKey),
+    );
     if (!jobId) {
       return null;
     }

@@ -1,5 +1,35 @@
 import type { TedIntelSnapshot, TedIntelTimeWindow } from "./tedIntel.js";
 
+export type TedLiveErrorCode =
+  | "ted_live_disabled"
+  | "ted_base_url_missing"
+  | "ted_api_key_missing"
+  | "ted_api_key_invalid"
+  | "ted_upstream_http_error"
+  | "ted_upstream_invalid_payload"
+  | "ted_upstream_unreachable";
+
+export class TedLiveError extends Error {
+  readonly code: TedLiveErrorCode;
+  readonly status: number;
+  readonly upstreamStatus?: number;
+
+  constructor(
+    code: TedLiveErrorCode,
+    message: string,
+    status: number,
+    upstreamStatus?: number,
+  ) {
+    super(message);
+    this.name = "TedLiveError";
+    this.code = code;
+    this.status = status;
+    if (typeof upstreamStatus === "number") {
+      this.upstreamStatus = upstreamStatus;
+    }
+  }
+}
+
 export type TedLiveConfig = {
   enabled: boolean;
   baseUrl: string;
@@ -74,12 +104,49 @@ function normalizeWindow(value: unknown): TedIntelTimeWindow {
   return "90d";
 }
 
-export async function fetchLiveTedSnapshot(
+function resolveApiKeyHeaderValue(authHeader: string, apiKey: string): string {
+  if (authHeader.toLowerCase() !== "authorization") {
+    return apiKey;
+  }
+
+  const trimmed = apiKey.trim();
+  if (!trimmed) {
+    return trimmed;
+  }
+
+  if (/^(bearer|basic)\s+/i.test(trimmed)) {
+    return trimmed;
+  }
+
+  return `Bearer ${trimmed}`;
+}
+
+export async function fetchLiveTedSnapshotStrict(
   config: TedLiveConfig,
   windowDays: TedIntelTimeWindow,
-): Promise<TedIntelSnapshot | null> {
-  if (!config.enabled || !config.baseUrl) {
-    return null;
+): Promise<TedIntelSnapshot> {
+  if (!config.enabled) {
+    throw new TedLiveError(
+      "ted_live_disabled",
+      "TED live feed is disabled",
+      503,
+    );
+  }
+
+  if (!config.baseUrl) {
+    throw new TedLiveError(
+      "ted_base_url_missing",
+      "TED base URL is not configured",
+      503,
+    );
+  }
+
+  if (!config.apiKey.trim()) {
+    throw new TedLiveError(
+      "ted_api_key_missing",
+      "TED API key is missing",
+      503,
+    );
   }
 
   const url = new URL(config.baseUrl);
@@ -87,10 +154,11 @@ export async function fetchLiveTedSnapshot(
 
   const headers: Record<string, string> = {
     Accept: "application/json",
+    [config.authHeader]: resolveApiKeyHeaderValue(
+      config.authHeader,
+      config.apiKey,
+    ),
   };
-  if (config.apiKey) {
-    headers[config.authHeader] = config.apiKey;
-  }
 
   try {
     const response = await fetch(url.toString(), {
@@ -100,7 +168,16 @@ export async function fetchLiveTedSnapshot(
     });
 
     if (!response.ok) {
-      return null;
+      const code =
+        response.status === 401 || response.status === 403
+          ? "ted_api_key_invalid"
+          : "ted_upstream_http_error";
+      throw new TedLiveError(
+        code,
+        `TED upstream request failed with HTTP ${response.status}`,
+        502,
+        response.status,
+      );
     }
 
     const payload = (await response.json()) as unknown;
@@ -126,7 +203,32 @@ export async function fetchLiveTedSnapshot(
       );
     }
 
-    return null;
+    throw new TedLiveError(
+      "ted_upstream_invalid_payload",
+      "TED upstream payload does not match expected schema",
+      502,
+    );
+  } catch (error) {
+    if (error instanceof TedLiveError) {
+      throw error;
+    }
+
+    throw new TedLiveError(
+      "ted_upstream_unreachable",
+      error instanceof Error
+        ? `TED upstream unreachable: ${error.message}`
+        : "TED upstream unreachable",
+      502,
+    );
+  }
+}
+
+export async function fetchLiveTedSnapshot(
+  config: TedLiveConfig,
+  windowDays: TedIntelTimeWindow,
+): Promise<TedIntelSnapshot | null> {
+  try {
+    return await fetchLiveTedSnapshotStrict(config, windowDays);
   } catch {
     return null;
   }

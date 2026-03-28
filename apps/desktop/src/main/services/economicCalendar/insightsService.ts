@@ -20,10 +20,13 @@ interface InsightOptions {
 
 export async function generateEconomicCalendarInsights(
   request: CalendarInsightRequest,
-  options: InsightOptions = {}
+  options: InsightOptions = {},
 ): Promise<CalendarInsightResponse> {
   const preference: EnginePreference = options.preference ?? "cloud-first";
-  const cloudEndpoint = options.cloudEndpoint ?? process.env.CALENDAR_CLOUD_AI_URL ?? process.env.TC_CLOUD_AI_ENDPOINT;
+  const cloudEndpoint =
+    options.cloudEndpoint ??
+    process.env.CALENDAR_CLOUD_AI_URL ??
+    process.env.TC_CLOUD_AI_ENDPOINT;
   const derivedModel =
     getGlobalAiModel() ??
     options.localModel ??
@@ -31,7 +34,9 @@ export async function generateEconomicCalendarInsights(
     "deepseek-r1:14b";
 
   const requestWithModel =
-    request.model === derivedModel || !derivedModel ? request : { ...request, model: derivedModel };
+    request.model === derivedModel || !derivedModel
+      ? request
+      : { ...request, model: derivedModel };
 
   if (preference !== "local-only") {
     const cloud = await tryCloudEndpoint(cloudEndpoint, requestWithModel);
@@ -52,7 +57,7 @@ export async function generateEconomicCalendarInsights(
 
 async function tryCloudEndpoint(
   endpoint: string | undefined,
-  request: CalendarInsightRequest
+  request: CalendarInsightRequest,
 ): Promise<CalendarInsightResponse | null> {
   if (!endpoint) {
     return null;
@@ -86,14 +91,18 @@ async function tryCloudEndpoint(
 }
 
 async function tryLocalModel(
-  request: CalendarInsightRequest
+  request: CalendarInsightRequest,
 ): Promise<CalendarInsightResponse | null> {
   try {
-    const { callCloudLlm } = await import('../llm/cloudLlmClient');
+    const { callCloudLlm } = await import("../llm/cloudLlmClient");
     const prompt = buildLocalPrompt(request);
-    const systemPrompt = "You are a financial analyst. Return a JSON object with insight fields.";
+    const systemPrompt =
+      "You are a financial analyst. Return a JSON object with insight fields.";
     const text = await callCloudLlm(systemPrompt, prompt, { temperature: 0 });
-    const jsonText = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+    const jsonText = text
+      .replace(/^```(?:json)?\s*/i, "")
+      .replace(/\s*```$/, "")
+      .trim();
     const parsed = JSON.parse(jsonText) as Partial<CalendarInsightResponse>;
     return normalizeResponse(parsed, "local");
   } catch (err) {
@@ -104,7 +113,7 @@ async function tryLocalModel(
 
 function normalizeResponse(
   partial: Partial<CalendarInsightResponse>,
-  engine: CalendarInsightResponse["aiEngine"]
+  engine: CalendarInsightResponse["aiEngine"],
 ): CalendarInsightResponse {
   const focusEvents = Array.isArray(partial.focusEvents)
     ? partial.focusEvents.map((event) => ({
@@ -132,7 +141,10 @@ function normalizeResponse(
     synopsis:
       partial.synopsis ??
       "Economic calendar intelligence generated without a verified AI engine. Using heuristic synthesis until cloud/local AI respond.",
-    bullets: partial.bullets && partial.bullets.length > 0 ? partial.bullets : ["Awaiting richer AI context"],
+    bullets:
+      partial.bullets && partial.bullets.length > 0
+        ? partial.bullets
+        : ["Awaiting richer AI context"],
     riskSignals,
     focusEvents,
   };
@@ -140,10 +152,13 @@ function normalizeResponse(
 
 function buildHeuristicResponse(
   request: CalendarInsightRequest,
-  engine: CalendarInsightResponse["aiEngine"]
+  engine: CalendarInsightResponse["aiEngine"],
 ): CalendarInsightResponse {
-  const sorted = [...request.events].sort((a, b) => a.releaseDateTime.localeCompare(b.releaseDateTime));
-  const headlineTarget = sorted.find((event) => event.importance === 3) ?? sorted[0];
+  const sorted = [...request.events].sort((a, b) =>
+    a.releaseDateTime.localeCompare(b.releaseDateTime),
+  );
+  const headlineTarget =
+    sorted.find((event) => event.importance === 3) ?? sorted[0];
   const headline = headlineTarget
     ? `${headlineTarget.title} anchors ${headlineTarget.country}'s macro focus`
     : "Economic calendar focus";
@@ -151,7 +166,12 @@ function buildHeuristicResponse(
   const synopsis = `${request.focus === "upcoming" ? "Watching" : "Reviewing"} ${sorted.length} events over the next ${request.windowHours}h window.`;
 
   const bullets = sorted.slice(0, 4).map((event) => {
-    const importance = event.importance === 3 ? "High" : event.importance === 2 ? "Medium" : "Low";
+    const importance =
+      event.importance === 3
+        ? "High"
+        : event.importance === 2
+          ? "Medium"
+          : "Low";
     const summary = event.summary ? ` — ${event.summary}` : "";
     return `${importance}-impact ${event.country} • ${event.title}${summary}`;
   });
@@ -159,10 +179,11 @@ function buildHeuristicResponse(
   const riskSignals = sorted.slice(0, 3).map((event) => ({
     label: `${event.country} ${event.title}`,
     detail: event.summary ?? "Volatility watch",
-    severity: (event.importance === 3 ? "high" : event.importance === 2 ? "medium" : "low") as
-      | "high"
-      | "medium"
-      | "low",
+    severity: (event.importance === 3
+      ? "high"
+      : event.importance === 2
+        ? "medium"
+        : "low") as "high" | "medium" | "low",
   }));
 
   const focusEvents = sorted.slice(0, 5).map((event) => ({
@@ -186,10 +207,14 @@ function buildHeuristicResponse(
 }
 
 function buildLocalPrompt(request: CalendarInsightRequest): string {
-  const scope = request.focus === "upcoming" ? "upcoming releases" : "recent releases";
+  const scope =
+    request.focus === "upcoming" ? "upcoming releases" : "recent releases";
   const eventLines = request.events
     .map((event) => {
-      const confidence = typeof event.confidenceScore === "number" ? `${Math.round(event.confidenceScore * 100)}% confidence` : "confidence unknown";
+      const confidence =
+        typeof event.confidenceScore === "number"
+          ? `${Math.round(event.confidenceScore * 100)}% confidence`
+          : "confidence unknown";
       return `- ${event.title} (${event.country}) • importance ${event.importance} • status ${event.status} • ${confidence} • summary: ${event.summary ?? "n/a"}`;
     })
     .join("\n");
@@ -208,7 +233,14 @@ ${eventLines}`;
 
 function getGlobalAiModel(): string | undefined {
   try {
-    const settings = AppSettingsRepo.get() as { globalAiModel?: unknown };
+    const settings = AppSettingsRepo.get() as {
+      globalAiModel?: unknown;
+      primaryAiModel?: { model?: unknown };
+    };
+    const primaryModel = settings?.primaryAiModel?.model;
+    if (typeof primaryModel === "string" && primaryModel.trim().length > 0) {
+      return primaryModel.trim();
+    }
     const model = settings?.globalAiModel;
     if (typeof model === "string" && model.trim().length > 0) {
       return model.trim();

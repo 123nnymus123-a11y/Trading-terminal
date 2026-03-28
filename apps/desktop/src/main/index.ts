@@ -39,6 +39,7 @@ import { AiStewardService } from "./services/aiSteward/aiStewardService";
 import type { AiStewardConfig, AiStewardModule } from "../shared/aiSteward";
 import { BackendApiClient } from "../shared/backendApiClient";
 import type { CalendarInsightRequest } from "@tc/shared";
+import { buildTedIntelSnapshot } from "@tc/shared";
 import {
   generateEconomicCalendarInsights,
   type EnginePreference,
@@ -47,6 +48,14 @@ import { ApiHubService } from "./services/apiHub";
 import type { ApiHubSnapshot, ApiCredentialRecord } from "../shared/apiHub";
 import { createGraphEnrichmentService } from "./services/graphEnrichment";
 import { createGraphMemoryService } from "./services/graphMemory";
+import { LocalStrategyResearchService } from "./services/strategyResearch/localStrategyResearchService";
+import {
+  StrategyResearchRepo,
+  type LocalStrategyComparisonNoteRecord,
+  type LocalStrategyDefinitionRecord,
+  type LocalStrategyRunRecord,
+  type LocalStrategyVersionRecord,
+} from "./persistence/strategyResearchRepo";
 
 const PRODUCTION_BACKEND_URL = "http://79.76.40.72:8787";
 const DEV_BACKEND_FALLBACK_URL = "http://localhost:8787";
@@ -92,8 +101,18 @@ const detachedTabWindows = new Map<string, BrowserWindow>();
 const apiHubService = new ApiHubService();
 const graphEnrichmentService = createGraphEnrichmentService();
 const graphMemoryService = createGraphMemoryService();
+let localStrategyResearchService: LocalStrategyResearchService | null = null;
 const TED_API_HUB_RECORD_ID = "ted-live";
 const TED_API_KEY_ACCOUNT = "api-hub:ted-live:api-key";
+
+function getLocalStrategyResearchService(): LocalStrategyResearchService {
+  if (!localStrategyResearchService) {
+    localStrategyResearchService = new LocalStrategyResearchService(
+      path.join(app.getPath("userData"), "strategy-research-cache"),
+    );
+  }
+  return localStrategyResearchService;
+}
 
 type TedDesktopConfig = {
   enabled: boolean;
@@ -1488,6 +1507,21 @@ app.whenReady().then(async () => {
   try {
     console.log("[main] app.whenReady()");
 
+    // Recover any local backtest runs that were stuck in 'running' state from a previous crash
+    try {
+      const recoveredCount = StrategyResearchRepo.recoverStuckRuns();
+      if (recoveredCount > 0) {
+        console.log(
+          `[main] Recovered ${recoveredCount} stuck local backtest run(s) to failed state`,
+        );
+      }
+    } catch (recoveryErr) {
+      console.error(
+        "[main] Failed to recover stuck backtest runs:",
+        recoveryErr,
+      );
+    }
+
     // Validate Cloud LLM configuration early so errors surface before the window opens
     try {
       const { validateConfig, getConfigSummary } =
@@ -1914,6 +1948,131 @@ app.whenReady().then(async () => {
       return token;
     });
 
+    ipcMain.handle(
+      "strategyResearch:downloadHistoricalData",
+      async (_event, payload?: { symbols?: unknown }) => {
+        const symbols = Array.isArray(payload?.symbols)
+          ? payload.symbols.filter(
+              (value): value is string => typeof value === "string",
+            )
+          : [];
+        return getLocalStrategyResearchService().downloadHistoricalData(
+          symbols,
+        );
+      },
+    );
+
+    ipcMain.handle("strategyResearch:loadLocalWorkspace", async () => {
+      return StrategyResearchRepo.listWorkspace();
+    });
+
+    ipcMain.handle(
+      "strategyResearch:upsertLocalStrategy",
+      async (
+        _event,
+        payload?: {
+          strategy?: LocalStrategyDefinitionRecord;
+        },
+      ) => {
+        if (!payload?.strategy) {
+          throw new Error("strategy_payload_required");
+        }
+        StrategyResearchRepo.upsertStrategy(payload.strategy);
+        return { ok: true };
+      },
+    );
+
+    ipcMain.handle(
+      "strategyResearch:upsertLocalVersion",
+      async (
+        _event,
+        payload?: {
+          version?: LocalStrategyVersionRecord;
+        },
+      ) => {
+        if (!payload?.version) {
+          throw new Error("version_payload_required");
+        }
+        StrategyResearchRepo.upsertVersion(payload.version);
+        return { ok: true };
+      },
+    );
+
+    ipcMain.handle(
+      "strategyResearch:upsertLocalRun",
+      async (
+        _event,
+        payload?: {
+          run?: LocalStrategyRunRecord;
+        },
+      ) => {
+        if (!payload?.run) {
+          throw new Error("run_payload_required");
+        }
+        StrategyResearchRepo.upsertRun(payload.run);
+        return { ok: true };
+      },
+    );
+
+    ipcMain.handle(
+      "strategyResearch:upsertLocalComparisonNote",
+      async (
+        _event,
+        payload?: {
+          comparisonNote?: LocalStrategyComparisonNoteRecord;
+        },
+      ) => {
+        if (!payload?.comparisonNote) {
+          throw new Error("comparison_note_payload_required");
+        }
+        StrategyResearchRepo.upsertComparisonNote(payload.comparisonNote);
+        return { ok: true };
+      },
+    );
+
+    ipcMain.handle(
+      "strategyResearch:runLocalBacktest",
+      async (
+        _event,
+        payload?: {
+          runId?: unknown;
+          strategyId?: unknown;
+          strategyVersion?: unknown;
+          scriptSource?: unknown;
+          universe?: unknown;
+          assumptions?: unknown;
+        },
+      ) => {
+        return getLocalStrategyResearchService().runBacktest({
+          runId:
+            typeof payload?.runId === "string"
+              ? payload.runId
+              : `local-run-${Date.now()}`,
+          strategyId:
+            typeof payload?.strategyId === "string"
+              ? payload.strategyId
+              : "local-strategy",
+          strategyVersion:
+            typeof payload?.strategyVersion === "string"
+              ? payload.strategyVersion
+              : "local-version",
+          scriptSource:
+            typeof payload?.scriptSource === "string"
+              ? payload.scriptSource
+              : "function onBar(){ return [hold()]; }",
+          universe: Array.isArray(payload?.universe)
+            ? payload.universe.filter(
+                (value): value is string => typeof value === "string",
+              )
+            : [],
+          assumptions:
+            payload?.assumptions && typeof payload.assumptions === "object"
+              ? (payload.assumptions as Record<string, unknown>)
+              : {},
+        });
+      },
+    );
+
     const bindBackendToken = async (authToken?: string) => {
       if (!backendApiClient) {
         return false;
@@ -2042,16 +2201,20 @@ app.whenReady().then(async () => {
           : "90d";
 
       if (!backendApiClient) {
-        throw new Error(
-          "TED Intel requires a backend connection. Configure the backend URL and TED live feed in Settings.",
+        console.warn(
+          "[tedIntel:getSnapshot] No backend client — returning local snapshot",
         );
+        return buildTedIntelSnapshot(requestedWindow);
       }
 
       try {
         return await backendApiClient.tedIntelGetSnapshot(requestedWindow);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        throw new Error(`TED Intel unavailable: ${message}`);
+        console.warn(
+          `[tedIntel:getSnapshot] Backend unavailable (${message}) — returning local snapshot`,
+        );
+        return buildTedIntelSnapshot(requestedWindow);
       }
     });
 
@@ -2906,8 +3069,149 @@ app.whenReady().then(async () => {
         try {
           // Try backend first
           if (await bindBackendToken(authToken)) {
-            const overview = await backendApiClient.stewardGetOverview();
-            return { ok: true, data: overview, source: "backend" };
+            const [overviewSummary, config, modulesHealth, findings, tasks] =
+              await Promise.all([
+                backendApiClient.stewardGetOverview(),
+                backendApiClient.stewardGetConfig(),
+                backendApiClient.stewardGetHealth(),
+                backendApiClient.stewardGetFindings(),
+                backendApiClient.stewardGetTasks(),
+              ]);
+
+            const overviewSummaryData =
+              (overviewSummary as { lastCheck?: string } | null) ?? null;
+            const configData =
+              (config as {
+                autoApply?: boolean;
+                checkIntervalSec?: number;
+                modulesEnabled?: { cftc?: boolean; congress?: boolean };
+              } | null) ?? null;
+            const modulesHealthData =
+              (modulesHealth as {
+                modules?: Array<{
+                  module: string;
+                  state: string;
+                  probableCause?: string;
+                  lastSeenAt?: string;
+                }>;
+              } | null) ?? null;
+            const findingsData = Array.isArray(findings)
+              ? (findings as Array<{
+                  id: string;
+                  module: string;
+                  severity: string;
+                  title: string;
+                  description: string;
+                  createdAt?: string;
+                }>)
+              : [];
+            const tasksData = Array.isArray(tasks)
+              ? (tasks as Array<{
+                  id: string;
+                  type?: string;
+                  title: string;
+                  description: string;
+                  status: string;
+                  createdAt?: string;
+                }>)
+              : [];
+
+            const normalizedOverview = {
+              config: {
+                model: "deepseek-r1:14b",
+                checkIntervalMinutes: Math.max(
+                  5,
+                  Math.floor(Number(configData?.checkIntervalSec ?? 1800) / 60),
+                ),
+                autoFixData: Boolean(configData?.autoApply),
+                modules: {
+                  cftc: {
+                    mode: configData?.modulesEnabled?.cftc ? "suggest" : "off",
+                  },
+                  congress: {
+                    mode: configData?.modulesEnabled?.congress
+                      ? "suggest"
+                      : "off",
+                  },
+                },
+              },
+              modules:
+                modulesHealthData?.modules?.map((module) => ({
+                  module: module.module,
+                  status:
+                    module.state === "ok"
+                      ? "ok"
+                      : module.state === "unavailable"
+                        ? "failing"
+                        : "degraded",
+                  summary: module.probableCause ?? "No summary available",
+                  lastRunAt: module.lastSeenAt
+                    ? Date.parse(module.lastSeenAt)
+                    : undefined,
+                  lastSuccessAt:
+                    module.state === "ok" && module.lastSeenAt
+                      ? Date.parse(module.lastSeenAt)
+                      : undefined,
+                })) ?? [],
+              findings:
+                findingsData.map((finding) => ({
+                  id: finding.id,
+                  module: finding.module,
+                  severity:
+                    finding.severity === "critical"
+                      ? "error"
+                      : finding.severity === "warning"
+                        ? "warn"
+                        : "info",
+                  title: finding.title,
+                  detail: finding.description,
+                  detectedAt: finding.createdAt
+                    ? Date.parse(finding.createdAt)
+                    : Date.now(),
+                  meta: {},
+                })) ?? [],
+              tasks:
+                tasksData.map((task) => ({
+                  id: task.id,
+                  module: (task.type?.split(":")?.[0] ?? "cftc") as
+                    | "cftc"
+                    | "congress",
+                  kind: task.type ?? "manual:task",
+                  title: task.title,
+                  summary: task.description,
+                  severity: "warn",
+                  autoApplicable: false,
+                  status:
+                    task.status === "applied"
+                      ? "completed"
+                      : task.status === "rejected"
+                        ? "failed"
+                        : task.status,
+                  createdAt: task.createdAt
+                    ? Date.parse(task.createdAt)
+                    : Date.now(),
+                  updatedAt: task.createdAt
+                    ? Date.parse(task.createdAt)
+                    : Date.now(),
+                  result: task.status,
+                })) ?? [],
+              lastCheckAt: overviewSummaryData?.lastCheck
+                ? Date.parse(overviewSummaryData.lastCheck)
+                : Date.now(),
+            };
+
+            const supportedModules = new Set(["cftc", "congress"]);
+            normalizedOverview.modules = normalizedOverview.modules.filter(
+              (module) => supportedModules.has(module.module),
+            );
+            normalizedOverview.findings = normalizedOverview.findings.filter(
+              (finding) => supportedModules.has(finding.module),
+            );
+            normalizedOverview.tasks = normalizedOverview.tasks.filter((task) =>
+              supportedModules.has(task.module),
+            );
+
+            return { ok: true, data: normalizedOverview, source: "backend" };
           }
           // Fall back to local
           const overview = aiStewardService?.getOverview() ?? null;
@@ -2931,7 +3235,33 @@ app.whenReady().then(async () => {
           // Try backend first
           if (await bindBackendToken(authToken)) {
             const config = await backendApiClient.stewardGetConfig();
-            return { ok: true, data: config, source: "backend" };
+            const configData =
+              (config as {
+                autoApply?: boolean;
+                checkIntervalSec?: number;
+                modulesEnabled?: { cftc?: boolean; congress?: boolean };
+              } | null) ?? null;
+
+            const normalizedConfig = {
+              model: "deepseek-r1:14b",
+              checkIntervalMinutes: Math.max(
+                5,
+                Math.floor(Number(configData?.checkIntervalSec ?? 1800) / 60),
+              ),
+              autoFixData: Boolean(configData?.autoApply),
+              modules: {
+                cftc: {
+                  mode: configData?.modulesEnabled?.cftc ? "suggest" : "off",
+                },
+                congress: {
+                  mode: configData?.modulesEnabled?.congress
+                    ? "suggest"
+                    : "off",
+                },
+              },
+            };
+
+            return { ok: true, data: normalizedConfig, source: "backend" };
           }
           // Fall back to local
           const config = aiStewardService?.getConfig() ?? null;
@@ -2949,6 +3279,374 @@ app.whenReady().then(async () => {
     );
 
     ipcMain.handle(
+      "aiSteward:getHealth",
+      async (_e, { authToken }: { authToken?: string } = {}) => {
+        try {
+          if (await bindBackendToken(authToken)) {
+            const health = await backendApiClient.stewardGetHealth();
+            return { ok: true, data: health, source: "backend" };
+          }
+
+          const overview = aiStewardService?.getOverview();
+          const fallbackHealth = {
+            generatedAt: new Date().toISOString(),
+            overall: {
+              state: overview
+                ? ("degraded" as const)
+                : ("unavailable" as const),
+              severity: overview ? ("warning" as const) : ("critical" as const),
+              score: overview ? 60 : 0,
+            },
+            incidents: {
+              totalOpen: overview?.findings?.length ?? 0,
+              bySeverity: {
+                info:
+                  overview?.findings?.filter(
+                    (finding) => finding.severity === "info",
+                  ).length ?? 0,
+                warning:
+                  overview?.findings?.filter(
+                    (finding) => finding.severity === "warn",
+                  ).length ?? 0,
+                high: 0,
+                critical:
+                  overview?.findings?.filter(
+                    (finding) => finding.severity === "error",
+                  ).length ?? 0,
+              },
+              pendingTasks:
+                overview?.tasks?.filter((task) => task.status === "pending")
+                  .length ?? 0,
+            },
+            runtime: {
+              queueDepth: 0,
+              queueRunning: 0,
+              migrationFlags,
+            },
+            modules:
+              overview?.modules?.map((module) => ({
+                module: module.module,
+                state:
+                  module.status === "ok"
+                    ? "ok"
+                    : module.status === "failing"
+                      ? "unavailable"
+                      : "degraded",
+                severity:
+                  module.status === "ok"
+                    ? "info"
+                    : module.status === "failing"
+                      ? "critical"
+                      : "warning",
+                lastSeenAt: module.lastRunAt
+                  ? new Date(module.lastRunAt).toISOString()
+                  : undefined,
+                probableCause: module.summary,
+                attemptedRepairs: [],
+                owner: "system" as const,
+              })) ?? [],
+          };
+
+          return { ok: true, data: fallbackHealth, source: "local" };
+        } catch (error) {
+          return {
+            ok: false,
+            error: error instanceof Error ? error.message : String(error),
+          };
+        }
+      },
+    );
+
+    ipcMain.handle(
+      "aiSteward:getIncidentDigest",
+      async (_e, { authToken }: { authToken?: string } = {}) => {
+        try {
+          if (await bindBackendToken(authToken)) {
+            const digest = await backendApiClient.stewardGetIncidentDigest();
+            const digestData =
+              (digest as {
+                generatedAt?: string;
+                summary?: {
+                  totalOpenIncidents?: number;
+                  criticalOpenIncidents?: number;
+                  incidentsLast24h?: number;
+                };
+                topIncidents?: Array<{
+                  id?: string;
+                  title?: string;
+                  severity?: string;
+                  category?: string;
+                  module?: string;
+                  detectedAt?: string;
+                  status?: string;
+                }>;
+                recommendations?: string[];
+              } | null) ?? null;
+
+            const normalized = {
+              generatedAt: digestData?.generatedAt ?? new Date().toISOString(),
+              summary: {
+                totalOpenIncidents: Math.max(
+                  0,
+                  Number(digestData?.summary?.totalOpenIncidents ?? 0),
+                ),
+                criticalOpenIncidents: Math.max(
+                  0,
+                  Number(digestData?.summary?.criticalOpenIncidents ?? 0),
+                ),
+                incidentsLast24h: Math.max(
+                  0,
+                  Number(digestData?.summary?.incidentsLast24h ?? 0),
+                ),
+              },
+              topIncidents: Array.isArray(digestData?.topIncidents)
+                ? digestData.topIncidents
+                    .map((incident) => ({
+                      id: String(incident.id ?? ""),
+                      title: String(incident.title ?? "Untitled incident"),
+                      severity:
+                        incident.severity === "critical" ||
+                        incident.severity === "high" ||
+                        incident.severity === "medium"
+                          ? incident.severity
+                          : "low",
+                      category:
+                        incident.category === "category_1" ||
+                        incident.category === "category_2" ||
+                        incident.category === "category_3"
+                          ? incident.category
+                          : "category_4",
+                      module: ["cftc", "congress"].includes(
+                        String(incident.module),
+                      )
+                        ? String(incident.module)
+                        : "cftc",
+                      detectedAt:
+                        incident.detectedAt ?? new Date().toISOString(),
+                      status:
+                        incident.status === "dismissed" ||
+                        incident.status === "resolved" ||
+                        incident.status === "in_progress"
+                          ? incident.status
+                          : "open",
+                    }))
+                    .filter((incident) => incident.id.length > 0)
+                : [],
+              recommendations: Array.isArray(digestData?.recommendations)
+                ? digestData.recommendations.filter(
+                    (item): item is string =>
+                      typeof item === "string" && item.trim().length > 0,
+                  )
+                : [],
+            };
+            return { ok: true, data: normalized, source: "backend" };
+          }
+
+          const overview = aiStewardService?.getOverview();
+          const nowIso = new Date().toISOString();
+          const findings = overview?.findings ?? [];
+          const fallbackDigest = {
+            generatedAt: nowIso,
+            summary: {
+              totalOpenIncidents: findings.length,
+              criticalOpenIncidents: findings.filter(
+                (finding) => finding.severity === "error",
+              ).length,
+              incidentsLast24h: findings.filter(
+                (finding) =>
+                  Date.now() - finding.detectedAt <= 24 * 60 * 60 * 1000,
+              ).length,
+            },
+            topIncidents: findings.slice(0, 5).map((finding) => ({
+              id: finding.id,
+              title: finding.title,
+              severity:
+                finding.severity === "error"
+                  ? "critical"
+                  : finding.severity === "warn"
+                    ? "medium"
+                    : "low",
+              category: "category_1" as const,
+              module: finding.module,
+              detectedAt: new Date(finding.detectedAt).toISOString(),
+              status: "open" as const,
+            })),
+            recommendations: [
+              "Run deterministic health check and review top incidents.",
+            ],
+          };
+          return { ok: true, data: fallbackDigest, source: "local" };
+        } catch (error) {
+          return {
+            ok: false,
+            error: error instanceof Error ? error.message : String(error),
+          };
+        }
+      },
+    );
+
+    ipcMain.handle(
+      "aiSteward:getFindings",
+      async (
+        _e,
+        { module, authToken }: { module?: string; authToken?: string } = {},
+      ) => {
+        try {
+          if (await bindBackendToken(authToken)) {
+            const findings = await backendApiClient.stewardGetFindings(module);
+            const findingsData = Array.isArray(findings)
+              ? (findings as Array<{
+                  id: string;
+                  module: string;
+                  severity: string;
+                  title: string;
+                  description: string;
+                  createdAt?: string;
+                }>)
+              : [];
+            const normalized = findingsData
+              .map((finding) => ({
+                id: finding.id,
+                module: finding.module,
+                severity:
+                  finding.severity === "critical"
+                    ? "error"
+                    : finding.severity === "warning"
+                      ? "warn"
+                      : "info",
+                title: finding.title,
+                detail: finding.description,
+                detectedAt: finding.createdAt
+                  ? Date.parse(finding.createdAt)
+                  : Date.now(),
+                meta: {},
+              }))
+              .filter((finding) =>
+                ["cftc", "congress"].includes(String(finding.module)),
+              );
+            return { ok: true, data: normalized, source: "backend" };
+          }
+
+          const fallbackFindings =
+            aiStewardService?.getOverview()?.findings ?? [];
+          return { ok: true, data: fallbackFindings, source: "local" };
+        } catch (error) {
+          return {
+            ok: false,
+            error: error instanceof Error ? error.message : String(error),
+          };
+        }
+      },
+    );
+
+    ipcMain.handle(
+      "aiSteward:getTasks",
+      async (_e, { authToken }: { authToken?: string } = {}) => {
+        try {
+          if (await bindBackendToken(authToken)) {
+            const tasks = await backendApiClient.stewardGetTasks();
+            const tasksData = Array.isArray(tasks)
+              ? (tasks as Array<{
+                  id: string;
+                  type?: string;
+                  title: string;
+                  description: string;
+                  status: string;
+                  createdAt?: string;
+                }>)
+              : [];
+            const normalized = tasksData
+              .map((task) => ({
+                id: task.id,
+                module: (task.type?.split(":")?.[0] ?? "cftc") as
+                  | "cftc"
+                  | "congress",
+                kind: task.type ?? "manual:task",
+                title: task.title,
+                summary: task.description,
+                severity: "warn" as const,
+                autoApplicable: false,
+                status:
+                  task.status === "applied"
+                    ? "completed"
+                    : task.status === "rejected"
+                      ? "failed"
+                      : task.status,
+                createdAt: task.createdAt
+                  ? Date.parse(task.createdAt)
+                  : Date.now(),
+                updatedAt: task.createdAt
+                  ? Date.parse(task.createdAt)
+                  : Date.now(),
+                result: task.status,
+              }))
+              .filter((task) => ["cftc", "congress"].includes(task.module));
+            return { ok: true, data: normalized, source: "backend" };
+          }
+
+          const fallbackTasks = aiStewardService?.getOverview()?.tasks ?? [];
+          return { ok: true, data: fallbackTasks, source: "local" };
+        } catch (error) {
+          return {
+            ok: false,
+            error: error instanceof Error ? error.message : String(error),
+          };
+        }
+      },
+    );
+
+    ipcMain.handle(
+      "aiSteward:dismissFinding",
+      async (
+        _e,
+        {
+          findingId,
+          authToken,
+        }: { findingId?: string; authToken?: string } = {},
+      ) => {
+        if (!findingId) {
+          return { ok: false, error: "missing_finding_id" };
+        }
+
+        try {
+          if (await bindBackendToken(authToken)) {
+            const result =
+              await backendApiClient.stewardDismissFinding(findingId);
+            return { ok: true, data: result, source: "backend" };
+          }
+
+          return { ok: false, error: "dismiss_not_supported_in_local_mode" };
+        } catch (error) {
+          return {
+            ok: false,
+            error: error instanceof Error ? error.message : String(error),
+          };
+        }
+      },
+    );
+
+    ipcMain.handle(
+      "aiSteward:checkHealth",
+      async (_e, { authToken }: { authToken?: string } = {}) => {
+        try {
+          if (await bindBackendToken(authToken)) {
+            const result = await backendApiClient.stewardCheckHealth();
+            return { ok: true, data: result, source: "backend" };
+          }
+
+          await aiStewardService?.runModule("cftc");
+          await aiStewardService?.runModule("congress");
+          return { ok: true, source: "local" };
+        } catch (error) {
+          return {
+            ok: false,
+            error: error instanceof Error ? error.message : String(error),
+          };
+        }
+      },
+    );
+
+    ipcMain.handle(
       "aiSteward:setConfig",
       async (
         _e,
@@ -2959,19 +3657,50 @@ app.whenReady().then(async () => {
       ) => {
         if (!aiStewardService && !backendApiClient)
           return { ok: false, error: "AI steward not ready" };
+        const localPatch = (patch ?? {}) as Partial<AiStewardConfig>;
+        const backendPatchSource =
+          (patch as {
+            autoFixData?: boolean;
+            checkIntervalMinutes?: number;
+            modules?: {
+              cftc?: { mode?: string };
+              congress?: { mode?: string };
+            };
+          } | null) ?? null;
         try {
+          const backendPatch = {
+            autoApply:
+              typeof backendPatchSource?.autoFixData === "boolean"
+                ? backendPatchSource.autoFixData
+                : undefined,
+            checkIntervalSec:
+              typeof backendPatchSource?.checkIntervalMinutes === "number"
+                ? Math.max(
+                    300,
+                    Math.floor(backendPatchSource.checkIntervalMinutes * 60),
+                  )
+                : undefined,
+            modulesEnabled: backendPatchSource?.modules
+              ? {
+                  cftc: backendPatchSource.modules.cftc?.mode !== "off",
+                  congress: backendPatchSource.modules.congress?.mode !== "off",
+                }
+              : undefined,
+          };
+
           // Try backend first
           if (await bindBackendToken(authToken)) {
-            const result = await backendApiClient.stewardSetConfig(patch);
+            const result =
+              await backendApiClient.stewardSetConfig(backendPatch);
             return { ok: true, data: result, source: "backend" };
           }
           // Fall back to local
-          const result = aiStewardService?.setConfig(patch ?? {});
+          const result = aiStewardService?.setConfig(localPatch);
           return { ok: true, data: result, source: "local" };
         } catch (error) {
           // Try local fallback if backend fails
           try {
-            const result = aiStewardService?.setConfig(patch ?? {});
+            const result = aiStewardService?.setConfig(localPatch);
             return { ok: true, data: result, source: "local-fallback" };
           } catch (fallbackError) {
             return { ok: false, error: (fallbackError as Error).message };
@@ -3620,7 +4349,16 @@ app.whenReady().then(async () => {
     // --- GWMD Map IPC handlers ---
     ipcMain.handle(
       "gwmdMap:search",
-      async (_e, payload: { ticker: string; model: any; hops?: number }) => {
+      async (
+        _e,
+        payload: {
+          ticker: string;
+          model: any;
+          hops?: number;
+          refresh?: boolean;
+          sourceMode?: "cache_only" | "hybrid" | "fresh";
+        },
+      ) => {
         try {
           const {
             companyRelationshipService,
@@ -3635,6 +4373,7 @@ app.whenReady().then(async () => {
             {
               model: payload.model,
               hops: payload.hops,
+              refresh: payload.refresh,
             },
           );
 

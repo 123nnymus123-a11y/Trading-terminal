@@ -1,0 +1,186 @@
+================================================================================
+STRATEGY RESEARCH (BACKTESTING) TAB - CURRENT IMPLEMENTATION STATE
+================================================================================
+Date: March 27, 2026
+Status: Hybrid Mode Operational (Desktop Local + Cloud Backend + Governance Foundations)
+
+Latest update:
+- Backend now supports execution mode foundation for backend, paper, and live at
+  API and repository levels, with strict validation gates in place.
+- Pre-run validation diagnostics now include connector/governance prerequisites
+  for paper/live mode and continue to enforce script/universe/assumption checks.
+- Desktop local workspace persistence is now backed by SQLite repository tables
+  (definitions, versions, runs, comparison notes), not localStorage.
+
+================================================================================
+OVERVIEW
+================================================================================
+The Strategy Research tab is now operational as a hybrid workflow:
+
+1. Cloud mode: Uses authenticated backend APIs for strategy/version/run lifecycle.
+2. Local mode: Works on desktop even when backend auth is unavailable.
+3. Bridge readiness mode: Paper/live preconditions can be checked through
+  governance readiness and connector APIs before activation.
+
+Local mode includes:
+- Local strategy persistence in desktop SQLite workspace tables.
+- Local historical data download and cache on user PC.
+- Local backtest execution through Electron main process service.
+- Run history, metrics, equity curve rendering, and trade preview in UI.
+
+This resolves prior usability blockers where missing auth could prevent create/save/run.
+
+================================================================================
+CURRENT UI CAPABILITIES
+================================================================================
+File: apps/desktop/src/renderer/pages/StrategyResearch.tsx
+
+Tabs:
+- Strategies
+- Editor
+- Run History
+- Details
+
+Implemented behavior:
+- Inline strategy creation panel in sidebar (non-modal flow).
+- Strategy selection with state hydration from cloud or local workspace.
+- Script editor with universe and assumptions controls.
+- Execution mode selector (desktop-local or backend).
+- Download Historical Data action from editor controls.
+- Run Backtest action with save-before-run behavior.
+- Run list with status and return preview.
+- Details view with:
+  - key metrics (return, sharpe, drawdown, ending capital)
+  - equity curve chart (SVG)
+  - run metadata and historical data source info
+  - recent trade preview
+- Notice and error banners for degraded/fallback conditions.
+
+================================================================================
+DESKTOP LOCAL IMPLEMENTATION
+================================================================================
+Main service file:
+- apps/desktop/src/main/services/strategyResearch/localStrategyResearchService.ts
+
+IPC and bridge wiring:
+- apps/desktop/src/main/index.ts
+- apps/desktop/src/preload/index.ts
+- apps/desktop/src/renderer/global.d.ts
+
+Local data model behavior:
+- Historical source: public daily EOD CSV download path (Stooq-style endpoint).
+- Cache location: Electron userData strategyResearch cache directory.
+- Cache TTL: 12 hours.
+- Symbols normalized to uppercase and deduplicated.
+
+Local backtest behavior:
+- Script contract: onBar(ctx) in VM sandbox.
+- Portfolio simulation includes:
+  - cash + position tracking
+  - commission and slippage assumptions
+  - buy/sell signal execution
+- Outputs:
+  - run status and timestamps
+  - metrics (total return, sharpe, max drawdown, ending capital, trade count, win rate)
+  - equity curve
+  - trade list
+  - historical data metadata (symbols/source/cacheDir)
+
+================================================================================
+STORE BEHAVIOR (HYBRID FALLBACK)
+================================================================================
+File: apps/desktop/src/renderer/store/strategyResearchStore.ts
+
+Key behavior:
+- Attempts cloud APIs first for strategy/read/save/runs.
+- Detects auth failures and falls back to local workspace mode.
+- Persists local strategies/versions/runs/comparison notes to desktop SQLite storage.
+- Normalizes backend and local run/version payloads for shared UI rendering.
+- Supports local historical download and local run execution via preload bridge.
+
+Sync modes:
+- syncMode=cloud when backend path succeeds.
+- syncMode=local when fallback path is active.
+
+================================================================================
+USER WORKFLOWS NOW ENABLED
+================================================================================
+Workflow 1: Local-first strategy creation
+1. Open STRATEGY RESEARCH tab.
+2. Click + NEW in sidebar.
+3. Enter name/description and create strategy.
+4. Edit script, universe, and assumptions.
+5. Save version.
+
+Workflow 2: Download history to PC
+1. In editor, set universe symbols (for example: AAPL, MSFT, SPY).
+2. Click Download Historical Data.
+3. Data downloads/caches locally and reports downloaded vs cache hits.
+
+Workflow 3: Run desktop-local backtest
+1. Select execution mode desktop-local.
+2. Click Run Backtest.
+3. Review run in Run History.
+4. Open Details for metrics, curve, and trades.
+
+Workflow 4: Cloud-backed run (when authenticated)
+1. Sign in and keep backend session valid.
+2. Select execution mode backend.
+3. Enqueue run through backend API and inspect returned run state.
+
+================================================================================
+INTEGRATION STATUS
+================================================================================
+Complete:
+- Strategy Research tab integrated in App tabs.
+- Local fallback architecture in place for auth-gated failures.
+- Local historical download and caching path implemented.
+- Local run engine and details visualization implemented.
+- No current TypeScript errors in touched Strategy Research files.
+
+Conditional:
+- Cloud run path remains backend/auth/session dependent.
+- Backend queue and infrastructure are used only in backend execution mode.
+- Paper/live modes are accepted by schema and service contracts but are currently
+  gated by connector/governance readiness checks until full bridge execution
+  activation policies are satisfied per tenant.
+
+================================================================================
+KNOWN LIMITATIONS
+================================================================================
+1. Desktop local persistence is SQLite-backed, but artifact management and
+  archival tooling are still baseline.
+2. Local script execution model currently expects onBar(ctx) contract.
+3. Historical source is daily public EOD data (no intraday depth).
+4. Local execution metrics are practical but not yet parity-tested against backend engine across all edge cases.
+5. Some unrelated desktop TypeScript errors remain in non-Strategy Research areas.
+
+================================================================================
+NEXT STEPS
+================================================================================
+Priority 0 (now started):
+1. Continue strengthening pre-run validation diagnostics and align desktop/local
+  preflight parity with backend checks.
+
+Priority 1 (production foundation):
+2. Extend local SQLite persistence coverage to richer artifacts and reproducibility bundles.
+3. Add dataset/version snapshotting with canonical data lineage (splits/dividends/delistings/calendar/timezone correctness).
+4. Add strict local/backend parity testing for fills, timing, costs, and metrics.
+
+Priority 2 (research quality):
+5. Add run comparison and experiment diffing UX with metric deltas and assumption diffs.
+6. Expand metrics and analytics (CAGR, Sortino, Calmar, turnover, holding period, attribution, alpha/beta).
+7. Add exportable run artifacts (code/config/universe/snapshot ref/results/trades/diagnostics/notes/engine version).
+
+Priority 3 (engine realism and controls):
+8. Implement full order-state lifecycle (market/limit/stop/stop-limit, partial fills, rejects/cancels, gaps).
+9. Add execution realism controls (timing policy, liquidity caps, participation, spread/impact, borrow constraints).
+10. Expand portfolio/risk policy enforcement (gross/net, sector limits, drawdown throttles, turnover caps, cash buffers).
+
+Priority 4 (robustness and scale):
+11. Add walk-forward, rolling OOS, parameter sensitivity, and stress-testing workflows.
+12. Expand queue orchestration (priorities, cancellation, retries, progress streams, controlled concurrency).
+
+================================================================================
+END OF STATE DOCUMENT
+================================================================================

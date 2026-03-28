@@ -25,8 +25,20 @@ interface Props {
     showFlows: boolean;
     showOnlyImpacted: boolean;
     hops?: number;
+    minConfidence?: number;
+    showUnresolved?: boolean;
+    sourceMode?: "cache_only" | "hybrid" | "fresh";
   };
-  onGwmdFiltersChange: (next: { region: string; relation: string; showFlows: boolean; showOnlyImpacted: boolean; hops?: number }) => void;
+  onGwmdFiltersChange: (next: {
+    region: string;
+    relation: string;
+    showFlows: boolean;
+    showOnlyImpacted: boolean;
+    hops?: number;
+    minConfidence?: number;
+    showUnresolved?: boolean;
+    sourceMode?: "cache_only" | "hybrid" | "fresh";
+  }) => void;
   onSelectNode: (nodeId: string) => void;
   onSelectEdge: (edgeId: string) => void;
   onSimulateNode: (nodeId: string) => void;

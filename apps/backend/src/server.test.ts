@@ -59,6 +59,11 @@ function testEnv(): AppEnv {
     TED_LIVE_AUTH_HEADER: "x-api-key",
     TED_LIVE_TIMEOUT_MS: 12000,
     TED_LIVE_WINDOW_QUERY_PARAM: "window",
+    EDGAR_USER_AGENT: "TradingTerminal-Test/0.0.1 test@tradingcockpit.dev",
+    EDGAR_WATCHER_ENABLED: false,
+    EDGAR_WATCHER_INTERVAL_SECONDS: 300,
+    EDGAR_WATCHER_CIKS: "",
+    EDGAR_WATCHER_BACKFILL_DAYS: 90,
   };
 }
 
@@ -225,6 +230,113 @@ describe("backend auth + ws", () => {
     });
   });
 
+  it("returns TED error code when live config is missing", async () => {
+    const tokenPair = auth.issueTokenPair({
+      id: "user-ted",
+      email: env.AUTH_BOOTSTRAP_EMAIL,
+      username: env.AUTH_BOOTSTRAP_USERNAME,
+      tier: "starter",
+      roles: ["viewer"],
+      licenseKey: env.AUTH_BOOTSTRAP_LICENSE_KEY,
+    });
+
+    const response = await request(app)
+      .get("/api/tedintel/snapshot?window=30d")
+      .set("Authorization", `Bearer ${tokenPair.token}`);
+
+    expect(response.status).toBe(503);
+    expect(response.body.error).toBe("ted_live_disabled");
+  });
+
+  it("ingests and serves generic procurement intelligence views", async () => {
+    const tokenPair = auth.issueTokenPair({
+      id: "user-procurement",
+      email: env.AUTH_BOOTSTRAP_EMAIL,
+      username: env.AUTH_BOOTSTRAP_USERNAME,
+      tier: "starter",
+      roles: ["operator"],
+      licenseKey: env.AUTH_BOOTSTRAP_LICENSE_KEY,
+    });
+
+    const ingest = await request(app)
+      .post("/api/procurement/intel/ingest")
+      .set("Authorization", `Bearer ${tokenPair.token}`)
+      .send({ window: "30d" });
+
+    expect(ingest.status).toBe(503);
+    expect(ingest.body.error).toBe("ted_live_disabled");
+
+    const saveTedConfig = await request(app)
+      .put("/api/tedintel/config")
+      .set("Authorization", `Bearer ${tokenPair.token}`)
+      .send({
+        enabled: true,
+        baseUrl: "https://example.invalid/api/ted",
+        apiKey: "test-key",
+        timeoutMs: 1000,
+      });
+
+    expect(saveTedConfig.status).toBe(200);
+
+    const ingestWithUpstreamFailure = await request(app)
+      .post("/api/procurement/intel/ingest")
+      .set("Authorization", `Bearer ${tokenPair.token}`)
+      .send({ window: "30d" });
+
+    expect(ingestWithUpstreamFailure.status).toBe(502);
+    expect(ingestWithUpstreamFailure.body.error).toMatch(/ted_/);
+
+    const notices = await request(app)
+      .get("/api/procurement/intel/notices?country=Belgium,France&limit=10")
+      .set("Authorization", `Bearer ${tokenPair.token}`);
+
+    expect(notices.status).toBe(200);
+    expect(Array.isArray(notices.body.items)).toBe(true);
+
+    const summary = await request(app)
+      .get("/api/procurement/intel/summary")
+      .set("Authorization", `Bearer ${tokenPair.token}`);
+
+    expect(summary.status).toBe(200);
+    expect(summary.body.summary).toEqual(
+      expect.objectContaining({
+        rising_activity_by_region: expect.any(Array),
+        unusual_demand_clusters: expect.any(Array),
+        contract_concentration_by_buyer: expect.any(Array),
+        supplier_win_momentum: expect.any(Array),
+        public_spending_surges: expect.any(Array),
+      }),
+    );
+
+    const integrations = await request(app)
+      .get("/api/procurement/intel/integrations")
+      .set("Authorization", `Bearer ${tokenPair.token}`);
+
+    expect(integrations.status).toBe(200);
+    expect(integrations.body.feeds).toEqual(
+      expect.objectContaining({
+        data_vault_evidence: expect.any(Array),
+        gwmd_signals: expect.any(Array),
+        supply_chain_overlays: expect.any(Array),
+        intelligence_panorama: expect.any(Object),
+      }),
+    );
+
+    const diagnostics = await request(app)
+      .get("/api/procurement/intel/diagnostics")
+      .set("Authorization", `Bearer ${tokenPair.token}`);
+
+    expect(diagnostics.status).toBe(200);
+    expect(diagnostics.body.diagnostics).toEqual(
+      expect.objectContaining({
+        ingestion_success: expect.any(Number),
+        ingestion_failure: expect.any(Number),
+        normalization_errors: expect.any(Number),
+        enrichment_failures: expect.any(Number),
+      }),
+    );
+  });
+
   it("enforces RBAC when enabled for steward mutation routes", async () => {
     const strictEnv: AppEnv = {
       ...env,
@@ -261,5 +373,79 @@ describe("backend auth + ws", () => {
     } finally {
       await infra.close();
     }
+  });
+
+  it("returns normalized steward health status", async () => {
+    const tokenPair = auth.issueTokenPair({
+      id: "user-health",
+      email: env.AUTH_BOOTSTRAP_EMAIL,
+      username: env.AUTH_BOOTSTRAP_USERNAME,
+      tier: "starter",
+      roles: ["viewer"],
+      licenseKey: env.AUTH_BOOTSTRAP_LICENSE_KEY,
+    });
+
+    const response = await request(app)
+      .get("/api/ai/steward/health")
+      .set("Authorization", `Bearer ${tokenPair.token}`);
+
+    expect(response.status).toBe(200);
+    expect(response.body.ok).toBe(true);
+    expect(response.body.data).toEqual(
+      expect.objectContaining({
+        generatedAt: expect.any(String),
+        overall: expect.objectContaining({
+          state: expect.any(String),
+          severity: expect.any(String),
+          score: expect.any(Number),
+        }),
+        incidents: expect.objectContaining({
+          totalOpen: expect.any(Number),
+          pendingTasks: expect.any(Number),
+        }),
+        runtime: expect.objectContaining({
+          queueDepth: expect.any(Number),
+          queueRunning: expect.any(Number),
+        }),
+      }),
+    );
+    expect(Array.isArray(response.body.data.modules)).toBe(true);
+  });
+
+  it("returns steward unavailable for check-health when no database is configured", async () => {
+    const tokenPair = auth.issueTokenPair({
+      id: "user-check-health",
+      email: env.AUTH_BOOTSTRAP_EMAIL,
+      username: env.AUTH_BOOTSTRAP_USERNAME,
+      tier: "starter",
+      roles: ["operator"],
+      licenseKey: env.AUTH_BOOTSTRAP_LICENSE_KEY,
+    });
+
+    const response = await request(app)
+      .post("/api/ai/steward/check-health")
+      .set("Authorization", `Bearer ${tokenPair.token}`)
+      .send({});
+
+    expect(response.status).toBe(503);
+    expect(response.body.error).toBe("steward_unavailable_no_database");
+  });
+
+  it("returns steward unavailable for incident-digest when no database is configured", async () => {
+    const tokenPair = auth.issueTokenPair({
+      id: "user-incident-digest",
+      email: env.AUTH_BOOTSTRAP_EMAIL,
+      username: env.AUTH_BOOTSTRAP_USERNAME,
+      tier: "starter",
+      roles: ["viewer"],
+      licenseKey: env.AUTH_BOOTSTRAP_LICENSE_KEY,
+    });
+
+    const response = await request(app)
+      .get("/api/ai/steward/incident-digest")
+      .set("Authorization", `Bearer ${tokenPair.token}`);
+
+    expect(response.status).toBe(503);
+    expect(response.body.error).toBe("steward_unavailable_no_database");
   });
 });

@@ -5,7 +5,7 @@ import { app } from "electron";
 
 const DEFAULT_BACKEND_URL = "http://79.76.40.72:8787";
 const BASELINE_SCHEMA_VERSION = 0;
-const LATEST_SCHEMA_VERSION = 2;
+const LATEST_SCHEMA_VERSION = 5;
 
 let db: Database.Database | null = null;
 
@@ -547,6 +547,24 @@ function runPendingMigrations(db: Database.Database): void {
         ensureGraphEnrichmentTables(database);
       },
     },
+    {
+      version: 3,
+      up: (database) => {
+        ensureStrategyResearchLocalTables(database);
+      },
+    },
+    {
+      version: 4,
+      up: (database) => {
+        ensureStrategyResearchComparisonTables(database);
+      },
+    },
+    {
+      version: 5,
+      up: (database) => {
+        ensureStrategyResearchRunLogColumn(database);
+      },
+    },
   ];
 
   let current = getCurrentSchemaVersion(db);
@@ -566,6 +584,89 @@ function runPendingMigrations(db: Database.Database): void {
     throw new Error(
       `Failed to migrate schema to v${LATEST_SCHEMA_VERSION}. Current: v${current}`,
     );
+  }
+}
+
+function ensureStrategyResearchLocalTables(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS strategy_local_definition (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      stage TEXT NOT NULL CHECK (stage IN ('draft','candidate','validation','production','retired')),
+      tags_json TEXT NOT NULL DEFAULT '[]',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS strategy_local_version (
+      id TEXT PRIMARY KEY,
+      strategy_id TEXT NOT NULL,
+      version TEXT NOT NULL,
+      script_language TEXT NOT NULL CHECK (script_language IN ('javascript','typescript')),
+      script_source TEXT NOT NULL,
+      script_checksum TEXT NOT NULL,
+      universe_json TEXT NOT NULL DEFAULT '[]',
+      assumptions_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (strategy_id) REFERENCES strategy_local_definition(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_strategy_local_version_strategy
+      ON strategy_local_version(strategy_id, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS strategy_local_run (
+      run_id TEXT PRIMARY KEY,
+      strategy_id TEXT NOT NULL,
+      strategy_version TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('queued','running','completed','failed','cancelled')),
+      execution_mode TEXT NOT NULL CHECK (execution_mode IN ('desktop-local','backend')),
+      requested_at TEXT,
+      started_at TEXT,
+      finished_at TEXT,
+      error TEXT,
+      metrics_json TEXT NOT NULL DEFAULT '{}',
+      equity_curve_json TEXT,
+      trades_json TEXT,
+      historical_data_json TEXT,
+      run_metadata_json TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (strategy_id) REFERENCES strategy_local_definition(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_strategy_local_run_strategy
+      ON strategy_local_run(strategy_id, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_strategy_local_run_finished
+      ON strategy_local_run(finished_at DESC);
+  `);
+}
+
+function ensureStrategyResearchComparisonTables(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS strategy_local_comparison_note (
+      id TEXT PRIMARY KEY,
+      strategy_id TEXT NOT NULL,
+      primary_run_id TEXT NOT NULL,
+      baseline_run_id TEXT NOT NULL,
+      note TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(strategy_id, primary_run_id, baseline_run_id),
+      FOREIGN KEY (strategy_id) REFERENCES strategy_local_definition(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_strategy_local_comparison_strategy
+      ON strategy_local_comparison_note(strategy_id, updated_at DESC);
+  `);
+}
+
+function ensureStrategyResearchRunLogColumn(db: Database.Database): void {
+  try {
+    db.exec(`ALTER TABLE strategy_local_run ADD COLUMN run_logs_json TEXT`);
+  } catch {
+    // Column likely already exists.
   }
 }
 

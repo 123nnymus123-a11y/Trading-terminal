@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import type { EdgarFlowIntelDigest } from "@tc/shared";
 import { PublicFlowIntelPanel } from "../components/PublicFlowIntel/PublicFlowIntelPanel";
 import { TedRadarPanel } from "../components/tedIntel/TedIntelWidgets";
 import { useAiResearchStore } from "../store/aiResearchStore";
@@ -35,6 +36,8 @@ function getEventTime(brief: any): string {
 export default function Intelligence() {
   const [selectedBriefId, setSelectedBriefId] = useState<string | null>(null);
   const [lastRefreshTime, setLastRefreshTime] = useState<number>(Date.now());
+  const [flowDigest, setFlowDigest] = useState<EdgarFlowIntelDigest | null>(null);
+  const [flowDigestError, setFlowDigestError] = useState<string | null>(null);
 
   const aiInit = useAiResearchStore((s) => s.init);
   const aiRefreshBriefs = useAiResearchStore((s) => s.refreshBriefs);
@@ -55,6 +58,35 @@ export default function Intelligence() {
     // Update cloud models in AI store
     useAiResearchStore.setState({ cloudModels });
   }, [aiInit, aiLoadConfig, aiRefreshBriefs, aiCheckRuntime, cloudModels]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadFlowDigest = async () => {
+      const api = window.cockpit?.edgarIntel;
+      if (!api?.getFlowIntelDigest) {
+        return;
+      }
+      try {
+        setFlowDigestError(null);
+        const digest = await api.getFlowIntelDigest("global", 6);
+        if (!cancelled) {
+          setFlowDigest(digest);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setFlowDigestError(
+            error instanceof Error ? error.message : "flow_digest_unavailable",
+          );
+        }
+      }
+    };
+
+    void loadFlowDigest();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const selectedBrief = selectedBriefId ? aiBriefs.find((b) => b.id === selectedBriefId) : null;
   const activeCloudModels = getActiveCloudModels();
@@ -173,6 +205,53 @@ export default function Intelligence() {
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           <div style={{ fontSize: 12, opacity: 0.7, letterSpacing: 0.6 }}>TED INTEL</div>
           <TedRadarPanel windowDays="90d" />
+
+          <div style={{ fontSize: 12, opacity: 0.7, letterSpacing: 0.6 }}>FLOW DIGEST</div>
+          <div
+            style={{
+              border: "1px solid rgba(255,255,255,0.08)",
+              borderRadius: 12,
+              padding: 12,
+              background: "rgba(2,6,23,0.55)",
+              display: "grid",
+              gap: 8,
+            }}
+          >
+            {flowDigestError && (
+              <div style={{ fontSize: 12, color: "#fca5a5" }}>
+                FLOW digest unavailable: {flowDigestError}
+              </div>
+            )}
+            {!flowDigestError && (!flowDigest || flowDigest.items.length === 0) && (
+              <div style={{ fontSize: 12, opacity: 0.7 }}>No recent anomaly reports.</div>
+            )}
+            {flowDigest?.items.map((item) => (
+              <div
+                key={item.id}
+                style={{
+                  border: "1px solid rgba(148,163,184,0.3)",
+                  borderRadius: 10,
+                  padding: 10,
+                  background: "rgba(15,23,42,0.7)",
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                  <div style={{ fontWeight: 700, fontSize: 12 }}>
+                    {item.ticker ? `${item.ticker} - ${item.company_name}` : item.company_name}
+                  </div>
+                  <div style={{ fontSize: 10, opacity: 0.8 }}>{item.severity.toUpperCase()}</div>
+                </div>
+                <div style={{ fontSize: 11, opacity: 0.8, marginTop: 4 }}>
+                  Score {item.anomaly_score.toFixed(1)} • {formatRelativeTime(item.filed_at)}
+                </div>
+                {item.triggers.length > 0 && (
+                  <div style={{ fontSize: 11, opacity: 0.75, marginTop: 4 }}>
+                    {item.triggers.slice(0, 2).join(" • ")}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
 
           <div style={{ fontSize: 12, opacity: 0.7, letterSpacing: 0.6 }}>FLOW INTEL</div>
           <PublicFlowIntelPanel />

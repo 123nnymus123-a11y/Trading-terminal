@@ -59,6 +59,64 @@ const CUSTOM_MODEL_VALUE = "__custom_model__";
 const AI_SELECTIONS_KEY = "trading_terminal_ai_selections";
 const AI_DRAFT_KEY = "trading_terminal_ai_draft";
 const PRODUCTION_BACKEND_URL = "http://79.76.40.72:8787";
+const GWMD_USER_SETTINGS_KEY = "gwmd:user-settings:v1";
+
+type GwmdSourceMode = "cache_only" | "hybrid" | "fresh";
+type GwmdUserSettings = {
+  defaultHops: number;
+  defaultRelation: string;
+  defaultRegion: string;
+  minConfidence: number;
+  sourceMode: GwmdSourceMode;
+  showUnresolved: boolean;
+};
+
+const DEFAULT_GWMD_SETTINGS: GwmdUserSettings = {
+  defaultHops: 2,
+  defaultRelation: "all",
+  defaultRegion: "All",
+  minConfidence: 0,
+  sourceMode: "hybrid",
+  showUnresolved: true,
+};
+
+function readGwmdUserSettings(): GwmdUserSettings {
+  try {
+    const raw = window.localStorage.getItem(GWMD_USER_SETTINGS_KEY);
+    if (!raw) return DEFAULT_GWMD_SETTINGS;
+    const parsed = JSON.parse(raw) as Partial<GwmdUserSettings>;
+    return {
+      defaultHops:
+        typeof parsed.defaultHops === "number" && Number.isFinite(parsed.defaultHops)
+          ? Math.max(1, Math.min(3, Math.floor(parsed.defaultHops)))
+          : DEFAULT_GWMD_SETTINGS.defaultHops,
+      defaultRelation:
+        typeof parsed.defaultRelation === "string" && parsed.defaultRelation.trim()
+          ? parsed.defaultRelation
+          : DEFAULT_GWMD_SETTINGS.defaultRelation,
+      defaultRegion:
+        typeof parsed.defaultRegion === "string" && parsed.defaultRegion.trim()
+          ? parsed.defaultRegion
+          : DEFAULT_GWMD_SETTINGS.defaultRegion,
+      minConfidence:
+        typeof parsed.minConfidence === "number" && Number.isFinite(parsed.minConfidence)
+          ? Math.max(0, Math.min(1, parsed.minConfidence))
+          : DEFAULT_GWMD_SETTINGS.minConfidence,
+      sourceMode:
+        parsed.sourceMode === "cache_only" ||
+        parsed.sourceMode === "hybrid" ||
+        parsed.sourceMode === "fresh"
+          ? parsed.sourceMode
+          : DEFAULT_GWMD_SETTINGS.sourceMode,
+      showUnresolved:
+        typeof parsed.showUnresolved === "boolean"
+          ? parsed.showUnresolved
+          : DEFAULT_GWMD_SETTINGS.showUnresolved,
+    };
+  } catch {
+    return DEFAULT_GWMD_SETTINGS;
+  }
+}
 
 async function fetchModelsDirectFromOllama(): Promise<string[]> {
   // Route through main process IPC — no direct localhost calls from renderer
@@ -275,7 +333,7 @@ export default function SettingsLogs() {
   }>>(new Map());
 
   const [logFilter, setLogFilter] = useState<"all" | "error" | "warn" | "info">("all");
-  const [activeSection, setActiveSection] = useState<"ai" | "research" | "data" | "market" | "system">("ai");
+  const [activeSection, setActiveSection] = useState<"ai" | "steward" | "research" | "data" | "market" | "gwmd" | "system">("ai");
   const [externalFeedTests, setExternalFeedTests] = useState<Record<string, { status: "success" | "error" | "unknown"; message: string; timestamp: number }>>({});
 
   const [aiEnabled, setAiEnabled] = useState(false);
@@ -307,8 +365,17 @@ export default function SettingsLogs() {
   const [tedWindowQueryParam, setTedWindowQueryParam] = useState("window");
   const [tedConfigStatus, setTedConfigStatus] = useState<string | null>(null);
   const [tedConfigSaving, setTedConfigSaving] = useState(false);
+  const [tedApiTesting, setTedApiTesting] = useState(false);
+  const [tedApiTestResult, setTedApiTestResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [settingsSaveStatus, setSettingsSaveStatus] = useState<string | null>(null);
   const [settingsSaving, setSettingsSaving] = useState(false);
+  const [gwmdSettingsDraft, setGwmdSettingsDraft] =
+    useState<GwmdUserSettings>(DEFAULT_GWMD_SETTINGS);
+  const [gwmdSettingsStatus, setGwmdSettingsStatus] = useState<string | null>(null);
+
+  useEffect(() => {
+    setGwmdSettingsDraft(readGwmdUserSettings());
+  }, []);
 
   useEffect(() => {
     try {
@@ -489,6 +556,7 @@ export default function SettingsLogs() {
         ...settings,
         primaryAiModel: primary,
         secondaryAiModel: secondary,
+        globalAiModel: primary?.model,
       };
       await settingsApi.settingsSet(next);
       localStorage.setItem(AI_SELECTIONS_KEY, JSON.stringify({ primaryAiKey: primaryKey, secondaryAiKey: secondaryKey }));
@@ -517,10 +585,45 @@ export default function SettingsLogs() {
     }
   }, [saveSettings, persistAiSelections, settingsSaving]);
 
+  const saveGwmdSettings = useCallback(() => {
+    try {
+      window.localStorage.setItem(
+        GWMD_USER_SETTINGS_KEY,
+        JSON.stringify(gwmdSettingsDraft),
+      );
+      setGwmdSettingsStatus("GWMD settings saved");
+      setTimeout(() => setGwmdSettingsStatus(null), 2500);
+    } catch (err) {
+      setGwmdSettingsStatus(
+        `Failed to save GWMD settings: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }, [gwmdSettingsDraft]);
+
+  const resetGwmdSettings = useCallback(() => {
+    setGwmdSettingsDraft(DEFAULT_GWMD_SETTINGS);
+    setGwmdSettingsStatus("GWMD defaults restored (click Save to persist)");
+  }, []);
+
   const stewardInit = useAiStewardStore((s) => s.init);
   const stewardOverview = useAiStewardStore((s) => s.overview);
+  const stewardHealth = useAiStewardStore((s) => s.health);
+  const stewardIncidentDigest = useAiStewardStore((s) => s.incidentDigest);
+  const stewardFindings = useAiStewardStore((s) => s.findings);
+  const stewardTasks = useAiStewardStore((s) => s.tasks);
+  const stewardCheckHealth = useAiStewardStore((s) => s.checkHealth);
+  const stewardSetConfig = useAiStewardStore((s) => s.setConfig);
+  const stewardDismissFinding = useAiStewardStore((s) => s.dismissFinding);
+  const stewardApplyTask = useAiStewardStore((s) => s.applyTask);
   const stewardLoading = useAiStewardStore((s) => s.loading);
   const stewardError = useAiStewardStore((s) => s.error);
+  const [stewardCheckBusy, setStewardCheckBusy] = useState(false);
+  const [stewardPolicySaving, setStewardPolicySaving] = useState(false);
+  const [stewardPolicyStatus, setStewardPolicyStatus] = useState<string | null>(null);
+  const [stewardAutoFixDraft, setStewardAutoFixDraft] = useState(false);
+  const [stewardIntervalDraft, setStewardIntervalDraft] = useState(30);
+  const [stewardCftcModeDraft, setStewardCftcModeDraft] = useState<"off" | "suggest" | "auto">("suggest");
+  const [stewardCongressModeDraft, setStewardCongressModeDraft] = useState<"off" | "suggest" | "auto">("suggest");
 
   const secretsApi = window.cockpit?.secrets;
   const apiHubApi = window.cockpit?.apiHub;
@@ -954,6 +1057,35 @@ export default function SettingsLogs() {
     tedWindowQueryParam,
   ]);
 
+  const testTedApi = useCallback(async () => {
+    setTedApiTesting(true);
+    setTedApiTestResult(null);
+    try {
+      const api = window.cockpit?.tedIntel;
+      if (!api?.getSnapshot) {
+        setTedApiTestResult({ ok: false, message: "TED Intel IPC not available" });
+        return;
+      }
+      const snapshot = await api.getSnapshot("90d");
+      const mode = snapshot.sourceMode ?? "unknown";
+      const label = snapshot.sourceLabel ?? "—";
+      const at = snapshot.generatedAt
+        ? new Date(snapshot.generatedAt).toLocaleTimeString()
+        : "—";
+      setTedApiTestResult({
+        ok: true,
+        message: `✅ OK — mode: ${mode} • ${label} • generated ${at}`,
+      });
+    } catch (err) {
+      setTedApiTestResult({
+        ok: false,
+        message: `❌ ${err instanceof Error ? err.message : String(err)}`,
+      });
+    } finally {
+      setTedApiTesting(false);
+    }
+  }, []);
+
   // Save Ollama API key to localStorage when it changes
   useEffect(() => {
     if (ollamaApiKey) {
@@ -986,6 +1118,156 @@ export default function SettingsLogs() {
     },
     [moduleStateMap],
   );
+
+  const stewardHealthModules = useMemo(
+    () =>
+      (stewardHealth?.modules ?? []).filter((module) =>
+        ["cftc", "congress"].includes(module.module),
+      ),
+    [stewardHealth],
+  );
+
+  const stewardFindingsList = useMemo(
+    () => (Array.isArray(stewardFindings) ? stewardFindings : []),
+    [stewardFindings],
+  );
+
+  const stewardTasksList = useMemo(
+    () => (Array.isArray(stewardTasks) ? stewardTasks : []),
+    [stewardTasks],
+  );
+
+  const recentStewardFindings = useMemo(
+    () => [...stewardFindingsList].sort((a, b) => b.detectedAt - a.detectedAt).slice(0, 8),
+    [stewardFindingsList],
+  );
+
+  const recentStewardTasks = useMemo(
+    () => [...stewardTasksList].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 8),
+    [stewardTasksList],
+  );
+
+  const handleRunStewardHealthCheck = useCallback(async () => {
+    if (stewardCheckBusy) return;
+    setStewardCheckBusy(true);
+    try {
+      await stewardCheckHealth();
+    } catch {
+      // Store owns steward error state updates.
+    } finally {
+      setStewardCheckBusy(false);
+    }
+  }, [stewardCheckBusy, stewardCheckHealth]);
+
+  const openClawErrorText = (stewardError ?? "").toLowerCase();
+  const openClawReadiness = useMemo(() => {
+    const backendAvailable = !openClawErrorText.includes("steward_unavailable_no_database");
+    const authenticated = !openClawErrorText.includes("unauthorized");
+    const hasHealthSignal = Boolean(stewardHealth?.generatedAt || stewardOverview?.lastCheckAt);
+    const serviceResponsive = hasHealthSignal && !stewardError;
+
+    const status: "connected" | "connecting" | "action_required" | "initializing" =
+      stewardLoading
+        ? "connecting"
+        : serviceResponsive
+          ? "connected"
+          : stewardError
+            ? "action_required"
+            : "initializing";
+
+    return {
+      backendAvailable,
+      authenticated,
+      hasHealthSignal,
+      serviceResponsive,
+      status,
+    };
+  }, [openClawErrorText, stewardError, stewardHealth?.generatedAt, stewardLoading, stewardOverview?.lastCheckAt]);
+
+  const openClawStatusStyle = useMemo(() => {
+    if (openClawReadiness.status === "connected") {
+      return {
+        border: "1px solid rgba(34,197,94,0.45)",
+        background: "rgba(34,197,94,0.14)",
+        color: "#bbf7d0",
+        label: "OpenClaw Connected",
+      };
+    }
+    if (openClawReadiness.status === "connecting") {
+      return {
+        border: "1px solid rgba(59,130,246,0.45)",
+        background: "rgba(59,130,246,0.14)",
+        color: "#bfdbfe",
+        label: "Connecting OpenClaw",
+      };
+    }
+    if (openClawReadiness.status === "action_required") {
+      return {
+        border: "1px solid rgba(248,113,113,0.45)",
+        background: "rgba(248,113,113,0.14)",
+        color: "#fecaca",
+        label: "Action Required",
+      };
+    }
+    return {
+      border: "1px solid rgba(251,191,36,0.45)",
+      background: "rgba(251,191,36,0.14)",
+      color: "#fde68a",
+      label: "Initializing OpenClaw",
+    };
+  }, [openClawReadiness.status]);
+
+  const handleConnectOpenClaw = useCallback(async () => {
+    if (stewardCheckBusy || stewardLoading) return;
+    stewardInit();
+    await handleRunStewardHealthCheck();
+  }, [handleRunStewardHealthCheck, stewardCheckBusy, stewardInit, stewardLoading]);
+
+  useEffect(() => {
+    const config = stewardOverview?.config;
+    if (!config) return;
+    setStewardAutoFixDraft(Boolean(config.autoFixData));
+    setStewardIntervalDraft(
+      Number.isFinite(config.checkIntervalMinutes)
+        ? Math.max(5, Math.floor(config.checkIntervalMinutes))
+        : 30,
+    );
+    setStewardCftcModeDraft(
+      config.modules?.cftc?.mode === "off" ? "off" : "suggest",
+    );
+    setStewardCongressModeDraft(
+      config.modules?.congress?.mode === "off" ? "off" : "suggest",
+    );
+  }, [stewardOverview?.config]);
+
+  const handleSaveStewardPolicy = useCallback(async () => {
+    if (stewardPolicySaving) return;
+    setStewardPolicySaving(true);
+    setStewardPolicyStatus(null);
+    try {
+      await stewardSetConfig({
+        autoFixData: stewardAutoFixDraft,
+        checkIntervalMinutes: Math.max(5, stewardIntervalDraft),
+        modules: {
+          cftc: { mode: stewardCftcModeDraft },
+          congress: { mode: stewardCongressModeDraft },
+        },
+      });
+      setStewardPolicyStatus("Policy saved");
+      setTimeout(() => setStewardPolicyStatus(null), 2500);
+    } catch {
+      setStewardPolicyStatus("Policy save failed");
+    } finally {
+      setStewardPolicySaving(false);
+    }
+  }, [
+    stewardAutoFixDraft,
+    stewardCongressModeDraft,
+    stewardCftcModeDraft,
+    stewardIntervalDraft,
+    stewardPolicySaving,
+    stewardSetConfig,
+  ]);
 
   const aiRoutingOptions = useMemo(() => {
     const map = new Map<string, string>();
@@ -1373,12 +1655,18 @@ export default function SettingsLogs() {
       </div>
 
       {/* Section Navigation */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 10, marginBottom: 24 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 10, marginBottom: 24 }}>
         <SectionTab
           icon="🤖"
           title="AI"
           active={activeSection === "ai"}
           onClick={() => setActiveSection("ai")}
+        />
+        <SectionTab
+          icon="🛡️"
+          title="Steward"
+          active={activeSection === "steward"}
+          onClick={() => setActiveSection("steward")}
         />
         <SectionTab
           icon="📋"
@@ -1397,6 +1685,12 @@ export default function SettingsLogs() {
           title="Market"
           active={activeSection === "market"}
           onClick={() => setActiveSection("market")}
+        />
+        <SectionTab
+          icon="🗺️"
+          title="GWMD"
+          active={activeSection === "gwmd"}
+          onClick={() => setActiveSection("gwmd")}
         />
         <SectionTab
           icon="💻"
@@ -1477,17 +1771,37 @@ export default function SettingsLogs() {
 
           <Card title="🤖 OpenClaw Agent">
             <div style={{ display: "grid", gap: 16 }}>
-              <div style={{ padding: 12, borderRadius: 10, border: "1px solid rgba(251,191,36,0.4)", background: "rgba(251,191,36,0.14)", color: "#fde68a", fontWeight: 700 }}>
-                🚧 Under Development
+              <div style={{ padding: 12, borderRadius: 10, border: openClawStatusStyle.border, background: openClawStatusStyle.background, color: openClawStatusStyle.color, fontWeight: 700 }}>
+                {openClawStatusStyle.label}
               </div>
 
               <div style={{ fontSize: 13, lineHeight: 1.6, opacity: 0.85 }}>
-                OpenClaw Agent is the upcoming autonomous AI steward for regulatory and disclosure data quality, recovery, and operational oversight.
-                Core monitoring hooks are active, with expanded autonomous controls rolling out in a future update.
+                OpenClaw Agent is the autonomous steward for regulatory and disclosure data quality, recovery, and operational oversight.
+                Connection is considered complete once backend steward availability, authentication, and health telemetry are all online.
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
+                <div style={{ border: "1px solid rgba(148,163,184,0.28)", borderRadius: 10, padding: 10, fontSize: 12 }}>
+                  {openClawReadiness.backendAvailable ? "✓" : "✗"} Backend steward service
+                </div>
+                <div style={{ border: "1px solid rgba(148,163,184,0.28)", borderRadius: 10, padding: 10, fontSize: 12 }}>
+                  {openClawReadiness.authenticated ? "✓" : "✗"} Authenticated user session
+                </div>
+                <div style={{ border: "1px solid rgba(148,163,184,0.28)", borderRadius: 10, padding: 10, fontSize: 12 }}>
+                  {openClawReadiness.hasHealthSignal ? "✓" : "✗"} Health telemetry available
+                </div>
               </div>
 
               <div style={{ display: "flex", flexWrap: "wrap", gap: 16, alignItems: "center" }}>
-                <div style={{ fontSize: 13, opacity: 0.8 }}>Last check: <b>{stewardOverview?.lastCheckAt ? fmtDate(stewardOverview.lastCheckAt) : "—"}</b></div>
+                <div style={{ fontSize: 13, opacity: 0.8 }}>
+                  Last check: <b>{stewardHealth?.generatedAt ? fmtDate(Date.parse(stewardHealth.generatedAt)) : stewardOverview?.lastCheckAt ? fmtDate(stewardOverview.lastCheckAt) : "—"}</b>
+                </div>
+                <div style={{ fontSize: 13, opacity: 0.9 }}>
+                  Health score: <b>{typeof stewardHealth?.overall?.score === "number" ? `${stewardHealth.overall.score}/100` : "—"}</b>
+                </div>
+                <div style={{ fontSize: 13, opacity: 0.9 }}>
+                  Open incidents: <b>{stewardHealth?.incidents?.totalOpen ?? 0}</b>
+                </div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                   {STEWARD_MODULE_ORDER.map((module) => {
                     const statusStyle = getModuleStatusStyle(module);
@@ -1512,6 +1826,40 @@ export default function SettingsLogs() {
                 </div>
               </div>
 
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+                <button
+                  onClick={() => {
+                    void handleConnectOpenClaw();
+                  }}
+                  disabled={stewardCheckBusy || stewardLoading}
+                  style={{
+                    border: "1px solid rgba(59,130,246,0.45)",
+                    background: stewardCheckBusy || stewardLoading ? "rgba(59,130,246,0.14)" : "rgba(59,130,246,0.22)",
+                    color: "#bfdbfe",
+                    borderRadius: 8,
+                    padding: "8px 12px",
+                    fontWeight: 700,
+                    cursor: stewardCheckBusy || stewardLoading ? "wait" : "pointer",
+                  }}
+                >
+                  {stewardCheckBusy || stewardLoading ? "Connecting..." : "Connect OpenClaw"}
+                </button>
+                <button
+                  onClick={() => setActiveSection("steward")}
+                  style={{
+                    border: "1px solid rgba(148,163,184,0.45)",
+                    background: "rgba(148,163,184,0.14)",
+                    color: "#e2e8f0",
+                    borderRadius: 8,
+                    padding: "8px 12px",
+                    fontWeight: 700,
+                    cursor: "pointer",
+                  }}
+                >
+                  Open Steward Controls
+                </button>
+              </div>
+
               {stewardError && (
                 <div style={{ padding: 12, borderRadius: 8, background: "rgba(248,113,113,0.15)", border: "1px solid rgba(248,113,113,0.4)", color: "#fecdd3" }}>
                   ⚠️ {stewardError}
@@ -1527,6 +1875,294 @@ export default function SettingsLogs() {
           <div style={{ fontSize: 12, opacity: 0.75, padding: "0 2px" }}>
             Research inputs, poll intervals, RSS feeds, SEC forms, and keywords now live in the <b>Research</b> tab.
           </div>
+        </div>
+      )}
+
+      {activeSection === "steward" && (
+        <div style={{ display: "grid", gap: 20 }}>
+          <Card title="🛡️ Terminal Steward Overview">
+            <div style={{ display: "grid", gap: 12 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
+                <div style={{ border: "1px solid rgba(148,163,184,0.28)", borderRadius: 10, padding: 12 }}>
+                  <div style={{ fontSize: 12, opacity: 0.72 }}>Health Score</div>
+                  <div style={{ fontSize: 24, fontWeight: 700 }}>
+                    {typeof stewardHealth?.overall?.score === "number" ? `${stewardHealth.overall.score}/100` : "—"}
+                  </div>
+                </div>
+                <div style={{ border: "1px solid rgba(148,163,184,0.28)", borderRadius: 10, padding: 12 }}>
+                  <div style={{ fontSize: 12, opacity: 0.72 }}>Overall State</div>
+                  <div style={{ fontSize: 18, fontWeight: 700, textTransform: "uppercase" }}>
+                    {stewardHealth?.overall?.state ?? "unknown"}
+                  </div>
+                </div>
+                <div style={{ border: "1px solid rgba(148,163,184,0.28)", borderRadius: 10, padding: 12 }}>
+                  <div style={{ fontSize: 12, opacity: 0.72 }}>Open Incidents</div>
+                  <div style={{ fontSize: 24, fontWeight: 700 }}>
+                    {stewardIncidentDigest?.summary?.totalOpenIncidents ?? stewardHealth?.incidents?.totalOpen ?? 0}
+                  </div>
+                </div>
+                <div style={{ border: "1px solid rgba(148,163,184,0.28)", borderRadius: 10, padding: 12 }}>
+                  <div style={{ fontSize: 12, opacity: 0.72 }}>Pending Tasks</div>
+                  <div style={{ fontSize: 24, fontWeight: 700 }}>{stewardHealth?.incidents?.pendingTasks ?? 0}</div>
+                </div>
+                <div style={{ border: "1px solid rgba(148,163,184,0.28)", borderRadius: 10, padding: 12 }}>
+                  <div style={{ fontSize: 12, opacity: 0.72 }}>Critical Open</div>
+                  <div style={{ fontSize: 24, fontWeight: 700 }}>
+                    {stewardIncidentDigest?.summary?.criticalOpenIncidents ?? 0}
+                  </div>
+                </div>
+                <div style={{ border: "1px solid rgba(148,163,184,0.28)", borderRadius: 10, padding: 12 }}>
+                  <div style={{ fontSize: 12, opacity: 0.72 }}>Last 24h</div>
+                  <div style={{ fontSize: 24, fontWeight: 700 }}>
+                    {stewardIncidentDigest?.summary?.incidentsLast24h ?? 0}
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                <div style={{ fontSize: 12, opacity: 0.75 }}>
+                  Last generated: <b>{stewardIncidentDigest?.generatedAt ? new Date(stewardIncidentDigest.generatedAt).toLocaleString() : stewardHealth?.generatedAt ? new Date(stewardHealth.generatedAt).toLocaleString() : "—"}</b>
+                </div>
+                <button
+                  onClick={() => {
+                    void handleRunStewardHealthCheck();
+                  }}
+                  disabled={stewardCheckBusy}
+                  style={{
+                    border: "1px solid rgba(34,197,94,0.5)",
+                    background: stewardCheckBusy ? "rgba(34,197,94,0.15)" : "rgba(34,197,94,0.2)",
+                    color: "#bbf7d0",
+                    borderRadius: 8,
+                    padding: "8px 12px",
+                    fontWeight: 700,
+                    cursor: stewardCheckBusy ? "wait" : "pointer",
+                  }}
+                >
+                  {stewardCheckBusy ? "Running check..." : "Run deterministic health check"}
+                </button>
+              </div>
+
+              <div style={{ border: "1px solid rgba(148,163,184,0.28)", borderRadius: 10, padding: 12, display: "grid", gap: 8 }}>
+                <div style={{ fontSize: 12, opacity: 0.72 }}>Recommendations</div>
+                {stewardIncidentDigest?.recommendations?.length ? (
+                  <div style={{ display: "grid", gap: 6 }}>
+                    {stewardIncidentDigest.recommendations.slice(0, 4).map((item, index) => (
+                      <div key={`${item}-${index}`} style={{ fontSize: 12, opacity: 0.84 }}>
+                        • {item}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ fontSize: 12, opacity: 0.68 }}>
+                    No recommendations generated yet.
+                  </div>
+                )}
+              </div>
+            </div>
+          </Card>
+
+          <Card title="🧩 Modules">
+            <div style={{ display: "grid", gap: 10 }}>
+              {stewardHealthModules.length === 0 && (
+                <div style={{ fontSize: 12, opacity: 0.75 }}>No module health data yet.</div>
+              )}
+              {stewardHealthModules.map((module) => (
+                <div
+                  key={module.module}
+                  style={{
+                    border: "1px solid rgba(148,163,184,0.28)",
+                    borderRadius: 10,
+                    padding: 12,
+                    display: "grid",
+                    gridTemplateColumns: "1.1fr 0.9fr 2fr",
+                    gap: 10,
+                    alignItems: "center",
+                  }}
+                >
+                  <div>
+                    <div style={{ fontWeight: 700, textTransform: "uppercase" }}>{module.module}</div>
+                    <div style={{ fontSize: 12, opacity: 0.7 }}>Owner: {module.owner}</div>
+                  </div>
+                  <div style={{ fontSize: 12, textTransform: "uppercase", fontWeight: 700 }}>
+                    {module.state} / {module.severity}
+                  </div>
+                  <div style={{ fontSize: 12, opacity: 0.78 }}>
+                    {module.probableCause ?? "No probable cause attached"}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Card>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
+            <Card title="🚨 Incidents">
+              <div style={{ display: "grid", gap: 10 }}>
+                {recentStewardFindings.length === 0 && (
+                  <div style={{ fontSize: 12, opacity: 0.75 }}>No active findings.</div>
+                )}
+                {recentStewardFindings.map((finding) => (
+                  <div key={finding.id} style={{ border: "1px solid rgba(148,163,184,0.28)", borderRadius: 10, padding: 10 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                      <div style={{ fontWeight: 700 }}>{finding.title}</div>
+                      <div style={{ fontSize: 11, textTransform: "uppercase", opacity: 0.8 }}>{finding.severity}</div>
+                    </div>
+                    <div style={{ marginTop: 4, fontSize: 12, opacity: 0.78 }}>{finding.detail}</div>
+                    <div style={{ marginTop: 6, fontSize: 11, opacity: 0.68 }}>
+                      {finding.module.toUpperCase()} • {new Date(finding.detectedAt).toLocaleString()}
+                    </div>
+                    <div style={{ marginTop: 8 }}>
+                      <button
+                        onClick={() => {
+                          void stewardDismissFinding(finding.id);
+                        }}
+                        style={{
+                          border: "1px solid rgba(148,163,184,0.5)",
+                          background: "rgba(148,163,184,0.12)",
+                          color: "#e2e8f0",
+                          borderRadius: 6,
+                          padding: "4px 8px",
+                          fontSize: 11,
+                          cursor: "pointer",
+                        }}
+                      >
+                        Dismiss
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </Card>
+
+            <Card title="🛠️ Tasks">
+              <div style={{ display: "grid", gap: 10 }}>
+                {recentStewardTasks.length === 0 && (
+                  <div style={{ fontSize: 12, opacity: 0.75 }}>No active tasks.</div>
+                )}
+                {recentStewardTasks.map((task) => (
+                  <div key={task.id} style={{ border: "1px solid rgba(148,163,184,0.28)", borderRadius: 10, padding: 10 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                      <div style={{ fontWeight: 700 }}>{task.title}</div>
+                      <div style={{ fontSize: 11, textTransform: "uppercase", opacity: 0.8 }}>{task.status}</div>
+                    </div>
+                    <div style={{ marginTop: 4, fontSize: 12, opacity: 0.78 }}>{task.summary}</div>
+                    <div style={{ marginTop: 6, fontSize: 11, opacity: 0.68 }}>
+                      {task.module.toUpperCase()} • {new Date(task.updatedAt).toLocaleString()}
+                    </div>
+                    {task.status === "pending" && (
+                      <div style={{ marginTop: 8 }}>
+                        <button
+                          onClick={() => {
+                            void stewardApplyTask(task.id);
+                          }}
+                          style={{
+                            border: "1px solid rgba(59,130,246,0.45)",
+                            background: "rgba(59,130,246,0.2)",
+                            color: "#bfdbfe",
+                            borderRadius: 6,
+                            padding: "4px 8px",
+                            fontSize: 11,
+                            cursor: "pointer",
+                          }}
+                        >
+                          Apply task
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </Card>
+          </div>
+
+          <Card title="⚙️ Runtime and Policy">
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
+              <div style={{ border: "1px solid rgba(148,163,184,0.28)", borderRadius: 10, padding: 12 }}>
+                <div style={{ fontSize: 12, opacity: 0.72 }}>Queue Depth</div>
+                <div style={{ fontSize: 22, fontWeight: 700 }}>{stewardHealth?.runtime?.queueDepth ?? 0}</div>
+              </div>
+              <div style={{ border: "1px solid rgba(148,163,184,0.28)", borderRadius: 10, padding: 12 }}>
+                <div style={{ fontSize: 12, opacity: 0.72 }}>Queue Running</div>
+                <div style={{ fontSize: 22, fontWeight: 700 }}>{stewardHealth?.runtime?.queueRunning ?? 0}</div>
+              </div>
+              <div style={{ border: "1px solid rgba(148,163,184,0.28)", borderRadius: 10, padding: 12 }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={stewardAutoFixDraft}
+                    onChange={(e) => setStewardAutoFixDraft(e.target.checked)}
+                  />
+                  <span style={{ fontSize: 13, fontWeight: 700 }}>Auto-apply Category 1 safe actions</span>
+                </label>
+                <div style={{ marginTop: 6, fontSize: 11, opacity: 0.68 }}>
+                  Retries, bounded re-checks, and stale-state corrections only.
+                </div>
+              </div>
+              <div style={{ border: "1px solid rgba(148,163,184,0.28)", borderRadius: 10, padding: 12 }}>
+                <div style={{ fontSize: 12, opacity: 0.72 }}>Check Interval</div>
+                <input
+                  type="number"
+                  min={5}
+                  max={1440}
+                  value={stewardIntervalDraft}
+                  onChange={(e) => setStewardIntervalDraft(Math.max(5, Number(e.target.value) || 5))}
+                  style={{ marginTop: 6, width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid rgba(148,163,184,0.4)", background: "rgba(15,23,42,0.9)", color: "inherit" }}
+                />
+              </div>
+              <div style={{ border: "1px solid rgba(148,163,184,0.28)", borderRadius: 10, padding: 12 }}>
+                <div style={{ fontSize: 12, opacity: 0.72 }}>CFTC Mode</div>
+                <select
+                  value={stewardCftcModeDraft}
+                  onChange={(e) => setStewardCftcModeDraft(e.target.value as "off" | "suggest" | "auto")}
+                  style={{ marginTop: 6, width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid rgba(148,163,184,0.4)", background: "rgba(15,23,42,0.9)", color: "inherit" }}
+                >
+                  <option value="off">Off</option>
+                  <option value="suggest">Suggest</option>
+                  <option value="auto">Auto</option>
+                </select>
+              </div>
+              <div style={{ border: "1px solid rgba(148,163,184,0.28)", borderRadius: 10, padding: 12 }}>
+                <div style={{ fontSize: 12, opacity: 0.72 }}>Congress Mode</div>
+                <select
+                  value={stewardCongressModeDraft}
+                  onChange={(e) => setStewardCongressModeDraft(e.target.value as "off" | "suggest" | "auto")}
+                  style={{ marginTop: 6, width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid rgba(148,163,184,0.4)", background: "rgba(15,23,42,0.9)", color: "inherit" }}
+                >
+                  <option value="off">Off</option>
+                  <option value="suggest">Suggest</option>
+                  <option value="auto">Auto</option>
+                </select>
+              </div>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, gap: 10, flexWrap: "wrap" }}>
+              <div style={{ fontSize: 11, opacity: 0.68 }}>
+                Category 2/3 actions remain approval-gated and are not auto-applied.
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                {stewardPolicyStatus && (
+                  <span style={{ fontSize: 12, color: stewardPolicyStatus.includes("failed") ? "#fecaca" : "#bbf7d0" }}>
+                    {stewardPolicyStatus}
+                  </span>
+                )}
+                <button
+                  onClick={() => {
+                    void handleSaveStewardPolicy();
+                  }}
+                  disabled={stewardPolicySaving}
+                  style={{
+                    border: "1px solid rgba(59,130,246,0.45)",
+                    background: stewardPolicySaving ? "rgba(59,130,246,0.15)" : "rgba(59,130,246,0.2)",
+                    color: "#bfdbfe",
+                    borderRadius: 8,
+                    padding: "8px 12px",
+                    fontWeight: 700,
+                    cursor: stewardPolicySaving ? "wait" : "pointer",
+                  }}
+                >
+                  {stewardPolicySaving ? "Saving..." : "Save policy"}
+                </button>
+              </div>
+            </div>
+          </Card>
         </div>
       )}
 
@@ -2328,6 +2964,135 @@ export default function SettingsLogs() {
         </div>
       )}
 
+      {activeSection === "gwmd" && (
+        <div style={{ display: "grid", gap: 20 }}>
+          <Card title="🗺️ GWMD Search Defaults">
+            <div style={{ display: "grid", gap: 14 }}>
+              <div style={{ fontSize: 13, opacity: 0.8, lineHeight: 1.6 }}>
+                These defaults are used by GWMD map searches and filtering. Choose whether searches should use local cache, fresh AI generation, or a hybrid refresh path.
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
+                <label style={{ display: "grid", gap: 6 }}>
+                  <span style={{ fontSize: 12, opacity: 0.75 }}>Default Hops</span>
+                  <select
+                    value={gwmdSettingsDraft.defaultHops}
+                    onChange={(e) => {
+                      setGwmdSettingsDraft((prev) => ({
+                        ...prev,
+                        defaultHops: Math.max(1, Math.min(3, Number(e.target.value))),
+                      }));
+                    }}
+                    style={{ padding: "10px 12px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.2)" }}
+                  >
+                    <option value={1}>1 hop</option>
+                    <option value={2}>2 hops</option>
+                    <option value={3}>3 hops</option>
+                  </select>
+                </label>
+
+                <label style={{ display: "grid", gap: 6 }}>
+                  <span style={{ fontSize: 12, opacity: 0.75 }}>Default Source Mode</span>
+                  <select
+                    value={gwmdSettingsDraft.sourceMode}
+                    onChange={(e) => {
+                      const value = e.target.value as GwmdSourceMode;
+                      setGwmdSettingsDraft((prev) => ({ ...prev, sourceMode: value }));
+                    }}
+                    style={{ padding: "10px 12px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.2)" }}
+                  >
+                    <option value="hybrid">Hybrid</option>
+                    <option value="fresh">Fresh AI</option>
+                    <option value="cache_only">Cache only</option>
+                  </select>
+                </label>
+
+                <label style={{ display: "grid", gap: 6 }}>
+                  <span style={{ fontSize: 12, opacity: 0.75 }}>Default Region</span>
+                  <select
+                    value={gwmdSettingsDraft.defaultRegion}
+                    onChange={(e) => {
+                      setGwmdSettingsDraft((prev) => ({
+                        ...prev,
+                        defaultRegion: e.target.value,
+                      }));
+                    }}
+                    style={{ padding: "10px 12px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.2)" }}
+                  >
+                    {"All,Americas,Europe,APAC,MEA,Other".split(",").map((region) => (
+                      <option key={region} value={region}>{region}</option>
+                    ))}
+                  </select>
+                </label>
+
+                <label style={{ display: "grid", gap: 6 }}>
+                  <span style={{ fontSize: 12, opacity: 0.75 }}>Default Relation</span>
+                  <select
+                    value={gwmdSettingsDraft.defaultRelation}
+                    onChange={(e) => {
+                      setGwmdSettingsDraft((prev) => ({
+                        ...prev,
+                        defaultRelation: e.target.value,
+                      }));
+                    }}
+                    style={{ padding: "10px 12px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.2)" }}
+                  >
+                    {["all", "supplier", "customer", "partner", "competitor", "financing", "license"].map((relation) => (
+                      <option key={relation} value={relation}>{relation}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
+              <div style={{ display: "grid", gap: 8 }}>
+                <label style={{ display: "grid", gap: 6 }}>
+                  <span style={{ fontSize: 12, opacity: 0.75 }}>
+                    Minimum Confidence: {Math.round(gwmdSettingsDraft.minConfidence * 100)}%
+                  </span>
+                  <input
+                    type="range"
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    value={gwmdSettingsDraft.minConfidence}
+                    onChange={(e) => {
+                      setGwmdSettingsDraft((prev) => ({
+                        ...prev,
+                        minConfidence: Number(e.target.value),
+                      }));
+                    }}
+                  />
+                </label>
+
+                <label style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <input
+                    type="checkbox"
+                    checked={gwmdSettingsDraft.showUnresolved}
+                    onChange={(e) => {
+                      setGwmdSettingsDraft((prev) => ({
+                        ...prev,
+                        showUnresolved: e.target.checked,
+                      }));
+                    }}
+                  />
+                  <span style={{ fontSize: 13 }}>Show unresolved node hints and unlocated warnings</span>
+                </label>
+              </div>
+
+              <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                <button onClick={saveGwmdSettings} style={{ padding: "8px 14px" }}>
+                  💾 Save GWMD Defaults
+                </button>
+                <button onClick={resetGwmdSettings} style={{ padding: "8px 14px" }}>
+                  Reset Defaults
+                </button>
+                {gwmdSettingsStatus && <span style={{ fontSize: 12, opacity: 0.85 }}>{gwmdSettingsStatus}</span>}
+              </div>
+            </div>
+          </Card>
+        </div>
+      )}
+
       {/* System Section */}
       {activeSection === "system" && (
         <div style={{ display: "grid", gap: 20 }}>
@@ -2456,6 +3221,13 @@ export default function SettingsLogs() {
                   {tedConfigSaving ? "Saving..." : "💾 Save TED Config"}
                 </button>
                 <button
+                  onClick={testTedApi}
+                  disabled={tedApiTesting}
+                  style={{ padding: "8px 14px" }}
+                >
+                  {tedApiTesting ? "Testing..." : "🧪 Test TED API"}
+                </button>
+                <button
                   onClick={async () => {
                     try {
                       await apiHubApi?.openWindow?.();
@@ -2471,6 +3243,23 @@ export default function SettingsLogs() {
                   Missing or broken TED config now produces an error instead of fallback data.
                 </span>
               </div>
+
+              {tedApiTestResult && (
+                <div
+                  style={{
+                    fontSize: 12,
+                    padding: "8px 12px",
+                    borderRadius: 8,
+                    background: tedApiTestResult.ok
+                      ? "rgba(34,197,94,0.1)"
+                      : "rgba(248,113,113,0.1)",
+                    border: `1px solid ${tedApiTestResult.ok ? "rgba(34,197,94,0.3)" : "rgba(248,113,113,0.3)"}`,
+                    color: tedApiTestResult.ok ? "#86efac" : "#fca5a5",
+                  }}
+                >
+                  {tedApiTestResult.message}
+                </div>
+              )}
 
               {tedConfigStatus ? (
                 <div style={{ fontSize: 12, opacity: 0.95 }}>{tedConfigStatus}</div>

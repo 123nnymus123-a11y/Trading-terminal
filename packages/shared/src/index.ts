@@ -13,9 +13,12 @@ export * from "./economicCalendar.js";
 export * from "./economicCalendarAdapters.js";
 export * from "./economicCalendarService.js";
 export * from "./strategy.js";
+export * from "./strategyResearch.js";
 export * from "./auth.js";
 export * from "./graphMemory.js";
 export * from "./tedIntel.js";
+export * from "./procurementIntel.js";
+export * from "./edgarIntel.js";
 export * from "./exposureBrief.js";
 
 // Import both and export with clear names to avoid collisions

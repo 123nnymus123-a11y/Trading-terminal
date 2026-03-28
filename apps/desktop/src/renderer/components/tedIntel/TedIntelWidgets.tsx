@@ -112,28 +112,24 @@ function ErrorState({ error }: { error: string }) {
   );
 }
 
-function MockDataBanner({ snapshot }: { snapshot: TedIntelSnapshot }) {
-  if (snapshot.sourceMode !== "mock") {
-    return null;
-  }
-
+function LiveDataBanner() {
   return (
     <div
       style={{
         padding: "10px 12px",
         borderRadius: 10,
-        border: "1px solid rgba(251,191,36,0.45)",
-        background: "rgba(120,53,15,0.28)",
-        color: "#fde68a",
+        border: "1px solid rgba(74,222,128,0.35)",
+        background: "rgba(20,83,45,0.22)",
+        color: "#bbf7d0",
         fontSize: 12,
         lineHeight: 1.45,
       }}
     >
       <div style={{ fontWeight: 800, letterSpacing: 0.4, textTransform: "uppercase" }}>
-        Mock TED Data
+        Live TED Data
       </div>
       <div style={{ marginTop: 4 }}>
-        This panel is currently showing fallback demo procurement data, not a live TED feed.
+        TED intelligence requires a working live API configuration. No fallback mock data is used.
       </div>
     </div>
   );
@@ -160,29 +156,11 @@ function PanelHeader({ title, subtitle, badge, snapshot }: { title: string; subt
         <div style={{ fontSize: 12, opacity: 0.7, marginTop: 2 }}>{subtitle}</div>
         {snapshot && (
           <div style={{ fontSize: 11, opacity: 0.58, marginTop: 4 }}>
-            Source: {snapshot.sourceMode === "mock" ? "Mock fallback" : "Live feed"} • {snapshot.sourceLabel} • Data as of {formatTimestamp(snapshot.sourceUpdatedAt)} • Snapshot built {formatTimestamp(snapshot.generatedAt)}
+            Source: Live feed • {snapshot.sourceLabel} • Data as of {formatTimestamp(snapshot.sourceUpdatedAt)} • Snapshot built {formatTimestamp(snapshot.generatedAt)}
           </div>
         )}
       </div>
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-        {snapshot?.sourceMode === "mock" && (
-          <div
-            style={{
-              fontSize: 10,
-              fontWeight: 800,
-              padding: "3px 7px",
-              borderRadius: 999,
-              color: "#fde68a",
-              background: "rgba(120,53,15,0.38)",
-              border: "1px solid rgba(251,191,36,0.35)",
-              whiteSpace: "nowrap",
-              textTransform: "uppercase",
-              letterSpacing: 0.7,
-            }}
-          >
-            Mock
-          </div>
-        )}
         {badge && <div style={{ fontSize: 11, opacity: 0.6, whiteSpace: "nowrap" }}>{badge}</div>}
       </div>
     </div>
@@ -411,7 +389,7 @@ export function TedRadarPanel({ windowDays = "90d" }: { windowDays?: TedIntelTim
 
       {snapshot ? (
         <div style={{ display: "grid", gap: 16 }}>
-          <MockDataBanner snapshot={snapshot} />
+          <LiveDataBanner />
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(155px, 1fr))", gap: 10 }}>
             {snapshot.summaryCards.map((card) => <SummaryCard key={card.label} {...card} />)}
           </div>
@@ -483,7 +461,7 @@ export function TedDemandPulsePanel({ windowDays = "30d" }: { windowDays?: TedIn
 
       {snapshot ? (
         <div style={{ display: "grid", gap: 14 }}>
-          <MockDataBanner snapshot={snapshot} />
+          <LiveDataBanner />
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(155px, 1fr))", gap: 10 }}>
             {snapshot.summaryCards.slice(0, 3).map((card) => <SummaryCard key={card.label} {...card} />)}
           </div>
@@ -548,7 +526,7 @@ export function TedSignalRankerPanel({ windowDays = "90d" }: { windowDays?: TedI
 
       {snapshot ? (
         <div style={{ display: "grid", gap: 12 }}>
-          <MockDataBanner snapshot={snapshot} />
+          <LiveDataBanner />
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             {signalTypes.map((t) => (
               <button key={t} onClick={() => setFilterType(t)} style={{ fontSize: 10, padding: "3px 8px", borderRadius: 6, border: "1px solid rgba(255,255,255,0.15)", background: filterType === t ? "rgba(59,130,246,0.25)" : "rgba(255,255,255,0.04)", color: filterType === t ? "#93c5fd" : "#9ca3af", cursor: "pointer", textTransform: "uppercase", letterSpacing: 0.6 }}>
@@ -579,7 +557,7 @@ export function TedAIInsightPanel({ windowDays = "90d" }: { windowDays?: TedInte
 
       {snapshot ? (
         <div style={{ display: "grid", gap: 10 }}>
-          <MockDataBanner snapshot={snapshot} />
+          <LiveDataBanner />
           {snapshot.aiInsights.map((insight) => <AIInsightCard key={insight.id} insight={insight} />)}
           {snapshot.aiInsights.length === 0 && <div style={{ fontSize: 12, opacity: 0.6 }}>No AI insights generated for this window.</div>}
         </div>
@@ -601,7 +579,7 @@ export function TedSecondOrderPanel({ windowDays = "90d" }: { windowDays?: TedIn
 
       {snapshot ? (
         <div style={{ display: "grid", gap: 14 }}>
-          <MockDataBanner snapshot={snapshot} />
+          <LiveDataBanner />
           <div style={{ display: "grid", gap: 10 }}>
             {snapshot.secondOrder.map((item) => <SecondOrderCard key={item.id} item={item} />)}
             {snapshot.secondOrder.length === 0 && <div style={{ fontSize: 12, opacity: 0.6 }}>Insufficient data for second-order inference in this window.</div>}
@@ -634,7 +612,7 @@ export function TedEntityResolutionPanel({ windowDays = "90d" }: { windowDays?: 
 
       {snapshot ? (
         <div style={{ display: "grid", gap: 12 }}>
-          <MockDataBanner snapshot={snapshot} />
+          <LiveDataBanner />
           <div style={{ display: "flex", gap: 8 }}>
             {(["suppliers", "buyers"] as const).map((v) => (
               <button key={v} onClick={() => setView(v)} style={{ fontSize: 11, padding: "4px 12px", borderRadius: 7, border: "1px solid rgba(255,255,255,0.15)", background: view === v ? "rgba(59,130,246,0.25)" : "rgba(255,255,255,0.04)", color: view === v ? "#93c5fd" : "#9ca3af", cursor: "pointer", textTransform: "capitalize" }}>
@@ -703,7 +681,7 @@ export function TedDataVaultPanel({ windowDays = "90d" }: { windowDays?: TedInte
 
       {snapshot ? (
         <div style={{ display: "grid", gap: 14 }}>
-          <MockDataBanner snapshot={snapshot} />
+          <LiveDataBanner />
           <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 10 }}>
             {(["raw", "candidate", "validated", "production"] as const).map((zone) => (
               <div key={zone} style={{ ...cardStyle, borderTop: `3px solid ${zoneColor(zone)}`, textAlign: "center" }}>
@@ -755,7 +733,7 @@ export function TedSupplyChainOverlayPanel({ tickerOrName, windowDays = "90d" }:
 
       {snapshot ? (
         <div style={{ display: "grid", gap: 12 }}>
-          <MockDataBanner snapshot={snapshot} />
+          <LiveDataBanner />
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(255px,1fr))", gap: 10 }}>
             {overlays.map((overlay) => (
               <div key={overlay.ticker} style={cardStyle}>
@@ -805,7 +783,7 @@ export function TedMapOverlayPanel({ windowDays = "90d" }: { windowDays?: TedInt
 
       {snapshot ? (
         <div style={{ display: "grid", gap: 14 }}>
-          <MockDataBanner snapshot={snapshot} />
+          <LiveDataBanner />
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px,1fr))", gap: 10 }}>
             {snapshot.summaryCards.slice(0, 3).map((card) => <SummaryCard key={card.label} {...card} />)}
           </div>

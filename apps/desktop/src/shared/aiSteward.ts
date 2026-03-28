@@ -35,7 +35,11 @@ export interface AiStewardFinding {
   meta?: Record<string, unknown>;
 }
 
-export type AiStewardTaskStatus = "pending" | "running" | "completed" | "failed";
+export type AiStewardTaskStatus =
+  | "pending"
+  | "running"
+  | "completed"
+  | "failed";
 
 export interface AiStewardTask {
   id: string;
@@ -66,3 +70,71 @@ export interface AiStewardApplyResult {
   message: string;
   task?: AiStewardTask;
 }
+
+export type AiStewardHealthState =
+  | "ok"
+  | "degraded"
+  | "unavailable"
+  | "stale"
+  | "misconfigured";
+
+export type AiStewardHealthSeverity = "info" | "warning" | "high" | "critical";
+
+export interface AiStewardHealthModule {
+  module: string;
+  state: AiStewardHealthState;
+  severity: AiStewardHealthSeverity;
+  firstSeenAt?: string;
+  lastSeenAt?: string;
+  probableCause?: string;
+  attemptedRepairs: string[];
+  owner: "system" | "user" | "admin" | "unresolved";
+}
+
+export interface AiStewardHealthStatus {
+  generatedAt: string;
+  overall: {
+    state: AiStewardHealthState;
+    severity: AiStewardHealthSeverity;
+    score: number;
+  };
+  incidents: {
+    totalOpen: number;
+    bySeverity: {
+      info: number;
+      warning: number;
+      high: number;
+      critical: number;
+    };
+    pendingTasks: number;
+  };
+  runtime: {
+    queueDepth: number;
+    queueRunning: number;
+    migrationFlags: {
+      backendOnlyProcessing: boolean;
+      desktopLocalFallback: boolean;
+      webPrimaryRouting: boolean;
+    };
+  };
+  modules: AiStewardHealthModule[];
+}
+
+export type AiStewardIncidentDigest = {
+  generatedAt: string;
+  summary: {
+    totalOpenIncidents: number;
+    criticalOpenIncidents: number;
+    incidentsLast24h: number;
+  };
+  topIncidents: Array<{
+    id: string;
+    title: string;
+    severity: "low" | "medium" | "high" | "critical";
+    category: "category_1" | "category_2" | "category_3" | "category_4";
+    module: string;
+    detectedAt: string;
+    status: "open" | "in_progress" | "resolved" | "dismissed";
+  }>;
+  recommendations: string[];
+};

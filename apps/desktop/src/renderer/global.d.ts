@@ -2,6 +2,8 @@
   CalendarInsightRequest,
   CalendarInsightResponse,
   DisclosureEvent,
+  EdgarFlowIntelDigest,
+  EdgarFlowIntelPayload,
   SectorTheme,
   TedIntelSnapshot,
   TedIntelTimeWindow,
@@ -335,6 +337,16 @@ declare global {
           started?: number;
         }>;
       };
+      edgarIntel?: {
+        getFlowIntel?: (
+          windowDays?: number,
+          limit?: number,
+        ) => Promise<EdgarFlowIntelPayload>;
+        getFlowIntelDigest?: (
+          scopeId?: string,
+          limit?: number,
+        ) => Promise<EdgarFlowIntelDigest>;
+      };
       tedIntel?: {
         getSnapshot?: (
           windowDays?: TedIntelTimeWindow,
@@ -367,9 +379,127 @@ declare global {
         onStatus?: (handler: (status: any) => void) => () => void;
         onProgress?: (handler: (progress: any) => void) => () => void;
       };
+      strategyResearch?: {
+        loadLocalWorkspace?: () => Promise<{
+          strategies: Array<{
+            id: string;
+            name: string;
+            description?: string;
+            stage:
+              | "draft"
+              | "candidate"
+              | "validation"
+              | "production"
+              | "retired";
+            tags: string[];
+            createdAt: string;
+            updatedAt: string;
+          }>;
+          versions: Record<
+            string,
+            {
+              id: string;
+              strategyId: string;
+              version: string;
+              scriptLanguage: "javascript" | "typescript";
+              scriptSource: string;
+              scriptChecksum: string;
+              universe: string[];
+              assumptions: Record<string, unknown>;
+              createdAt: string;
+            }
+          >;
+          runs: Array<Record<string, unknown>>;
+          comparisonNotes: Array<{
+            id: string;
+            strategyId: string;
+            primaryRunId: string;
+            baselineRunId: string;
+            note: string;
+            createdAt: string;
+            updatedAt: string;
+          }>;
+        }>;
+        upsertLocalStrategy?: (strategy: {
+          id: string;
+          name: string;
+          description?: string;
+          stage:
+            | "draft"
+            | "candidate"
+            | "validation"
+            | "production"
+            | "retired";
+          tags: string[];
+          createdAt: string;
+          updatedAt: string;
+        }) => Promise<{ ok: boolean }>;
+        upsertLocalVersion?: (version: {
+          id: string;
+          strategyId: string;
+          version: string;
+          scriptLanguage: "javascript" | "typescript";
+          scriptSource: string;
+          scriptChecksum: string;
+          universe: string[];
+          assumptions: Record<string, unknown>;
+          createdAt: string;
+        }) => Promise<{ ok: boolean }>;
+        upsertLocalRun?: (run: {
+          runId: string;
+          strategyId: string;
+          strategyVersion: string;
+          status: "queued" | "running" | "completed" | "failed" | "cancelled";
+          executionMode: "desktop-local" | "backend";
+          requestedAt?: string;
+          startedAt?: string;
+          finishedAt?: string;
+          error?: string;
+          metrics?: Record<string, unknown>;
+          equityCurve?: Array<{ timestamp: string; value: number }>;
+          trades?: Array<Record<string, unknown>>;
+          historicalData?: Record<string, unknown>;
+          runMetadata?: Record<string, unknown>;
+          runLogs?: string[];
+        }) => Promise<{ ok: boolean }>;
+        upsertLocalComparisonNote?: (comparisonNote: {
+          id: string;
+          strategyId: string;
+          primaryRunId: string;
+          baselineRunId: string;
+          note: string;
+          createdAt: string;
+          updatedAt: string;
+        }) => Promise<{ ok: boolean }>;
+        downloadHistoricalData?: (symbols: string[]) => Promise<{
+          symbols: string[];
+          downloaded: number;
+          fromCache: number;
+          failed: string[];
+          cacheDir: string;
+          barsBySymbol: Record<string, unknown[]>;
+        }>;
+        runLocalBacktest?: (payload: {
+          runId: string;
+          strategyId: string;
+          strategyVersion: string;
+          scriptSource: string;
+          universe: string[];
+          assumptions?: Record<string, unknown>;
+        }) => Promise<any>;
+      };
       aiSteward?: {
         getOverview?: (authToken?: string) => Promise<any>;
         getConfig?: (authToken?: string) => Promise<any>;
+        getHealth?: (authToken?: string) => Promise<any>;
+        getIncidentDigest?: (authToken?: string) => Promise<any>;
+        getFindings?: (module?: string, authToken?: string) => Promise<any>;
+        getTasks?: (authToken?: string) => Promise<any>;
+        dismissFinding?: (
+          findingId: string,
+          authToken?: string,
+        ) => Promise<any>;
+        checkHealth?: (authToken?: string) => Promise<any>;
         setConfig?: (patch: any, authToken?: string) => Promise<any>;
         runModule?: (module: string, authToken?: string) => Promise<any>;
         applyTask?: (taskId: string, authToken?: string) => Promise<any>;
@@ -605,7 +735,12 @@ declare global {
       gwmdMap?: {
         search?: (
           ticker: string,
-          options: { model: unknown; hops?: number },
+          options?: {
+            model: unknown;
+            hops?: number;
+            refresh?: boolean;
+            sourceMode?: "cache_only" | "hybrid" | "fresh";
+          },
         ) => Promise<{
           success: boolean;
           status?: "ok" | "degraded_cache" | "parse_fail" | "error";

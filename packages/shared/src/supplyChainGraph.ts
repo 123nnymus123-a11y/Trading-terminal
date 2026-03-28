@@ -13,7 +13,7 @@ import type {
   SupplyChainGraphNode,
   SupplyChainRiskType,
   SupplyChainTier,
-} from "./supplyChain";
+} from "./supplyChain.js";
 
 interface CategoryRule {
   tier: SupplyChainTier;
@@ -21,12 +21,38 @@ interface CategoryRule {
   direction: "into" | "out";
 }
 
+const SUPPLIERS_RULE: CategoryRule = {
+  tier: "direct",
+  kind: "supplies",
+  direction: "into",
+};
+const MANUFACTURERS_RULE: CategoryRule = {
+  tier: "direct",
+  kind: "manufactures",
+  direction: "into",
+};
+const SERVICES_RULE: CategoryRule = {
+  tier: "direct",
+  kind: "supports",
+  direction: "out",
+};
+const TECHNOLOGY_RULE: CategoryRule = {
+  tier: "indirect",
+  kind: "licenses",
+  direction: "out",
+};
+const DISTRIBUTION_RULE: CategoryRule = {
+  tier: "direct",
+  kind: "distributes",
+  direction: "out",
+};
+
 const CATEGORY_RULES: Record<string, CategoryRule> = {
-  suppliers: { tier: "direct", kind: "supplies", direction: "into" },
-  manufacturers: { tier: "direct", kind: "manufactures", direction: "into" },
-  services: { tier: "direct", kind: "supports", direction: "out" },
-  technology: { tier: "indirect", kind: "licenses", direction: "out" },
-  distribution: { tier: "direct", kind: "distributes", direction: "out" },
+  suppliers: SUPPLIERS_RULE,
+  manufacturers: MANUFACTURERS_RULE,
+  services: SERVICES_RULE,
+  technology: TECHNOLOGY_RULE,
+  distribution: DISTRIBUTION_RULE,
 };
 
 const RISK_PRIORITY: Record<RiskSeverity, number> = {
@@ -37,22 +63,34 @@ const RISK_PRIORITY: Record<RiskSeverity, number> = {
 };
 
 function normalizeCategoryId(category: RelationCategory): string {
-  return (category.id || category.name || "category").trim().toLowerCase().replace(/\s+/g, "-");
+  return (category.id || category.name || "category")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "-");
 }
 
 function resolveCategoryRule(category: RelationCategory): CategoryRule {
   const normalized = normalizeCategoryId(category);
-  if (CATEGORY_RULES[normalized]) return CATEGORY_RULES[normalized];
+  const normalizedRule = CATEGORY_RULES[normalized];
+  if (normalizedRule) return normalizedRule;
   const name = (category.name || "").toLowerCase();
-  if (name.includes("supplier")) return CATEGORY_RULES.suppliers;
-  if (name.includes("manufact")) return CATEGORY_RULES.manufacturers;
-  if (name.includes("service")) return CATEGORY_RULES.services;
-  if (name.includes("tech")) return CATEGORY_RULES.technology;
-  if (name.includes("distribution") || name.includes("channel")) return CATEGORY_RULES.distribution;
+  if (name.includes("supplier")) return SUPPLIERS_RULE;
+  if (name.includes("manufact")) return MANUFACTURERS_RULE;
+  if (name.includes("service")) return SERVICES_RULE;
+  if (name.includes("tech")) return TECHNOLOGY_RULE;
+  if (name.includes("distribution") || name.includes("channel"))
+    return DISTRIBUTION_RULE;
   return { tier: "indirect", kind: "supports", direction: "out" };
 }
 
-function toGraphNode(node: CompanyNode, rule: CategoryRule): SupplyChainGraphNode {
+function riskPriority(severity: RiskSeverity): number {
+  return RISK_PRIORITY[severity] ?? 0;
+}
+
+function toGraphNode(
+  node: CompanyNode,
+  rule: CategoryRule,
+): SupplyChainGraphNode {
   return {
     id: node.id || node.name,
     label: node.name,
@@ -62,10 +100,12 @@ function toGraphNode(node: CompanyNode, rule: CategoryRule): SupplyChainGraphNod
     criticality: node.criticality,
     confidence: node.confidence,
     verified: node.verified,
-    healthScore: node.healthScore,
     status: "normal",
-    explanation: node.source,
-    metadata: node.metadata,
+    ...(node.source ? { explanation: node.source } : {}),
+    ...(typeof node.healthScore === "number"
+      ? { healthScore: node.healthScore }
+      : {}),
+    ...(node.metadata ? { metadata: node.metadata } : {}),
   };
 }
 
@@ -74,13 +114,14 @@ function toGraphEdge(
   targetId: string,
   node: CompanyNode,
   rule: CategoryRule,
-  categoryName: string
+  categoryName: string,
 ): SupplyChainGraphEdge {
   const from = rule.direction === "into" ? sourceId : targetId;
   const to = rule.direction === "into" ? targetId : sourceId;
-  const weight = typeof node.revenueImpact === "number" && node.revenueImpact > 0
-    ? node.revenueImpact
-    : node.criticality;
+  const weight =
+    typeof node.revenueImpact === "number" && node.revenueImpact > 0
+      ? node.revenueImpact
+      : node.criticality;
 
   return {
     id: `${from}->${to}-${rule.kind}`,
@@ -92,28 +133,49 @@ function toGraphEdge(
     confidence: node.confidence,
     status: "normal",
     explanation: `${categoryName}: ${node.role}`,
-    source: node.source,
+    ...(node.source ? { source: node.source } : {}),
   };
 }
 
 function classifyRiskType(text: string): SupplyChainRiskType {
   const value = text.toLowerCase();
-  if (value.includes("geo") || value.includes("taiwan") || value.includes("china") || value.includes("sanction")) {
+  if (
+    value.includes("geo") ||
+    value.includes("taiwan") ||
+    value.includes("china") ||
+    value.includes("sanction")
+  ) {
     return "geopolitical";
   }
   if (value.includes("regulat") || value.includes("compliance")) {
     return "regulatory";
   }
-  if (value.includes("capacity") || value.includes("shortage") || value.includes("bottleneck")) {
+  if (
+    value.includes("capacity") ||
+    value.includes("shortage") ||
+    value.includes("bottleneck")
+  ) {
     return "capacity";
   }
-  if (value.includes("single") || value.includes("sole") || value.includes("exclusive")) {
+  if (
+    value.includes("single") ||
+    value.includes("sole") ||
+    value.includes("exclusive")
+  ) {
     return "single-supplier";
   }
-  if (value.includes("logistics") || value.includes("port") || value.includes("shipping")) {
+  if (
+    value.includes("logistics") ||
+    value.includes("port") ||
+    value.includes("shipping")
+  ) {
     return "logistics";
   }
-  if (value.includes("cost") || value.includes("margin") || value.includes("financ")) {
+  if (
+    value.includes("cost") ||
+    value.includes("margin") ||
+    value.includes("financ")
+  ) {
     return "financial";
   }
   if (value.includes("cyber") || value.includes("security")) {
@@ -122,7 +184,9 @@ function classifyRiskType(text: string): SupplyChainRiskType {
   return "other";
 }
 
-export function buildCanonicalGraphFromMindMap(data: MindMapData): SupplyChainGraph {
+export function buildCanonicalGraphFromMindMap(
+  data: MindMapData,
+): SupplyChainGraph {
   const nodes = new Map<string, SupplyChainGraphNode>();
   const edges = new Map<string, SupplyChainGraphEdge>();
 
@@ -185,7 +249,7 @@ export function buildRiskLensFromMindMap(data: MindMapData): RiskLensCell[] {
           if (!existing.affectedNodes.includes(company.id || company.name)) {
             existing.affectedNodes.push(company.id || company.name);
           }
-          if (RISK_PRIORITY[nextSeverity] > RISK_PRIORITY[existing.severity]) {
+          if (riskPriority(nextSeverity) > riskPriority(existing.severity)) {
             existing.severity = nextSeverity;
             existing.explanation = risk.risk;
           }
@@ -194,7 +258,9 @@ export function buildRiskLensFromMindMap(data: MindMapData): RiskLensCell[] {
     }
   }
 
-  return Array.from(cells.values()).sort((a, b) => RISK_PRIORITY[b.severity] - RISK_PRIORITY[a.severity]);
+  return Array.from(cells.values()).sort(
+    (a, b) => riskPriority(b.severity) - riskPriority(a.severity),
+  );
 }
 
 export function ensureCanonicalStructures(data: MindMapData): MindMapData {

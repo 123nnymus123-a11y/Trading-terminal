@@ -1,6 +1,10 @@
 import { getDb } from "./db";
 import { z } from "zod";
-import { AiBriefSchema, AiConfigSchema, AiSourceItemSchema } from "../services/aiResearch/schemas";
+import {
+  AiBriefSchema,
+  AiConfigSchema,
+  AiSourceItemSchema,
+} from "../services/aiResearch/schemas";
 
 export type AiSourceItem = z.infer<typeof AiSourceItemSchema> & {
   canonicalHash: string;
@@ -12,35 +16,70 @@ export type AiConfig = z.infer<typeof AiConfigSchema>;
 export const AiResearchRepo = {
   getConfig(): AiConfig {
     const db = getDb();
-    const row = db.prepare("SELECT data FROM ai_config WHERE id = 1").get() as { data: string } | undefined;
+    const row = db.prepare("SELECT data FROM ai_config WHERE id = 1").get() as
+      | { data: string }
+      | undefined;
     const raw = row?.data ?? "{}";
     const parsed = AiConfigSchema.safeParse(JSON.parse(raw));
-    
+
     // Get global AI model from app settings
-    const settingsRow = db.prepare("SELECT data FROM app_settings WHERE id = 1").get() as { data: string } | undefined;
+    const settingsRow = db
+      .prepare("SELECT data FROM app_settings WHERE id = 1")
+      .get() as { data: string } | undefined;
     const settings = settingsRow ? JSON.parse(settingsRow.data) : {};
-    const globalAiModel = settings.globalAiModel;
-    
+    const primaryAiModel = settings?.primaryAiModel as
+      | { model?: unknown }
+      | undefined;
+    const selectedPrimaryModel =
+      typeof primaryAiModel?.model === "string"
+        ? primaryAiModel.model.trim()
+        : "";
+    const globalAiModel =
+      typeof settings.globalAiModel === "string"
+        ? settings.globalAiModel.trim()
+        : "";
+
     const baseConfig = parsed.success ? parsed.data : AiConfigSchema.parse({});
-    
+
     // Override model with global AI model if it exists
-    if (globalAiModel && typeof globalAiModel === 'string') {
+    if (selectedPrimaryModel) {
+      return { ...baseConfig, model: selectedPrimaryModel };
+    }
+
+    if (globalAiModel) {
       return { ...baseConfig, model: globalAiModel };
     }
-    
+
     return baseConfig;
   },
 
   setConfig(next: AiConfig): void {
     const db = getDb();
-    db.prepare("UPDATE ai_config SET data = ? WHERE id = 1").run(JSON.stringify(next));
-    
+    db.prepare("UPDATE ai_config SET data = ? WHERE id = 1").run(
+      JSON.stringify(next),
+    );
+
     // Also update global AI model in app settings
     if (next.model) {
-      const settingsRow = db.prepare("SELECT data FROM app_settings WHERE id = 1").get() as { data: string } | undefined;
+      const settingsRow = db
+        .prepare("SELECT data FROM app_settings WHERE id = 1")
+        .get() as { data: string } | undefined;
       const settings = settingsRow ? JSON.parse(settingsRow.data) : {};
       settings.globalAiModel = next.model;
-      db.prepare("INSERT OR REPLACE INTO app_settings (id, data) VALUES (1, ?)").run(JSON.stringify(settings));
+      const existingPrimary = settings.primaryAiModel as
+        | { provider?: unknown; model?: unknown }
+        | undefined;
+      settings.primaryAiModel = {
+        provider:
+          typeof existingPrimary?.provider === "string" &&
+          existingPrimary.provider.trim().length > 0
+            ? existingPrimary.provider
+            : "ollama",
+        model: next.model,
+      };
+      db.prepare(
+        "INSERT OR REPLACE INTO app_settings (id, data) VALUES (1, ?)",
+      ).run(JSON.stringify(settings));
     }
   },
 
@@ -66,7 +105,7 @@ export const AiResearchRepo = {
           JSON.stringify(item.tickers ?? []),
           item.ingestedAt,
           item.canonicalHash,
-          item.canonicalText
+          item.canonicalText,
         );
         if (info.changes > 0) inserted += 1;
       }
@@ -76,7 +115,10 @@ export const AiResearchRepo = {
     return insertMany(items);
   },
 
-  getRecentItems(sinceISO: string, limit = 500): Array<{
+  getRecentItems(
+    sinceISO: string,
+    limit = 500,
+  ): Array<{
     id: string;
     canonicalHash: string;
     canonicalText: string;
@@ -89,12 +131,20 @@ export const AiResearchRepo = {
          FROM ai_source_items
          WHERE published_at >= ?
          ORDER BY published_at DESC
-         LIMIT ?`
+         LIMIT ?`,
       )
-      .all(sinceISO, limit) as Array<{ id: string; canonicalHash: string; canonicalText: string; publishedAt: string }>;
+      .all(sinceISO, limit) as Array<{
+      id: string;
+      canonicalHash: string;
+      canonicalText: string;
+      publishedAt: string;
+    }>;
   },
 
-  getRecentClusterRepresentatives(sinceISO: string, limit = 200): Array<{
+  getRecentClusterRepresentatives(
+    sinceISO: string,
+    limit = 200,
+  ): Array<{
     clusterId: string;
     representativeItemId: string;
     canonicalText: string;
@@ -112,7 +162,7 @@ export const AiResearchRepo = {
          JOIN ai_source_items s ON s.id = c.representative_item_id
          WHERE c.updated_at >= ?
          ORDER BY c.updated_at DESC
-         LIMIT ?`
+         LIMIT ?`,
       )
       .all(sinceISO, limit) as Array<{
       clusterId: string;
@@ -124,7 +174,14 @@ export const AiResearchRepo = {
     }>;
   },
 
-  upsertClusters(clusters: Array<{ clusterId: string; representativeItemId: string; createdAt: string; updatedAt: string }>): number {
+  upsertClusters(
+    clusters: Array<{
+      clusterId: string;
+      representativeItemId: string;
+      createdAt: string;
+      updatedAt: string;
+    }>,
+  ): number {
     if (clusters.length === 0) return 0;
     const db = getDb();
     const stmt = db.prepare(`
@@ -138,7 +195,12 @@ export const AiResearchRepo = {
     const runMany = db.transaction((rows: typeof clusters) => {
       let count = 0;
       for (const row of rows) {
-        const info = stmt.run(row.clusterId, row.representativeItemId, row.createdAt, row.updatedAt);
+        const info = stmt.run(
+          row.clusterId,
+          row.representativeItemId,
+          row.createdAt,
+          row.updatedAt,
+        );
         count += info.changes;
       }
       return count;
@@ -155,14 +217,16 @@ export const AiResearchRepo = {
       VALUES (?, ?)
     `);
 
-    const runMany = db.transaction((rows: Array<{ clusterId: string; itemId: string }>) => {
-      let count = 0;
-      for (const row of rows) {
-        const info = stmt.run(row.clusterId, row.itemId);
-        count += info.changes;
-      }
-      return count;
-    });
+    const runMany = db.transaction(
+      (rows: Array<{ clusterId: string; itemId: string }>) => {
+        let count = 0;
+        for (const row of rows) {
+          const info = stmt.run(row.clusterId, row.itemId);
+          count += info.changes;
+        }
+        return count;
+      },
+    );
 
     return runMany(rows);
   },
@@ -193,7 +257,7 @@ export const AiResearchRepo = {
           b.confidence,
           JSON.stringify(b.sources ?? []),
           clusterId ?? null,
-          runId
+          runId,
         );
         count += info.changes;
       }
@@ -216,7 +280,7 @@ export const AiResearchRepo = {
                 sources
          FROM ai_briefs
          ORDER BY created_at DESC
-         LIMIT ?`
+         LIMIT ?`,
       )
       .all(limit) as Array<{
       id: string;
@@ -247,29 +311,57 @@ export const AiResearchRepo = {
 
   createRun(runId: string, startedAt: string): void {
     const db = getDb();
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO ai_runs (id, started_at, status)
       VALUES (?, ?, 'running')
-    `).run(runId, startedAt);
+    `,
+    ).run(runId, startedAt);
   },
 
-  finishRun(runId: string, status: "completed" | "failed", finishedAt: string, error?: string, stats?: Record<string, unknown>): void {
+  finishRun(
+    runId: string,
+    status: "completed" | "failed",
+    finishedAt: string,
+    error?: string,
+    stats?: Record<string, unknown>,
+  ): void {
     const db = getDb();
     db.prepare(
-      `UPDATE ai_runs SET finished_at = ?, status = ?, error = ?, stats = ? WHERE id = ?`
-    ).run(finishedAt, status, error ?? null, stats ? JSON.stringify(stats) : null, runId);
+      `UPDATE ai_runs SET finished_at = ?, status = ?, error = ?, stats = ? WHERE id = ?`,
+    ).run(
+      finishedAt,
+      status,
+      error ?? null,
+      stats ? JSON.stringify(stats) : null,
+      runId,
+    );
   },
 
-  getLastRun(): { id: string; startedAt: string; finishedAt?: string; status: string; error?: string } | null {
+  getLastRun(): {
+    id: string;
+    startedAt: string;
+    finishedAt?: string;
+    status: string;
+    error?: string;
+  } | null {
     const db = getDb();
     const row = db
       .prepare(
         `SELECT id, started_at as startedAt, finished_at as finishedAt, status, error
          FROM ai_runs
          ORDER BY started_at DESC
-         LIMIT 1`
+         LIMIT 1`,
       )
-      .get() as { id: string; startedAt: string; finishedAt?: string; status: string; error?: string } | undefined;
+      .get() as
+      | {
+          id: string;
+          startedAt: string;
+          finishedAt?: string;
+          status: string;
+          error?: string;
+        }
+      | undefined;
     return row ?? null;
   },
 };

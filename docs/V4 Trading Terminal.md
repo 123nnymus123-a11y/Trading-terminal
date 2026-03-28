@@ -1,5 +1,7 @@
 # V4 Trading Terminal — Detailed Status Document
 
+> Superseded by `docs/V4 Trading Terminal - Feature Status v2 (2026-03-22).md` for the latest feature-by-feature status.
+
 _Last updated: March 18, 2026_
 
 ---

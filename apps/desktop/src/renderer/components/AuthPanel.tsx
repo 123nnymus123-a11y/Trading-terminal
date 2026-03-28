@@ -102,6 +102,26 @@ export function AuthPanel({ onLogin, onSignup, onAuthenticated, initialError }: 
     setError(null);
     setBusy(true);
     try {
+      // DEV BYPASS: If license key is '007', skip auth and go straight to terminal
+      if (
+        loginLicenseKey.trim() === '007' &&
+        (import.meta.env?.MODE === 'development' || process.env.NODE_ENV !== 'production')
+      ) {
+        const mockSession = {
+          token: 'dev-bypass-token',
+          refreshToken: 'dev-bypass-refresh',
+          expiresAtMs: Date.now() + 1000 * 60 * 60 * 24,
+          user: {
+            id: 'dev-bypass-user',
+            email: loginIdentifier || 'dev@bypass.local',
+            username: loginIdentifier || 'devuser',
+            tier: 'starter',
+            licenseKey: '007',
+          },
+        };
+        onAuthenticated(mockSession);
+        return;
+      }
       const identifier = loginIdentifier.trim();
       const payload: LoginPayload = {
         password: loginPassword,

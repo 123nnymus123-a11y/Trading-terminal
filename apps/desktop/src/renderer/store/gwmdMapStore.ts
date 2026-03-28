@@ -47,6 +47,7 @@ export interface GwmdCompany {
 }
 
 type GwmdRunStatus = "idle" | "ok" | "degraded_cache" | "parse_fail" | "error";
+export type GwmdSourceMode = "cache_only" | "hybrid" | "fresh";
 
 type GwmdRawCompany = {
   ticker: string;
@@ -721,6 +722,9 @@ export interface GwmdMapState {
     showFlows: boolean;
     showOnlyImpacted: boolean;
     hops: number;
+    minConfidence: number;
+    showUnresolved: boolean;
+    sourceMode: GwmdSourceMode;
   };
   syncState: {
     busy: boolean;
@@ -755,6 +759,9 @@ export interface GwmdMapState {
     showFlows: boolean;
     showOnlyImpacted: boolean;
     hops: number;
+    minConfidence: number;
+    showUnresolved: boolean;
+    sourceMode: GwmdSourceMode;
   }) => void;
   pushToCloud: (replace?: boolean) => Promise<void>;
   pullFromCloud: (options?: {
@@ -766,7 +773,11 @@ export interface GwmdMapState {
   // Complex actions
   search: (
     ticker: string,
-    options: { model: GwmdAiModelSelection; hops?: number },
+    options: {
+      model: GwmdAiModelSelection;
+      hops?: number;
+      sourceMode?: GwmdSourceMode;
+    },
   ) => Promise<void>;
   reset: () => void;
   clearPersisted: () => Promise<void>;
@@ -797,6 +808,9 @@ export const useGwmdMapStore = create<GwmdMapState>((set, get) => ({
     showFlows: true,
     showOnlyImpacted: false,
     hops: 2,
+    minConfidence: 0,
+    showUnresolved: true,
+    sourceMode: "hybrid",
   },
   syncState: {
     busy: false,
@@ -1193,7 +1207,11 @@ export const useGwmdMapStore = create<GwmdMapState>((set, get) => ({
 
   search: async (
     ticker: string,
-    options: { model: GwmdAiModelSelection; hops?: number },
+    options: {
+      model: GwmdAiModelSelection;
+      hops?: number;
+      sourceMode?: GwmdSourceMode;
+    },
   ) => {
     const { setSearchTicker, setLoading, setError, addCompanies, addEdges } =
       get();
@@ -1204,6 +1222,9 @@ export const useGwmdMapStore = create<GwmdMapState>((set, get) => ({
         1,
         Math.min(3, Math.floor(options.hops ?? get().gwmdFilters.hops ?? 2)),
       );
+      const sourceMode =
+        options.sourceMode ?? get().gwmdFilters.sourceMode ?? "hybrid";
+      const refresh = sourceMode === "fresh";
       setSearchTicker(normalizedTicker);
       setError(null);
       set({
@@ -1218,7 +1239,7 @@ export const useGwmdMapStore = create<GwmdMapState>((set, get) => ({
 
       const loadScoped = window.cockpit?.gwmdMap?.loadScoped;
       let hydratedFromCache = false;
-      if (loadScoped) {
+      if (loadScoped && sourceMode !== "fresh") {
         try {
           const scopedResult = (await loadScoped(
             normalizedTicker,
@@ -1263,6 +1284,7 @@ export const useGwmdMapStore = create<GwmdMapState>((set, get) => ({
                 degraded: false,
                 refreshing: true,
                 requestedHops,
+                sourceMode,
               },
               showEmpty: false,
               searchTrace: {
@@ -1285,7 +1307,7 @@ export const useGwmdMapStore = create<GwmdMapState>((set, get) => ({
       const hasAnyCachedGraph =
         (preState.graph?.nodes.length ?? 0) > 0 ||
         preState.companies.length > 0;
-      if (!hasAnyCachedGraph) {
+      if (!hasAnyCachedGraph && sourceMode !== "fresh") {
         await get().loadFromDb();
       }
 
@@ -1299,7 +1321,7 @@ export const useGwmdMapStore = create<GwmdMapState>((set, get) => ({
         ) ??
           false);
 
-      if (hasScopedCache) {
+      if (hasScopedCache && sourceMode !== "fresh") {
         set({
           runStatus: "ok",
           runMeta: {
@@ -1312,6 +1334,7 @@ export const useGwmdMapStore = create<GwmdMapState>((set, get) => ({
                 typeof company.hqLon !== "number",
             ).length,
             requestedHops,
+            sourceMode,
           },
           showEmpty: false,
           searchTrace: {
@@ -1323,6 +1346,32 @@ export const useGwmdMapStore = create<GwmdMapState>((set, get) => ({
           },
         });
         hydratedFromCache = true;
+      }
+
+      if (sourceMode === "cache_only") {
+        const hasCache = hasScopedCache || hydratedFromCache;
+        set({
+          runStatus: hasCache ? "ok" : "error",
+          runMeta: {
+            source: hasCache ? "cache_local" : "cache_miss",
+            degraded: false,
+            requestedHops,
+            sourceMode,
+          },
+          searchTrace: {
+            ticker: normalizedTicker,
+            phase: hasCache ? "success" : "error",
+            source: "cache",
+            message: hasCache
+              ? "Loaded local cache only"
+              : "No cached data for ticker",
+            updatedAt: Date.now(),
+          },
+        });
+        if (!hasCache) {
+          setError(`No cached GWMD graph found for ${normalizedTicker}`);
+        }
+        return;
       }
 
       setLoading(true);
@@ -1397,6 +1446,7 @@ export const useGwmdMapStore = create<GwmdMapState>((set, get) => ({
               primaryRelationshipCount: data.edges.length,
               hop2SeedCount: 0,
               requestedHops,
+              sourceMode,
               expandedTickerCount: 0,
             },
           };
@@ -1415,6 +1465,8 @@ export const useGwmdMapStore = create<GwmdMapState>((set, get) => ({
           result = (await gwmdSearch(normalizedTicker, {
             model: options.model,
             hops: requestedHops,
+            refresh,
+            sourceMode,
           })) as GwmdSearchResult;
           set({
             searchTrace: {
@@ -1463,7 +1515,7 @@ export const useGwmdMapStore = create<GwmdMapState>((set, get) => ({
             includeHypothesis: false,
             hops: requestedHops,
             minEdgeWeight: 0,
-            refresh: false,
+            refresh,
           });
 
           if (localRes?.success && localRes.data) {

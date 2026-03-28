@@ -1,6 +1,10 @@
 ﻿import { z } from "zod";
-import { IndicatorUpdateSchema } from "./indicators";
-import { AlphaSignalSchema, CapitalMomentumSignalSchema, RegimeUpdateSchema } from "./strategy";
+import { IndicatorUpdateSchema } from "./indicators.js";
+import {
+  AlphaSignalSchema,
+  CapitalMomentumSignalSchema,
+  RegimeUpdateSchema,
+} from "./strategy.js";
 
 export const eventSourceSchema = z.enum(["demo", "replay", "live"]);
 export type EventSource = z.infer<typeof eventSourceSchema>;

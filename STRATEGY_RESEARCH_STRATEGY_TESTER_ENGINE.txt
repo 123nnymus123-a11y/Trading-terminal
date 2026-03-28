@@ -1,0 +1,92 @@
+================================================================================
+STRATEGY RESEARCH / STRATEGY TESTER ENGINE - STATUS NOTE
+================================================================================
+Date: March 27, 2026
+Scope: Backend engine + desktop local tester + hybrid orchestration
+
+================================================================================
+PURPOSE
+================================================================================
+This document tracks the implementation state of the Strategy Research and
+Strategy Tester Engine stack across:
+- Backend queue-backed backtesting
+- Desktop local testing fallback
+- Governance and bridge readiness for paper/live expansion
+
+================================================================================
+CURRENT ENGINE ARCHITECTURE
+================================================================================
+1. Backend Strategy Engine
+- Core service: apps/backend/src/services/backtesting/backtestingService.ts
+- Worker: apps/backend/src/services/backtesting/backtestWorker.ts
+- Queue: durable queue namespace tcq:backtest (concurrency and retry controls)
+- Persistence: strategy definitions, versions, runs, metadata, governance entities
+
+2. Desktop Local Tester Engine
+- Local persistence repo: apps/desktop/src/main/persistence/strategyResearchRepo.ts
+- Local run orchestration and UI store:
+  apps/desktop/src/renderer/store/strategyResearchStore.ts
+- Script model: onBar(ctx) contract in sandboxed execution flow
+- Data model: local historical cache and run artifact capture
+
+3. Hybrid Runtime Model
+- Cloud-first operation when backend/auth is available
+- Automatic desktop-local fallback for continuity
+- Shared UI normalization for cloud and local run payloads
+
+================================================================================
+SERVER-SIDE STRATEGY TESTER CAPABILITIES
+================================================================================
+Implemented:
+- Strategy CRUD and version lifecycle
+- Run enqueue, status tracking, run listing, detail retrieval
+- Dataset snapshot lookup and run-scoped metadata storage
+- Pre-run diagnostics prior to enqueue (hard-gate behavior)
+- Run analytics comparison support and experiment upsert/retrieval
+- Connector/governance/acceptance-pack baseline CRUD
+- Governance readiness endpoint for execution bridge prerequisites
+
+Validation and gating behavior:
+- backend mode: fully supported queue-backed path
+- paper mode: accepted by contracts, gated on configured connectors
+- live mode: accepted by contracts, gated on connectors + default governance
+
+================================================================================
+DESKTOP LOCAL STRATEGY TESTER CAPABILITIES
+================================================================================
+Implemented:
+- Local strategy/version/run persistence in SQLite tables
+- Local run preflight checks for script/universe/assumption sanity
+- Local historical data download/caching workflow
+- Local run history + details (metrics, equity curve, trades)
+- Local comparison notes persisted for run-vs-run analysis
+
+Known constraints:
+- Daily EOD style historical data source focus
+- Script contract centered on onBar(ctx)
+- Full parity testing versus backend execution still in progress
+
+================================================================================
+RUN METADATA / REPRODUCIBILITY STATE
+================================================================================
+Run metadata foundation is active and captures:
+- assumptions hash
+- strategy checksum/hash linkage
+- dataset checksum/hash linkage
+- engine/provenance metadata
+
+This enables stronger auditability, reproducibility, and future acceptance-pack
+workflow enforcement.
+
+================================================================================
+NEAR-TERM ENGINE PRIORITIES
+================================================================================
+1. Complete local/backend preflight parity and diagnostics harmonization.
+2. Expand artifact bundle capture (config, inputs, outputs, diagnostics).
+3. Harden bridge controls for paper/live promotion and execution safeguards.
+4. Increase parity test coverage for fills, timing, costs, and metrics drift.
+5. Add richer research analytics and experiment-diff tooling in UI.
+
+================================================================================
+END OF DOCUMENT
+================================================================================

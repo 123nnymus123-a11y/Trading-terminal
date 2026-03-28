@@ -361,8 +361,20 @@ function GwmdWorldMap({
     showFlows: boolean;
     showOnlyImpacted: boolean;
     hops?: number;
+    minConfidence?: number;
+    showUnresolved?: boolean;
+    sourceMode?: "cache_only" | "hybrid" | "fresh";
   };
-  onFiltersChange: (next: { region: string; relation: string; showFlows: boolean; showOnlyImpacted: boolean; hops?: number }) => void;
+  onFiltersChange: (next: {
+    region: string;
+    relation: string;
+    showFlows: boolean;
+    showOnlyImpacted: boolean;
+    hops?: number;
+    minConfidence?: number;
+    showUnresolved?: boolean;
+    sourceMode?: "cache_only" | "hybrid" | "fresh";
+  }) => void;
   onSelectNode: (nodeId: string | null) => void;
   onSelectEdge: (edgeId: string | null) => void;
   layoutVersion?: string | number;
@@ -728,6 +740,7 @@ function GwmdWorldMap({
         return false;
       }
       if (filters.relation !== "all" && edge.kind !== filters.relation) return false;
+      if ((edge.confidence ?? 0) < (filters.minConfidence ?? 0)) return false;
       if (filters.showOnlyImpacted && !impactedEdgeIdSet.has(edge.id)) return false;
       const from = nodeIndex.get(edge.from);
       const to = nodeIndex.get(edge.to);
@@ -784,7 +797,16 @@ function GwmdWorldMap({
     }
 
     return ranked.slice(0, 900);
-  }, [graph.edges, visibleNodeIdsByHop, filters.relation, filters.region, filters.showOnlyImpacted, nodeIndex, impactedEdgeIdSet]);
+  }, [
+    graph.edges,
+    visibleNodeIdsByHop,
+    filters.relation,
+    filters.region,
+    filters.showOnlyImpacted,
+    filters.minConfidence,
+    nodeIndex,
+    impactedEdgeIdSet,
+  ]);
 
   const showFlows = filters.showFlows && (zoom >= 0.8 || filteredEdges.length <= 260);
   const showDetailedArrows = showFlows && (Boolean(selectedNodeId || selectedEdgeId) || zoom >= 3.2);
@@ -1910,6 +1932,9 @@ export default memo(GwmdWorldMap, (prevProps, nextProps) => {
     prevProps.filters.relation === nextProps.filters.relation &&
     prevProps.filters.showFlows === nextProps.filters.showFlows &&
     prevProps.filters.showOnlyImpacted === nextProps.filters.showOnlyImpacted &&
+    prevProps.filters.minConfidence === nextProps.filters.minConfidence &&
+    prevProps.filters.showUnresolved === nextProps.filters.showUnresolved &&
+    prevProps.filters.sourceMode === nextProps.filters.sourceMode &&
     prevProps.simulation === nextProps.simulation &&
     prevProps.graph === nextProps.graph &&
     prevProps.globalTickers === nextProps.globalTickers

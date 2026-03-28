@@ -24,6 +24,7 @@ import type {
 import type { TedIntelSnapshot, TedIntelTimeWindow } from "@tc/shared";
 import http from "node:http";
 import https from "node:https";
+import type { AiStewardIncidentDigest } from "./aiSteward";
 
 export interface ApiClientConfig {
   baseUrl: string;
@@ -382,6 +383,17 @@ export class BackendApiClient {
 
   async stewardGetConfig() {
     return this.fetch("/api/ai/steward/config", { method: "GET" });
+  }
+
+  async stewardGetHealth() {
+    return this.fetch("/api/ai/steward/health", { method: "GET" });
+  }
+  async stewardGetIncidentDigest(): Promise<AiStewardIncidentDigest> {
+    return this.fetch("/api/ai/steward/incident-digest", { method: "GET" });
+  }
+
+  async stewardCheckHealth() {
+    return this.fetch("/api/ai/steward/check-health", { method: "POST" });
   }
 
   async stewardSetConfig(config: unknown) {

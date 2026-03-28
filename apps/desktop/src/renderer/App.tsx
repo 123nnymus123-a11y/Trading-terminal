@@ -32,6 +32,7 @@ import { Macro } from "./pages/Macro";
 import ApiHub from "./pages/ApiHub";
 import SmartRoutingOverview from "./pages/SmartRoutingOverview";
 import Cam from "./pages/Cam";
+import StrategyResearch from "./pages/StrategyResearch";
 import { AuthPanel } from "./components/AuthPanel";
 import {
   login,
@@ -93,6 +94,7 @@ const TABS = [
   { label: "FLOW", icon: "🌊" },
   { label: "EXECUTE", icon: "⚡" },
   { label: "JOURNAL", icon: "📖" },
+  { label: "STRATEGY RESEARCH", icon: "🔬" },
   { label: "ECONOMIC CALENDAR", icon: "📈" },
   { label: "INTELLIGENCE", icon: "🧠" },
   { label: "CONGRESS ACTIVITY", icon: "🏛️" },
@@ -445,6 +447,7 @@ function TerminalWorkspace({ onLogout }: { onLogout: () => void }) {
         {activeTab === "FLOW" && <Flow />}
         {activeTab === "EXECUTE" && <Execute />}
         {activeTab === "JOURNAL" && <Journal />}
+        {activeTab === "STRATEGY RESEARCH" && <StrategyResearch />}
         {activeTab === "ECONOMIC CALENDAR" && <EconomicCalendar />}
         {activeTab === "INTELLIGENCE" && <Intelligence />}
         {activeTab === "CONGRESS ACTIVITY" && <CongressActivity />}
