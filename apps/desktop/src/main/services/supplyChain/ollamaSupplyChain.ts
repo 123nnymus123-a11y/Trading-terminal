@@ -42,19 +42,54 @@ let tickerMap: Record<string, string> | null = null;
 
 function getTickerMap(): Record<string, string> {
   if (tickerMap) return tickerMap;
-  
+
   try {
-    const mapPath = path.join(__dirname, "data", "ticker_map.json");
-    const raw = fs.readFileSync(mapPath, "utf-8");
-    tickerMap = JSON.parse(raw) as Record<string, string>;
-    return tickerMap;
+    const candidatePaths = [
+      path.join(__dirname, "data", "ticker_map.json"),
+      path.join(
+        process.cwd(),
+        "apps",
+        "desktop",
+        "src",
+        "main",
+        "services",
+        "supplyChain",
+        "data",
+        "ticker_map.json",
+      ),
+      path.join(
+        process.cwd(),
+        "src",
+        "main",
+        "services",
+        "supplyChain",
+        "data",
+        "ticker_map.json",
+      ),
+    ];
+
+    for (const mapPath of candidatePaths) {
+      if (!fs.existsSync(mapPath)) continue;
+      const raw = fs.readFileSync(mapPath, "utf-8");
+      tickerMap = JSON.parse(raw) as Record<string, string>;
+      return tickerMap;
+    }
+
+    console.warn("[SupplyChain] ticker_map.json not found in known paths", {
+      tried: candidatePaths,
+    });
+    return {};
   } catch (err) {
     console.warn("[SupplyChain] Could not load ticker_map.json:", err);
     return {};
   }
 }
 
-async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: number): Promise<Response> {
+async function fetchWithTimeout(
+  url: string,
+  options: RequestInit,
+  timeoutMs: number,
+): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -73,7 +108,7 @@ async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: nu
 export async function generateSupplyChainWithOllama(
   model: string,
   ticker: string,
-  companyName?: string
+  companyName?: string,
 ): Promise<MindMapData> {
   // Lookup company name from ticker map if not provided
   const map = getTickerMap();
@@ -173,10 +208,15 @@ Also provide 3-5 key insights about the supply chain health, dependencies, or st
 
 Remember: Output ONLY valid JSON, no markdown, no explanations. If you are unsure of HQ details or subsidiaries, omit those fields rather than guessing.`;
 
-  const { callCloudLlm } = await import('../llm/cloudLlmClient');
+  const { callCloudLlm } = await import("../llm/cloudLlmClient");
   void model; // model param retained for API compatibility
-  const rawText = await callCloudLlm(systemPrompt, userPrompt, { temperature: 0.3 });
-  const jsonText = rawText.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+  const rawText = await callCloudLlm(systemPrompt, userPrompt, {
+    temperature: 0.3,
+  });
+  const jsonText = rawText
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/, "")
+    .trim();
 
   let mindMapData: MindMapData;
   try {
@@ -189,30 +229,42 @@ Remember: Output ONLY valid JSON, no markdown, no explanations. If you are unsur
         mindMapData = JSON.parse(jsonMatch[1].trim()) as MindMapData;
       } catch (innerErr) {
         // If markdown extraction fails, try to find JSON object directly
-        const jsonStart = rawText.indexOf('{');
-        const jsonEnd = rawText.lastIndexOf('}');
+        const jsonStart = rawText.indexOf("{");
+        const jsonEnd = rawText.lastIndexOf("}");
         if (jsonStart !== -1 && jsonEnd !== -1 && jsonEnd > jsonStart) {
           try {
-            mindMapData = JSON.parse(rawText.substring(jsonStart, jsonEnd + 1)) as MindMapData;
+            mindMapData = JSON.parse(
+              rawText.substring(jsonStart, jsonEnd + 1),
+            ) as MindMapData;
           } catch (extractErr) {
-            throw new Error(`Failed to parse Llama response as JSON (from markdown): ${innerErr}`);
+            throw new Error(
+              `Failed to parse Llama response as JSON (from markdown): ${innerErr}`,
+            );
           }
         } else {
-          throw new Error(`Failed to parse Llama response as JSON (from markdown): ${innerErr}`);
+          throw new Error(
+            `Failed to parse Llama response as JSON (from markdown): ${innerErr}`,
+          );
         }
       }
     } else {
       // Try to find JSON object in the response
-      const jsonStart = rawText.indexOf('{');
-      const jsonEnd = rawText.lastIndexOf('}');
+      const jsonStart = rawText.indexOf("{");
+      const jsonEnd = rawText.lastIndexOf("}");
       if (jsonStart !== -1 && jsonEnd !== -1 && jsonEnd > jsonStart) {
         try {
-          mindMapData = JSON.parse(rawText.substring(jsonStart, jsonEnd + 1)) as MindMapData;
+          mindMapData = JSON.parse(
+            rawText.substring(jsonStart, jsonEnd + 1),
+          ) as MindMapData;
         } catch (innerErr) {
-          throw new Error(`Failed to parse Llama response as JSON (extracted): ${innerErr}`);
+          throw new Error(
+            `Failed to parse Llama response as JSON (extracted): ${innerErr}`,
+          );
         }
       } else {
-        throw new Error(`Failed to parse Llama response as JSON (no JSON found): ${err}`);
+        throw new Error(
+          `Failed to parse Llama response as JSON (no JSON found): ${err}`,
+        );
       }
     }
   }
@@ -221,11 +273,16 @@ Remember: Output ONLY valid JSON, no markdown, no explanations. If you are unsur
   mindMapData = validateAndSanitizeMindMap(mindMapData);
 
   // Enrich with real-time supply chain data
-  console.log(`[supplyChain] Enriching mind-map with live supply chain data...`);
+  console.log(
+    `[supplyChain] Enriching mind-map with live supply chain data...`,
+  );
   try {
     mindMapData = await enrichMindMap(mindMapData);
   } catch (err) {
-    console.warn(`[supplyChain] Mind-map enrichment failed (non-blocking):`, err);
+    console.warn(
+      `[supplyChain] Mind-map enrichment failed (non-blocking):`,
+      err,
+    );
   }
 
   // Add geographical coordinates to all companies
@@ -245,14 +302,30 @@ Remember: Output ONLY valid JSON, no markdown, no explanations. If you are unsur
  * Geocode all companies in a mind-map to add geographical coordinates
  * Enables world map visualization with company locations
  */
-async function geocodeMindMapCompanies(data: MindMapData): Promise<MindMapData> {
-  const geoCache = new Map<string, { lat: number; lon: number; city?: string; country?: string }>();
+async function geocodeMindMapCompanies(
+  data: MindMapData,
+): Promise<MindMapData> {
+  const geoCache = new Map<
+    string,
+    { lat: number; lon: number; city?: string; country?: string }
+  >();
   let geocodedCount = 0;
   let errorCount = 0;
+  const startedAt = Date.now();
+  const maxGeocodeDurationMs = 20000;
+  const maxCompaniesToAttempt = 20;
+  let attempted = 0;
 
   // Process each company and add coordinates
-  for (const category of data.categories) {
+  geocodeLoop: for (const category of data.categories) {
     for (const company of category.companies) {
+      if (
+        Date.now() - startedAt > maxGeocodeDurationMs ||
+        attempted >= maxCompaniesToAttempt
+      ) {
+        break geocodeLoop;
+      }
+
       try {
         // Initialize metadata if missing
         if (!company.metadata) {
@@ -270,13 +343,20 @@ async function geocodeMindMapCompanies(data: MindMapData): Promise<MindMapData> 
         let geo = geoCache.get(cacheKey);
 
         if (!geo) {
+          attempted++;
           // Fetch from Nominatim
           const geoHints: Record<string, string> = {};
-          if (company.metadata?.hqCity) geoHints.city = company.metadata.hqCity as string;
-          if (company.metadata?.hqState) geoHints.state = company.metadata.hqState as string;
-          if (company.metadata?.hqCountry) geoHints.country = company.metadata.hqCountry as string;
-          
-          const geoResult = await resolveCompanyGeo(company.name || company.id, geoHints as any);
+          if (company.metadata?.hqCity)
+            geoHints.city = company.metadata.hqCity as string;
+          if (company.metadata?.hqState)
+            geoHints.state = company.metadata.hqState as string;
+          if (company.metadata?.hqCountry)
+            geoHints.country = company.metadata.hqCountry as string;
+
+          const geoResult = await resolveCompanyGeo(
+            company.name || company.id,
+            geoHints as any,
+          );
           geo = geoResult || undefined;
           if (geo) {
             geoCache.set(cacheKey, geo);
@@ -286,7 +366,12 @@ async function geocodeMindMapCompanies(data: MindMapData): Promise<MindMapData> 
         if (geo) {
           company.metadata.hqLat = geo.lat;
           company.metadata.hqLon = geo.lon;
-          const geoExtended = geo as { city?: string; state?: string; country?: string; source?: string };
+          const geoExtended = geo as {
+            city?: string;
+            state?: string;
+            country?: string;
+            source?: string;
+          };
           if (geo.city) company.metadata.hqCity = geo.city;
           if (geoExtended.state) company.metadata.hqState = geoExtended.state;
           if (geo.country) company.metadata.hqCountry = geo.country;
@@ -294,7 +379,7 @@ async function geocodeMindMapCompanies(data: MindMapData): Promise<MindMapData> 
           geocodedCount++;
 
           // Throttle API calls to avoid rate limiting
-          await new Promise((resolve) => setTimeout(resolve, 100));
+          await new Promise((resolve) => setTimeout(resolve, 25));
         }
       } catch (err) {
         errorCount++;
@@ -303,7 +388,9 @@ async function geocodeMindMapCompanies(data: MindMapData): Promise<MindMapData> 
     }
   }
 
-  console.log(`[supplyChain] Geocoded ${geocodedCount} companies (${errorCount} errors)`);
+  console.log(
+    `[supplyChain] Geocoded ${geocodedCount} companies (${errorCount} errors, attempted ${attempted}, ${Date.now() - startedAt}ms)`,
+  );
   return data;
 }
 
@@ -313,7 +400,11 @@ async function geocodeMindMapCompanies(data: MindMapData): Promise<MindMapData> 
  */
 function validateAndSanitizeMindMap(data: MindMapData): MindMapData {
   // Basic structure check
-  if (!data.centerTicker || !data.categories || !Array.isArray(data.categories)) {
+  if (
+    !data.centerTicker ||
+    !data.categories ||
+    !Array.isArray(data.categories)
+  ) {
     throw new Error("Invalid mind-map structure: missing required fields");
   }
 
@@ -322,30 +413,36 @@ function validateAndSanitizeMindMap(data: MindMapData): MindMapData {
   const issuesDetected: string[] = [];
 
   // Validate and fix each category
-  data.categories = data.categories.filter(cat => {
+  data.categories = data.categories.filter((cat) => {
     if (!cat.id || !cat.name || !Array.isArray(cat.companies)) {
-      issuesDetected.push(`Skipped invalid category: ${cat.name || 'unknown'}`);
+      issuesDetected.push(`Skipped invalid category: ${cat.name || "unknown"}`);
       return false;
     }
 
     // Validate and fix companies in this category
-    cat.companies = cat.companies.filter(company => {
+    cat.companies = cat.companies.filter((company) => {
       totalCompanies++;
 
       // Required fields validation
       if (!company.name || !company.role) {
-        issuesDetected.push(`Skipped company with missing name/role in ${cat.name}`);
+        issuesDetected.push(
+          `Skipped company with missing name/role in ${cat.name}`,
+        );
         return false;
       }
 
       // Criticality must be 1-5
-      if (!company.criticality || company.criticality < 1 || company.criticality > 5) {
+      if (
+        !company.criticality ||
+        company.criticality < 1 ||
+        company.criticality > 5
+      ) {
         company.criticality = 3; // Default to medium
         issuesDetected.push(`Fixed invalid criticality for ${company.name}`);
       }
 
       // Confidence must be 0.0-1.0
-      if (typeof company.confidence !== 'number') {
+      if (typeof company.confidence !== "number") {
         company.confidence = 0.5; // Default to medium confidence
         company.verified = false;
         issuesDetected.push(`Added missing confidence for ${company.name}`);
@@ -359,7 +456,7 @@ function validateAndSanitizeMindMap(data: MindMapData): MindMapData {
       }
 
       // Ensure verified flag exists
-      if (typeof company.verified !== 'boolean') {
+      if (typeof company.verified !== "boolean") {
         company.verified = false;
       }
 
@@ -370,7 +467,9 @@ function validateAndSanitizeMindMap(data: MindMapData): MindMapData {
 
       // Validate ticker format if present
       if (company.id && !/^[A-Z.]{1,6}$/.test(company.id)) {
-        issuesDetected.push(`Questionable ticker format: ${company.id} for ${company.name}`);
+        issuesDetected.push(
+          `Questionable ticker format: ${company.id} for ${company.name}`,
+        );
       }
 
       return true;
@@ -394,11 +493,13 @@ function validateAndSanitizeMindMap(data: MindMapData): MindMapData {
     if (!data.insights) data.insights = [];
     data.insights.push(
       `⚠️ Data Quality: ${lowConfidenceCount}/${totalCompanies} relationships have low confidence (<0.6). ` +
-      `${issuesDetected.length} issues auto-corrected.`
+        `${issuesDetected.length} issues auto-corrected.`,
     );
   }
 
-  console.log(`[SupplyChain] Validated ${totalCompanies} companies across ${data.categories.length} categories`);
+  console.log(
+    `[SupplyChain] Validated ${totalCompanies} companies across ${data.categories.length} categories`,
+  );
   if (issuesDetected.length > 0) {
     console.warn(`[SupplyChain] Validation issues:`, issuesDetected);
   }
@@ -411,7 +512,7 @@ function validateAndSanitizeMindMap(data: MindMapData): MindMapData {
  */
 export async function checkOllamaAvailable(): Promise<boolean> {
   try {
-    const { checkCloudLlmAvailable } = await import('../llm/cloudLlmClient');
+    const { checkCloudLlmAvailable } = await import("../llm/cloudLlmClient");
     const result = await checkCloudLlmAvailable();
     return result.ok;
   } catch {
@@ -425,18 +526,18 @@ export async function checkOllamaAvailable(): Promise<boolean> {
  */
 export async function askSupplyChainAdvisor(
   model: string,
-  payload: SupplyChainAdvisorRequest
+  payload: SupplyChainAdvisorRequest,
 ): Promise<SupplyChainAdvisorResponse> {
   if (!payload.question?.trim()) {
     return { success: false, error: "Question is empty" };
   }
 
   const question = payload.question.trim();
-  
+
   // Build search query from the question + company context
   const company = payload.mindMapData?.centerName || "supply chain";
   const searchQuery = `${question} ${company}`.substring(0, 200);
-  
+
   console.log(`[advisor] Searching web for: ${searchQuery}`);
   const searchResults = await searchWeb(searchQuery, 5);
   const searchContextBlock = formatSearchResults(searchResults);
@@ -463,7 +564,9 @@ export async function askSupplyChainAdvisor(
     "followups": ["Follow-up question 1", "Follow-up question 2"]
   }`;
 
-  const imageData = payload.imageBase64 ? payload.imageBase64.split(",").pop() : undefined;
+  const imageData = payload.imageBase64
+    ? payload.imageBase64.split(",").pop()
+    : undefined;
 
   const userPrompt = `User question: ${question}\n\n${searchContextBlock}\n${mindMapContextBlock}\n${cockpitContextBlock}\n\nScreenshot: ${payload.imageName ?? "none"}\nIf a screenshot was provided, extract and use any visible text.\n\nIMPORTANT: Provide real URLs from the search results in your answer. Cite sources properly. If cockpit context is available, incorporate it into trading/position-related advice.`;
 
@@ -484,14 +587,19 @@ export async function askSupplyChainAdvisor(
 
   let text: string;
   try {
-    const { callCloudLlm } = await import('../llm/cloudLlmClient');
+    const { callCloudLlm } = await import("../llm/cloudLlmClient");
     void model; // model param retained for API compatibility
     // Note: image payloads (multimodal) are dropped when using cloud text-only API
-    const sysPrompt = typeof body.system === 'string' ? body.system : systemPrompt;
-    const usrPrompt = typeof body.prompt === 'string' ? body.prompt : userPrompt;
+    const sysPrompt =
+      typeof body.system === "string" ? body.system : systemPrompt;
+    const usrPrompt =
+      typeof body.prompt === "string" ? body.prompt : userPrompt;
     text = await callCloudLlm(sysPrompt, usrPrompt, { temperature: 0.15 });
   } catch (err) {
-    return { success: false, error: err instanceof Error ? err.message : String(err) };
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
 
   const jsonCandidate = extractJsonCandidate(text);
@@ -518,7 +626,9 @@ export async function askSupplyChainAdvisor(
   let earningsSuffix = "";
 
   if (claimsToValidate.length > 0) {
-    console.log(`[advisor] Validating ${claimsToValidate.length} claims against live data...`);
+    console.log(
+      `[advisor] Validating ${claimsToValidate.length} claims against live data...`,
+    );
 
     // Check cache first
     const cacheKey = `claims:${claimsToValidate.join("|")}`;
@@ -530,7 +640,7 @@ export async function askSupplyChainAdvisor(
         claimsToValidate.slice(0, 3).map((claim) => ({
           text: claim,
           confidence: 0.7, // Default confidence for extracted claims
-        }))
+        })),
       );
 
       // Cache the results and record history
@@ -538,7 +648,12 @@ export async function askSupplyChainAdvisor(
         setCachedValidation(`claims:${result.claim}`, result);
         // Record for trend analysis
         const ticker = result.claim.match(/\b([A-Z]{1,5})\b/)?.[1] || "UNKNOWN";
-        recordValidationHistory(result.claim, ticker, result.validationConfidence, "advisor");
+        recordValidationHistory(
+          result.claim,
+          ticker,
+          result.validationConfidence,
+          "advisor",
+        );
       }
 
       validationSuffix = formatValidationForAdvisor(validationBatch);
@@ -599,7 +714,13 @@ export async function askSupplyChainAdvisor(
     }
   }
 
-  const finalAnswer = (validated.data.answer + validationSuffix + earningsSuffix + newsSuffix + riskSuffix).trim();
+  const finalAnswer = (
+    validated.data.answer +
+    validationSuffix +
+    earningsSuffix +
+    newsSuffix +
+    riskSuffix
+  ).trim();
 
   const response: SupplyChainAdvisorResponse = {
     success: true,
@@ -648,7 +769,8 @@ function normalizeAdvisorReply(parsed: unknown, rawText: string) {
         followups: Array.isArray(record.followups)
           ? record.followups.filter((f) => typeof f === "string")
           : undefined,
-        confidence: typeof record.confidence === "number" ? record.confidence : undefined,
+        confidence:
+          typeof record.confidence === "number" ? record.confidence : undefined,
       };
     }
   }
@@ -671,11 +793,11 @@ function extractPrimaryTicker(text: string): string | null {
  */
 function extractClaimsFromText(text: string): string[] {
   const claims: string[] = [];
-  
+
   // Find sentences with ticker symbols
   const sentences = text.split(/[.!?]\s+/);
   const tickerRegex = /\b([A-Z]{1,5})\b/;
-  
+
   for (const sentence of sentences) {
     if (tickerRegex.test(sentence)) {
       const trimmed = sentence.trim();
@@ -684,6 +806,6 @@ function extractClaimsFromText(text: string): string[] {
       }
     }
   }
-  
+
   return claims.slice(0, 5); // Limit to 5 claims to avoid rate limiting
 }

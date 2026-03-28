@@ -1,6 +1,6 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer } from "electron";
 
-console.log('[preload] starting to load');
+console.log("[preload] starting to load");
 
 type AnyListener = (...args: unknown[]) => void;
 type IpcCompatListener = Parameters<typeof ipcRenderer.on>[1];
@@ -10,34 +10,36 @@ function asIpcListener(listener: unknown): IpcCompatListener {
 }
 
 const strictIpcAllowlistEnabled =
-  String(process.env.IPC_STRICT_ALLOWLIST_ENABLED ?? 'false') === 'true';
+  String(process.env.IPC_STRICT_ALLOWLIST_ENABLED ?? "false") === "true";
 
 const allowedIpcPrefixes = [
-  'cockpit:',
-  'backendAuth:',
-  'publicFlow:',
-  'congress:',
-  'ai:',
-  'aiSteward:',
-  'supplyChain:',
-  'gwmdMap:',
-  'apiHub:',
-  'smartRouting:',
-  'centralAI:',
-  'externalFeeds:',
-  'economicCalendar:',
+  "cockpit:",
+  "backendAuth:",
+  "publicFlow:",
+  "tedIntel:",
+  "congress:",
+  "ai:",
+  "aiSteward:",
+  "supplyChain:",
+  "graphMemory:",
+  "gwmdMap:",
+  "apiHub:",
+  "smartRouting:",
+  "centralAI:",
+  "externalFeeds:",
+  "economicCalendar:",
 ];
 
 const allowedIpcChannels = new Set([
-  'cockpit:events',
-  'cockpit:trading:event',
-  'cockpit:risk:event',
-  'ai:briefs',
-  'ai:status',
-  'ai:progress',
-  'aiSteward:update',
-  'apiHub:changed',
-  'centralAI:preload:intelligence',
+  "cockpit:events",
+  "cockpit:trading:event",
+  "cockpit:risk:event",
+  "ai:briefs",
+  "ai:status",
+  "ai:progress",
+  "aiSteward:update",
+  "apiHub:changed",
+  "centralAI:preload:intelligence",
 ]);
 
 function assertAllowedChannel(channel: string): void {
@@ -54,10 +56,16 @@ function assertAllowedChannel(channel: string): void {
 
 let cachedBackendAuthToken: string | undefined;
 
-type BackendWsState = 'idle' | 'connecting' | 'open' | 'reconnecting' | 'closed' | 'error';
+type BackendWsState =
+  | "idle"
+  | "connecting"
+  | "open"
+  | "reconnecting"
+  | "closed"
+  | "error";
 
 let backendWs: WebSocket | null = null;
-let backendWsState: BackendWsState = 'idle';
+let backendWsState: BackendWsState = "idle";
 let backendWsReconnectAttempt = 0;
 let backendWsReconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let backendWsManualDisconnect = false;
@@ -71,7 +79,7 @@ function setBackendWsState(next: BackendWsState): void {
     try {
       listener(next);
     } catch (error) {
-      console.error('[preload] backendWs state listener error', error);
+      console.error("[preload] backendWs state listener error", error);
     }
   }
 }
@@ -81,7 +89,7 @@ function emitBackendWsMessage(message: unknown): void {
     try {
       listener(message);
     } catch (error) {
-      console.error('[preload] backendWs message listener error', error);
+      console.error("[preload] backendWs message listener error", error);
     }
   }
 }
@@ -94,17 +102,23 @@ function clearBackendWsReconnectTimer(): void {
 }
 
 function normalizeBackendWsSymbols(symbols: string[]): string[] {
-  return [...new Set(symbols.map((symbol) => symbol.trim().toUpperCase()).filter(Boolean))];
+  return [
+    ...new Set(
+      symbols.map((symbol) => symbol.trim().toUpperCase()).filter(Boolean),
+    ),
+  ];
 }
 
 async function resolveBackendWsEndpoint(token?: string): Promise<string> {
-  const backendUrl = await ipcRenderer.invoke('cockpit:config:backendUrl:get');
-  const parsed = new URL(typeof backendUrl === 'string' ? backendUrl : 'http://localhost:8787');
-  parsed.protocol = parsed.protocol === 'https:' ? 'wss:' : 'ws:';
-  parsed.pathname = '/ws';
-  parsed.search = '';
+  const backendUrl = await ipcRenderer.invoke("cockpit:config:backendUrl:get");
+  const parsed = new URL(
+    typeof backendUrl === "string" ? backendUrl : "http://localhost:8787",
+  );
+  parsed.protocol = parsed.protocol === "https:" ? "wss:" : "ws:";
+  parsed.pathname = "/ws";
+  parsed.search = "";
   if (token) {
-    parsed.searchParams.set('token', token);
+    parsed.searchParams.set("token", token);
   }
   return parsed.toString();
 }
@@ -124,20 +138,24 @@ function scheduleBackendWsReconnect(): void {
   clearBackendWsReconnectTimer();
   const backoffMs = Math.min(1_000 * 2 ** backendWsReconnectAttempt, 30_000);
   backendWsReconnectAttempt += 1;
-  setBackendWsState('reconnecting');
+  setBackendWsState("reconnecting");
   backendWsReconnectTimer = setTimeout(() => {
     void connectBackendWs();
   }, backoffMs);
 }
 
 async function connectBackendWs(): Promise<boolean> {
-  if (backendWs && (backendWs.readyState === WebSocket.OPEN || backendWs.readyState === WebSocket.CONNECTING)) {
+  if (
+    backendWs &&
+    (backendWs.readyState === WebSocket.OPEN ||
+      backendWs.readyState === WebSocket.CONNECTING)
+  ) {
     return true;
   }
 
   backendWsManualDisconnect = false;
   clearBackendWsReconnectTimer();
-  setBackendWsState('connecting');
+  setBackendWsState("connecting");
 
   try {
     const token = await resolveAuthToken();
@@ -146,16 +164,16 @@ async function connectBackendWs(): Promise<boolean> {
 
     backendWs.onopen = () => {
       backendWsReconnectAttempt = 0;
-      setBackendWsState('open');
+      setBackendWsState("open");
       const symbols = [...backendWsSubscriptions.values()];
       if (symbols.length > 0) {
-        sendBackendWsJson({ type: 'subscribe', symbols });
+        sendBackendWsJson({ type: "subscribe", symbols });
       }
     };
 
     backendWs.onmessage = (event) => {
       const rawPayload = event.data;
-      if (typeof rawPayload !== 'string') {
+      if (typeof rawPayload !== "string") {
         emitBackendWsMessage(rawPayload);
         return;
       }
@@ -167,13 +185,13 @@ async function connectBackendWs(): Promise<boolean> {
     };
 
     backendWs.onerror = () => {
-      setBackendWsState('error');
+      setBackendWsState("error");
     };
 
     backendWs.onclose = () => {
       backendWs = null;
       if (backendWsManualDisconnect) {
-        setBackendWsState('closed');
+        setBackendWsState("closed");
         return;
       }
       scheduleBackendWsReconnect();
@@ -181,7 +199,7 @@ async function connectBackendWs(): Promise<boolean> {
 
     return true;
   } catch (error) {
-    console.warn('[preload] backendWs connect failed', error);
+    console.warn("[preload] backendWs connect failed", error);
     scheduleBackendWsReconnect();
     return false;
   }
@@ -190,11 +208,15 @@ async function connectBackendWs(): Promise<boolean> {
 function disconnectBackendWs(): void {
   backendWsManualDisconnect = true;
   clearBackendWsReconnectTimer();
-  if (backendWs && (backendWs.readyState === WebSocket.OPEN || backendWs.readyState === WebSocket.CONNECTING)) {
+  if (
+    backendWs &&
+    (backendWs.readyState === WebSocket.OPEN ||
+      backendWs.readyState === WebSocket.CONNECTING)
+  ) {
     backendWs.close();
   }
   backendWs = null;
-  setBackendWsState('closed');
+  setBackendWsState("closed");
 }
 
 function refreshBackendWsConnection(): void {
@@ -206,7 +228,7 @@ function refreshBackendWsConnection(): void {
 }
 
 function setCachedBackendAuthToken(token: unknown): void {
-  if (typeof token === 'string' && token.length > 0) {
+  if (typeof token === "string" && token.length > 0) {
     cachedBackendAuthToken = token;
     return;
   }
@@ -214,32 +236,37 @@ function setCachedBackendAuthToken(token: unknown): void {
 }
 
 // Keep preload token cache synchronized with auth changes from main.
-ipcRenderer.on('backendAuth:tokenChanged', (_event, token: unknown) => {
+ipcRenderer.on("backendAuth:tokenChanged", (_event, token: unknown) => {
   setCachedBackendAuthToken(token);
   refreshBackendWsConnection();
 });
 
-ipcRenderer.on('cockpit:backendUrl:changed', () => {
+ipcRenderer.on("cockpit:backendUrl:changed", () => {
   refreshBackendWsConnection();
 });
 
 void ipcRenderer
-  .invoke('backendAuth:getToken')
+  .invoke("backendAuth:getToken")
   .then((token) => setCachedBackendAuthToken(token))
   .catch(() => {
     // Ignore bootstrap failures; callers can still resolve tokens on demand.
   });
 
-async function resolveAuthToken(authToken?: string): Promise<string | undefined> {
-  if (typeof authToken === 'string' && authToken.length > 0) {
+async function resolveAuthToken(
+  authToken?: string,
+): Promise<string | undefined> {
+  if (typeof authToken === "string" && authToken.length > 0) {
     return authToken;
   }
-  if (typeof cachedBackendAuthToken === 'string' && cachedBackendAuthToken.length > 0) {
+  if (
+    typeof cachedBackendAuthToken === "string" &&
+    cachedBackendAuthToken.length > 0
+  ) {
     return cachedBackendAuthToken;
   }
   try {
-    const token = await ipcRenderer.invoke('backendAuth:getToken');
-    if (typeof token === 'string' && token.length > 0) {
+    const token = await ipcRenderer.invoke("backendAuth:getToken");
+    if (typeof token === "string" && token.length > 0) {
       cachedBackendAuthToken = token;
       return token;
     }
@@ -255,7 +282,8 @@ async function resolveAuthToken(authToken?: string): Promise<string | undefined>
 const listenerMap = new Map<AnyListener, IpcCompatListener>();
 
 function wrapListener(listener: AnyListener) {
-  const wrapped: AnyListener = (event: unknown, ...args: unknown[]) => listener(event, ...args);
+  const wrapped: AnyListener = (event: unknown, ...args: unknown[]) =>
+    listener(event, ...args);
   const ipcWrapped = asIpcListener(wrapped);
   listenerMap.set(listener, ipcWrapped);
   return ipcWrapped;
@@ -280,7 +308,8 @@ const ipcCompat = {
 
   once: (channel: string, listener: AnyListener) => {
     assertAllowedChannel(channel);
-    const wrapped: AnyListener = (event: unknown, ...args: unknown[]) => listener(event, ...args);
+    const wrapped: AnyListener = (event: unknown, ...args: unknown[]) =>
+      listener(event, ...args);
     ipcRenderer.once(channel, asIpcListener(wrapped));
     return ipcCompat;
   },
@@ -293,25 +322,27 @@ const ipcCompat = {
     return ipcCompat;
   },
 
-  addListener: (channel: string, listener: AnyListener) => ipcCompat.on(channel, listener),
-  removeListener: (channel: string, listener: AnyListener) => ipcCompat.off(channel, listener),
+  addListener: (channel: string, listener: AnyListener) =>
+    ipcCompat.on(channel, listener),
+  removeListener: (channel: string, listener: AnyListener) =>
+    ipcCompat.off(channel, listener),
 
   removeAllListeners: (channel?: string) => {
-    if (typeof channel === 'string') {
+    if (typeof channel === "string") {
       ipcRenderer.removeAllListeners(channel);
       listenerMap.clear();
     } else {
       const knownChannels = [
         ...allowedIpcChannels,
         IPC_EVENTS,
-        'ai:briefs',
-        'ai:status',
-        'ai:progress',
-        'aiSteward:update',
-        'apiHub:changed',
-        'centralAI:preload:intelligence',
-        'cockpit:trading:event',
-        'cockpit:risk:event',
+        "ai:briefs",
+        "ai:status",
+        "ai:progress",
+        "aiSteward:update",
+        "apiHub:changed",
+        "centralAI:preload:intelligence",
+        "cockpit:trading:event",
+        "cockpit:risk:event",
       ];
       for (const knownChannel of knownChannels) {
         ipcRenderer.removeAllListeners(knownChannel);
@@ -322,20 +353,20 @@ const ipcCompat = {
   },
 };
 
-contextBridge.exposeInMainWorld('electron', { ipcRenderer: ipcCompat });
+contextBridge.exposeInMainWorld("electron", { ipcRenderer: ipcCompat });
 
 // --------------------
 // Prompt 5 channels (cockpit)
 // --------------------
-const IPC_EVENTS = 'cockpit:events';
-const IPC_STREAM_SET_SOURCE = 'cockpit:stream:setSource';
-const IPC_STREAM_GET_STATUS = 'cockpit:stream:getStatus';
+const IPC_EVENTS = "cockpit:events";
+const IPC_STREAM_SET_SOURCE = "cockpit:stream:setSource";
+const IPC_STREAM_GET_STATUS = "cockpit:stream:getStatus";
 
-const IPC_REPLAY_PLAY = 'cockpit:replay:play';
-const IPC_REPLAY_PAUSE = 'cockpit:replay:pause';
-const IPC_REPLAY_STOP = 'cockpit:replay:stop';
-const IPC_REPLAY_SPEED = 'cockpit:replay:setSpeed';
-const IPC_REPLAY_SCRUB = 'cockpit:replay:scrub';
+const IPC_REPLAY_PLAY = "cockpit:replay:play";
+const IPC_REPLAY_PAUSE = "cockpit:replay:pause";
+const IPC_REPLAY_STOP = "cockpit:replay:stop";
+const IPC_REPLAY_SPEED = "cockpit:replay:setSpeed";
+const IPC_REPLAY_SCRUB = "cockpit:replay:scrub";
 
 const cockpitApi = {
   events: {
@@ -378,9 +409,10 @@ const cockpitApi = {
       password: string;
       licenseKey: string;
     }) {
-      const response = await ipcRenderer.invoke('backendAuth:login', payload);
+      const response = await ipcRenderer.invoke("backendAuth:login", payload);
       if ((response as { ok?: boolean }).ok) {
-        const token = (response as { session?: { token?: string } }).session?.token;
+        const token = (response as { session?: { token?: string } }).session
+          ?.token;
         setCachedBackendAuthToken(token);
       }
       return response;
@@ -391,29 +423,34 @@ const cockpitApi = {
       password: string;
       licenseKey: string;
     }) {
-      const response = await ipcRenderer.invoke('backendAuth:signup', payload);
+      const response = await ipcRenderer.invoke("backendAuth:signup", payload);
       if ((response as { ok?: boolean }).ok) {
-        const token = (response as { session?: { token?: string } }).session?.token;
+        const token = (response as { session?: { token?: string } }).session
+          ?.token;
         setCachedBackendAuthToken(token);
       }
       return response;
     },
     async refresh() {
-      const response = await ipcRenderer.invoke('backendAuth:refresh');
+      const response = await ipcRenderer.invoke("backendAuth:refresh");
       if ((response as { ok?: boolean }).ok) {
-        const token = (response as { session?: { token?: string } }).session?.token;
+        const token = (response as { session?: { token?: string } }).session
+          ?.token;
         setCachedBackendAuthToken(token);
       }
       return response;
     },
     async getSession() {
-      return ipcRenderer.invoke('backendAuth:getSession');
+      return ipcRenderer.invoke("backendAuth:getSession");
     },
     async setSession(session: unknown) {
-      const success = await ipcRenderer.invoke('backendAuth:setSession', session);
+      const success = await ipcRenderer.invoke(
+        "backendAuth:setSession",
+        session,
+      );
       if (success === true) {
         const token =
-          typeof session === 'object' && session !== null
+          typeof session === "object" && session !== null
             ? (session as { token?: unknown }).token
             : undefined;
         setCachedBackendAuthToken(token);
@@ -421,110 +458,150 @@ const cockpitApi = {
       return success;
     },
     async logout() {
-      const response = await ipcRenderer.invoke('backendAuth:logout');
+      const response = await ipcRenderer.invoke("backendAuth:logout");
       if (response === true) {
         setCachedBackendAuthToken(undefined);
       }
       return response;
     },
     async getToken() {
-      const token = await ipcRenderer.invoke('backendAuth:getToken');
+      const token = await ipcRenderer.invoke("backendAuth:getToken");
       setCachedBackendAuthToken(token);
       return token;
     },
   },
   publicFlow: {
     async getRecent(limit?: number) {
-      return ipcRenderer.invoke('publicFlow:getRecent', limit);
+      return ipcRenderer.invoke("publicFlow:getRecent", limit);
     },
     async getThemes(windowDays: 7 | 30, limit?: number) {
-      return ipcRenderer.invoke('publicFlow:getThemes', windowDays, limit);
+      return ipcRenderer.invoke("publicFlow:getThemes", windowDays, limit);
     },
     async getCandidates(themeId: number) {
-      return ipcRenderer.invoke('publicFlow:getCandidates', themeId);
+      return ipcRenderer.invoke("publicFlow:getCandidates", themeId);
     },
     async getValuations(tickers: string[]) {
-      return ipcRenderer.invoke('publicFlow:getValuations', tickers);
+      return ipcRenderer.invoke("publicFlow:getValuations", tickers);
     },
     async refresh() {
-      return ipcRenderer.invoke('publicFlow:refresh');
+      return ipcRenderer.invoke("publicFlow:refresh");
+    },
+  },
+  tedIntel: {
+    async getSnapshot(windowDays?: "7d" | "30d" | "90d" | "1y") {
+      return ipcRenderer.invoke("tedIntel:getSnapshot", windowDays ?? "90d");
     },
   },
   aiResearch: {
     async getConfig(authToken?: string) {
       const resolvedToken = await resolveAuthToken(authToken);
-      return ipcRenderer.invoke('ai:config:get', { authToken: resolvedToken });
+      return ipcRenderer.invoke("ai:config:get", { authToken: resolvedToken });
     },
     async setConfig(next: unknown, authToken?: string) {
       const resolvedToken = await resolveAuthToken(authToken);
-      return ipcRenderer.invoke('ai:config:set', { config: next, authToken: resolvedToken });
+      return ipcRenderer.invoke("ai:config:set", {
+        config: next,
+        authToken: resolvedToken,
+      });
     },
-    async runNow(manualItems?: Array<{ title: string; text: string }>, authToken?: string) {
+    async runNow(
+      manualItems?: Array<{ title: string; text: string }>,
+      authToken?: string,
+    ) {
       const resolvedToken = await resolveAuthToken(authToken);
-      return ipcRenderer.invoke('ai:run', { items: manualItems ?? [], authToken: resolvedToken });
+      return ipcRenderer.invoke("ai:run", {
+        items: manualItems ?? [],
+        authToken: resolvedToken,
+      });
     },
     async listBriefs(limit?: number, authToken?: string) {
       const resolvedToken = await resolveAuthToken(authToken);
-      return ipcRenderer.invoke('ai:briefs:list', { limit, authToken: resolvedToken });
+      return ipcRenderer.invoke("ai:briefs:list", {
+        limit,
+        authToken: resolvedToken,
+      });
     },
     async getStatus(authToken?: string) {
       const resolvedToken = await resolveAuthToken(authToken);
-      return ipcRenderer.invoke('ai:status:get', { authToken: resolvedToken });
+      return ipcRenderer.invoke("ai:status:get", { authToken: resolvedToken });
     },
     async checkRuntime() {
-      return ipcRenderer.invoke('ai:runtime:check');
+      return ipcRenderer.invoke("ai:runtime:check");
     },
     async listModels() {
-      return ipcRenderer.invoke('ai:models:list');
+      return ipcRenderer.invoke("ai:models:list");
+    },
+    async testModelConnection(payload: {
+      provider?: string;
+      model: string;
+      apiKey?: string;
+    }) {
+      return ipcRenderer.invoke("ai:model:test", payload);
     },
     onBriefs(handler: (briefs: unknown[]) => void) {
       const listener = (_event: unknown, briefs: unknown[]) => handler(briefs);
       const ipcListener = asIpcListener(listener);
-      ipcRenderer.on('ai:briefs', ipcListener);
-      return () => ipcRenderer.off('ai:briefs', ipcListener);
+      ipcRenderer.on("ai:briefs", ipcListener);
+      return () => ipcRenderer.off("ai:briefs", ipcListener);
     },
     onStatus(handler: (status: unknown) => void) {
-      const listener: AnyListener = (_event: unknown, status: unknown) => handler(status);
+      const listener: AnyListener = (_event: unknown, status: unknown) =>
+        handler(status);
       const ipcListener = asIpcListener(listener);
-      ipcRenderer.on('ai:status', ipcListener);
-      return () => ipcRenderer.off('ai:status', ipcListener);
+      ipcRenderer.on("ai:status", ipcListener);
+      return () => ipcRenderer.off("ai:status", ipcListener);
     },
     onProgress(handler: (progress: unknown) => void) {
-      const listener: AnyListener = (_event: unknown, progress: unknown) => handler(progress);
+      const listener: AnyListener = (_event: unknown, progress: unknown) =>
+        handler(progress);
       const ipcListener = asIpcListener(listener);
-      ipcRenderer.on('ai:progress', ipcListener);
-      return () => ipcRenderer.off('ai:progress', ipcListener);
+      ipcRenderer.on("ai:progress", ipcListener);
+      return () => ipcRenderer.off("ai:progress", ipcListener);
     },
   },
   aiSteward: {
     async getOverview(authToken?: string) {
       const resolvedToken = await resolveAuthToken(authToken);
-      return ipcRenderer.invoke('aiSteward:getOverview', { authToken: resolvedToken });
+      return ipcRenderer.invoke("aiSteward:getOverview", {
+        authToken: resolvedToken,
+      });
     },
     async getConfig(authToken?: string) {
       const resolvedToken = await resolveAuthToken(authToken);
-      return ipcRenderer.invoke('aiSteward:getConfig', { authToken: resolvedToken });
+      return ipcRenderer.invoke("aiSteward:getConfig", {
+        authToken: resolvedToken,
+      });
     },
     async setConfig(patch: unknown, authToken?: string) {
       const resolvedToken = await resolveAuthToken(authToken);
-      return ipcRenderer.invoke('aiSteward:setConfig', { patch: patch ?? {}, authToken: resolvedToken });
+      return ipcRenderer.invoke("aiSteward:setConfig", {
+        patch: patch ?? {},
+        authToken: resolvedToken,
+      });
     },
     async runModule(module: string, authToken?: string) {
       const resolvedToken = await resolveAuthToken(authToken);
-      return ipcRenderer.invoke('aiSteward:runModule', { module, authToken: resolvedToken });
+      return ipcRenderer.invoke("aiSteward:runModule", {
+        module,
+        authToken: resolvedToken,
+      });
     },
     async applyTask(taskId: string, authToken?: string) {
       const resolvedToken = await resolveAuthToken(authToken);
-      return ipcRenderer.invoke('aiSteward:applyTask', { taskId, authToken: resolvedToken });
+      return ipcRenderer.invoke("aiSteward:applyTask", {
+        taskId,
+        authToken: resolvedToken,
+      });
     },
     async testResponse(prompt?: string) {
-      return ipcRenderer.invoke('aiSteward:test', prompt);
+      return ipcRenderer.invoke("aiSteward:test", prompt);
     },
     onUpdate(handler: (overview: unknown) => void) {
-      const listener: AnyListener = (_event: unknown, overview: unknown) => handler(overview);
+      const listener: AnyListener = (_event: unknown, overview: unknown) =>
+        handler(overview);
       const ipcListener = asIpcListener(listener);
-      ipcRenderer.on('aiSteward:update', ipcListener);
-      return () => ipcRenderer.off('aiSteward:update', ipcListener);
+      ipcRenderer.on("aiSteward:update", ipcListener);
+      return () => ipcRenderer.off("aiSteward:update", ipcListener);
     },
   },
   supplyChain: {
@@ -539,101 +616,260 @@ const cockpitApi = {
       authToken?: string;
     }) {
       const resolvedToken = await resolveAuthToken(options.authToken);
-      return ipcRenderer.invoke('supplyChain:generate', {
+      return ipcRenderer.invoke("supplyChain:generate", {
         ...options,
         authToken: resolvedToken,
       });
     },
     async openGlobalMap(tickers: string[]) {
-      return ipcRenderer.invoke('supplyChain:openGlobalMap', tickers);
+      return ipcRenderer.invoke("supplyChain:openGlobalMap", tickers);
     },
     async clearCache(ticker: string) {
-      return ipcRenderer.invoke('supplyChain:clearCache', ticker);
+      return ipcRenderer.invoke("supplyChain:clearCache", ticker);
     },
     async listCached() {
-      return ipcRenderer.invoke('supplyChain:listCached');
+      return ipcRenderer.invoke("supplyChain:listCached");
     },
     async askAdvisor(payload: unknown) {
-      return ipcRenderer.invoke('supplyChain:advisorAsk', payload);
+      return ipcRenderer.invoke("supplyChain:advisorAsk", payload);
     },
-    async generateForGwmd(ticker: string, options: { model: unknown }) {
-      return ipcRenderer.invoke('gwmdMap:search', { ticker, model: options.model });
+    async generateForGwmd(
+      ticker: string,
+      options: { model: unknown; hops?: number },
+    ) {
+      return ipcRenderer.invoke("gwmdMap:search", {
+        ticker,
+        model: options.model,
+        hops: options.hops,
+      });
+    },
+    async getEnrichmentInspector() {
+      return ipcRenderer.invoke("graphEnrichment:getInspector");
+    },
+    async exportEnrichmentSnapshot() {
+      return ipcRenderer.invoke("graphEnrichment:exportSnapshot");
+    },
+    async getEnrichmentSyncStatus() {
+      return ipcRenderer.invoke("graphEnrichment:getSyncStatus");
+    },
+    async getEnrichmentCachedSubgraph(payload: {
+      query: string;
+      hops?: number;
+    }) {
+      return ipcRenderer.invoke(
+        "graphEnrichment:getCachedSubgraph",
+        payload ?? { query: "" },
+      );
+    },
+    async runEnrichmentMaintenance() {
+      return ipcRenderer.invoke("graphEnrichment:runMaintenance");
+    },
+  },
+  graphMemory: {
+    async getDashboard() {
+      return ipcRenderer.invoke("graphMemory:getDashboard");
+    },
+    async getSection(payload: unknown) {
+      return ipcRenderer.invoke("graphMemory:getSection", payload ?? {});
+    },
+    async getDetail(payload: unknown) {
+      return ipcRenderer.invoke("graphMemory:getDetail", payload ?? {});
+    },
+    async refresh() {
+      return ipcRenderer.invoke("graphMemory:refresh");
+    },
+    async revalidateSelected(payload: unknown) {
+      return ipcRenderer.invoke(
+        "graphMemory:revalidateSelected",
+        payload ?? { records: [] },
+      );
+    },
+    async exportNow() {
+      return ipcRenderer.invoke("graphMemory:exportNow");
+    },
+    async getExportsManifest() {
+      return ipcRenderer.invoke("graphMemory:getExportsManifest");
+    },
+    async openLatestSnapshot() {
+      return ipcRenderer.invoke("graphMemory:openLatestSnapshot");
+    },
+    async revealPath(pathValue: string) {
+      return ipcRenderer.invoke("graphMemory:revealPath", { path: pathValue });
     },
   },
   gwmdMap: {
-    async search(ticker: string, options: { model: unknown }) {
-      return ipcRenderer.invoke('gwmdMap:search', { ticker, model: options.model });
+    async search(ticker: string, options: { model: unknown; hops?: number }) {
+      return ipcRenderer.invoke("gwmdMap:search", {
+        ticker,
+        model: options.model,
+        hops: options.hops,
+      });
     },
     async loadAll() {
-      return ipcRenderer.invoke('gwmdMap:loadAll');
+      return ipcRenderer.invoke("gwmdMap:loadAll");
+    },
+    async loadScoped(ticker: string) {
+      return ipcRenderer.invoke("gwmdMap:loadScoped", { ticker });
     },
     async clear() {
-      return ipcRenderer.invoke('gwmdMap:clear');
+      return ipcRenderer.invoke("gwmdMap:clear");
+    },
+    async syncPush(payload: {
+      companies: Array<{
+        ticker: string;
+        name: string;
+        hq_lat?: number | null;
+        hq_lon?: number | null;
+        hq_city?: string | null;
+        hq_country?: string | null;
+        industry?: string | null;
+        health_score?: number | null;
+      }>;
+      relationships: Array<{
+        id: string;
+        from_ticker: string;
+        to_ticker: string;
+        relation_type:
+          | "supplier"
+          | "customer"
+          | "partner"
+          | "competitor"
+          | "financing"
+          | "license";
+        weight?: number | null;
+        confidence?: number | null;
+        evidence?: string | null;
+      }>;
+      replace?: boolean;
+      authToken?: string;
+    }) {
+      return ipcRenderer.invoke("gwmdMap:syncPush", payload);
+    },
+    async syncPull(payload?: {
+      since?: string;
+      replace?: boolean;
+      authToken?: string;
+    }) {
+      return ipcRenderer.invoke("gwmdMap:syncPull", payload ?? {});
+    },
+    async syncStatus(payload?: { authToken?: string }) {
+      return ipcRenderer.invoke("gwmdMap:syncStatus", payload ?? {});
+    },
+    async enterDisplaySurface(payload?: {
+      monitorIds?: number[];
+      primaryMonitorId?: number | null;
+      mode?: "standard" | "wall" | "analyst" | "mirror";
+    }) {
+      return ipcRenderer.invoke("gwmdMap:display:enter", payload ?? {});
+    },
+    async exitDisplaySurface() {
+      return ipcRenderer.invoke("gwmdMap:display:exit");
+    },
+    async getDisplaySurfaceState() {
+      return ipcRenderer.invoke("gwmdMap:display:getState");
+    },
+    async listDisplayMonitors() {
+      return ipcRenderer.invoke("gwmdMap:display:listMonitors");
+    },
+    async getDisplaySurfaceSelection() {
+      return ipcRenderer.invoke("gwmdMap:display:selection:get");
+    },
+    async setDisplaySurfaceSelection(payload: {
+      monitorIds?: number[];
+      primaryMonitorId?: number | null;
+      mode?: "standard" | "wall" | "analyst" | "mirror";
+    }) {
+      return ipcRenderer.invoke("gwmdMap:display:selection:set", payload ?? {});
+    },
+    onDisplaySurfaceChanged(handler: (state: unknown) => void) {
+      const listener: AnyListener = (_event: unknown, state: unknown) =>
+        handler(state);
+      const ipcListener = asIpcListener(listener);
+      ipcRenderer.on("gwmdMap:display:changed", ipcListener);
+      return () => ipcRenderer.off("gwmdMap:display:changed", ipcListener);
+    },
+    onGraphUpdated(handler: () => void) {
+      const listener: AnyListener = () => handler();
+      const ipcListener = asIpcListener(listener);
+      ipcRenderer.on("gwmdMap:graph:updated", ipcListener);
+      return () => ipcRenderer.off("gwmdMap:graph:updated", ipcListener);
+    },
+    async repairGeo(limit?: number) {
+      return ipcRenderer.invoke("gwmdMap:repairGeo", { limit });
     },
   },
   congress: {
     async queryTrades(filters: unknown) {
-      return ipcRenderer.invoke('congress:queryTrades', filters);
+      return ipcRenderer.invoke("congress:queryTrades", filters);
     },
     async queryTradesWithParty(filters: unknown) {
-      return ipcRenderer.invoke('congress:queryTradesWithParty', filters);
+      return ipcRenderer.invoke("congress:queryTradesWithParty", filters);
     },
     async getTradeStats(ticker: string, dateStart?: string, dateEnd?: string) {
-      return ipcRenderer.invoke('congress:getTradeStats', ticker, dateStart, dateEnd);
+      return ipcRenderer.invoke(
+        "congress:getTradeStats",
+        ticker,
+        dateStart,
+        dateEnd,
+      );
     },
-    async getMostTradedTickers(params: { dateStart?: string; dateEnd?: string; limit?: number }) {
-      return ipcRenderer.invoke('congress:getMostTradedTickers', params);
+    async getMostTradedTickers(params: {
+      dateStart?: string;
+      dateEnd?: string;
+      limit?: number;
+    }) {
+      return ipcRenderer.invoke("congress:getMostTradedTickers", params);
     },
     async getDisclosureLagStats() {
-      return ipcRenderer.invoke('congress:getDisclosureLagStats');
+      return ipcRenderer.invoke("congress:getDisclosureLagStats");
     },
     async queryMembers(filters: unknown) {
-      return ipcRenderer.invoke('congress:queryMembers', filters);
+      return ipcRenderer.invoke("congress:queryMembers", filters);
     },
     async queryLobbying(filters: unknown) {
-      return ipcRenderer.invoke('congress:queryLobbying', filters);
+      return ipcRenderer.invoke("congress:queryLobbying", filters);
     },
     async queryContracts(filters: unknown) {
-      return ipcRenderer.invoke('congress:queryContracts', filters);
+      return ipcRenderer.invoke("congress:queryContracts", filters);
     },
     async insertTrades(trades: unknown[]) {
-      return ipcRenderer.invoke('congress:insertTrades', trades);
+      return ipcRenderer.invoke("congress:insertTrades", trades);
     },
     async insertLobbying(activities: unknown[]) {
-      return ipcRenderer.invoke('congress:insertLobbying', activities);
+      return ipcRenderer.invoke("congress:insertLobbying", activities);
     },
     async insertContracts(contracts: unknown[]) {
-      return ipcRenderer.invoke('congress:insertContracts', contracts);
+      return ipcRenderer.invoke("congress:insertContracts", contracts);
     },
     async upsertMembers(members: unknown[]) {
-      return ipcRenderer.invoke('congress:upsertMembers', members);
+      return ipcRenderer.invoke("congress:upsertMembers", members);
     },
     async findTicker(companyName: string) {
-      return ipcRenderer.invoke('congress:findTicker', companyName);
+      return ipcRenderer.invoke("congress:findTicker", companyName);
     },
     async insertIngestionLog(log: unknown) {
-      return ipcRenderer.invoke('congress:insertIngestionLog', log);
+      return ipcRenderer.invoke("congress:insertIngestionLog", log);
     },
     async queryIngestionLogs(domain?: string, limit?: number) {
-      return ipcRenderer.invoke('congress:queryIngestionLogs', domain, limit);
+      return ipcRenderer.invoke("congress:queryIngestionLogs", domain, limit);
     },
     async fetchHouseTrades(limit?: number) {
-      return ipcRenderer.invoke('congress:fetchHouseTrades', limit);
+      return ipcRenderer.invoke("congress:fetchHouseTrades", limit);
     },
     async fetchSenateTrades(limit?: number) {
-      return ipcRenderer.invoke('congress:fetchSenateTrades', limit);
+      return ipcRenderer.invoke("congress:fetchSenateTrades", limit);
     },
     async fetchLobbyingActivities(limit?: number) {
-      return ipcRenderer.invoke('congress:fetchLobbyingActivities', limit);
+      return ipcRenderer.invoke("congress:fetchLobbyingActivities", limit);
     },
     async fetchFederalContracts(limit?: number) {
-      return ipcRenderer.invoke('congress:fetchFederalContracts', limit);
+      return ipcRenderer.invoke("congress:fetchFederalContracts", limit);
     },
     async fetchAllTrades(limit?: number) {
-      return ipcRenderer.invoke('congress:fetchAllTrades', limit);
+      return ipcRenderer.invoke("congress:fetchAllTrades", limit);
     },
     async scanAiSources() {
-      return ipcRenderer.invoke('congress:scanAiSources');
+      return ipcRenderer.invoke("congress:scanAiSources");
     },
     async analyzeTrade(
       tradeId: string,
@@ -642,7 +878,7 @@ const cockpitApi = {
       authToken?: string,
     ) {
       const resolvedToken = await resolveAuthToken(authToken);
-      return ipcRenderer.invoke('congress:ai:analyzeTrade', {
+      return ipcRenderer.invoke("congress:ai:analyzeTrade", {
         tradeId,
         tradeData,
         model,
@@ -651,7 +887,9 @@ const cockpitApi = {
     },
     async getAiWatchlist(authToken?: string) {
       const resolvedToken = await resolveAuthToken(authToken);
-      return ipcRenderer.invoke('congress:ai:watchlist:get', { authToken: resolvedToken });
+      return ipcRenderer.invoke("congress:ai:watchlist:get", {
+        authToken: resolvedToken,
+      });
     },
     async addAiWatchlist(
       ticker: string,
@@ -660,7 +898,7 @@ const cockpitApi = {
       authToken?: string,
     ) {
       const resolvedToken = await resolveAuthToken(authToken);
-      return ipcRenderer.invoke('congress:ai:watchlist:add', {
+      return ipcRenderer.invoke("congress:ai:watchlist:add", {
         ticker,
         reason,
         priority,
@@ -669,7 +907,7 @@ const cockpitApi = {
     },
     async removeAiWatchlist(watchlistId: number, authToken?: string) {
       const resolvedToken = await resolveAuthToken(authToken);
-      return ipcRenderer.invoke('congress:ai:watchlist:remove', {
+      return ipcRenderer.invoke("congress:ai:watchlist:remove", {
         watchlistId,
         authToken: resolvedToken,
       });
@@ -677,72 +915,101 @@ const cockpitApi = {
   },
   journal: {
     async listEntries(limit?: number) {
-      return ipcRenderer.invoke('cockpit:config:watchlists:list', limit);
+      return ipcRenderer.invoke("cockpit:config:watchlists:list", limit);
     },
     async watchlistsAdd(symbol: string, note?: string) {
-      return ipcRenderer.invoke('cockpit:config:watchlists:add', symbol, note);
+      return ipcRenderer.invoke("cockpit:config:watchlists:add", symbol, note);
     },
-    async watchlistsUpdate(id: number, fields: { symbol?: string; note?: string }) {
-      return ipcRenderer.invoke('cockpit:config:watchlists:update', id, fields);
+    async watchlistsUpdate(
+      id: number,
+      fields: { symbol?: string; note?: string },
+    ) {
+      return ipcRenderer.invoke("cockpit:config:watchlists:update", id, fields);
     },
     async watchlistsRemove(id: number) {
-      return ipcRenderer.invoke('cockpit:config:watchlists:remove', id);
+      return ipcRenderer.invoke("cockpit:config:watchlists:remove", id);
     },
     async layoutsList(symbol?: string) {
-      return ipcRenderer.invoke('cockpit:config:layouts:list', symbol);
+      return ipcRenderer.invoke("cockpit:config:layouts:list", symbol);
     },
     async setLayoutPreset(symbol: string, preset: string, data?: unknown) {
-      return ipcRenderer.invoke('cockpit:config:layouts:setPreset', symbol, preset, data);
+      return ipcRenderer.invoke(
+        "cockpit:config:layouts:setPreset",
+        symbol,
+        preset,
+        data,
+      );
     },
     async settingsGet() {
-      return ipcRenderer.invoke('cockpit:config:settings:get');
+      return ipcRenderer.invoke("cockpit:config:settings:get");
     },
     async settingsSet(next: Record<string, unknown>) {
-      return ipcRenderer.invoke('cockpit:config:settings:set', next);
+      return ipcRenderer.invoke("cockpit:config:settings:set", next);
     },
     async backendUrlGet() {
-      return ipcRenderer.invoke('cockpit:config:backendUrl:get');
+      return ipcRenderer.invoke("cockpit:config:backendUrl:get");
     },
     async backendUrlSet(nextUrl: string) {
-      return ipcRenderer.invoke('cockpit:config:backendUrl:set', nextUrl);
+      return ipcRenderer.invoke("cockpit:config:backendUrl:set", nextUrl);
+    },
+    async tedConfigGet() {
+      return ipcRenderer.invoke("cockpit:ted:config:get");
+    },
+    async tedConfigSet(next: Record<string, unknown>) {
+      return ipcRenderer.invoke("cockpit:ted:config:set", next);
     },
   },
   secrets: {
     async set(account: string, secret: string, passphrase?: string) {
-      return ipcRenderer.invoke('cockpit:secrets:set', account, secret, passphrase);
+      return ipcRenderer.invoke(
+        "cockpit:secrets:set",
+        account,
+        secret,
+        passphrase,
+      );
     },
     async get(account: string, passphrase?: string) {
-      return ipcRenderer.invoke('cockpit:secrets:get', account, passphrase);
+      return ipcRenderer.invoke("cockpit:secrets:get", account, passphrase);
     },
   },
   apiHub: {
     async list() {
-      return ipcRenderer.invoke('apiHub:list');
+      return ipcRenderer.invoke("apiHub:list");
     },
     async save(record: unknown) {
-      return ipcRenderer.invoke('apiHub:save', record);
+      return ipcRenderer.invoke("apiHub:save", record);
     },
     async remove(id: string) {
-      return ipcRenderer.invoke('apiHub:remove', id);
+      return ipcRenderer.invoke("apiHub:remove", id);
     },
     async openWindow() {
-      return ipcRenderer.invoke('apiHub:openWindow');
+      return ipcRenderer.invoke("apiHub:openWindow");
     },
     onChanged(handler: (snapshot: unknown) => void) {
-      const listener: AnyListener = (_event: unknown, snapshot: unknown) => handler(snapshot);
+      const listener: AnyListener = (_event: unknown, snapshot: unknown) =>
+        handler(snapshot);
       const ipcListener = asIpcListener(listener);
-      ipcRenderer.on('apiHub:changed', ipcListener);
-      return () => ipcRenderer.off('apiHub:changed', ipcListener);
+      ipcRenderer.on("apiHub:changed", ipcListener);
+      return () => ipcRenderer.off("apiHub:changed", ipcListener);
     },
   },
   smartRouting: {
     async openWindow() {
-      return ipcRenderer.invoke('smartRouting:openWindow');
+      return ipcRenderer.invoke("smartRouting:openWindow");
+    },
+  },
+  tabs: {
+    async openWindow(tabLabel: string) {
+      return ipcRenderer.invoke("cockpit:tabs:openWindow", tabLabel);
     },
   },
   apiKey: {
     async validate(provider: string, credentials: Record<string, string>) {
-      return ipcRenderer.invoke('cockpit:apikey:validate', provider, credentials);
+      return ipcRenderer.invoke(
+        "cockpit:apikey:validate",
+        provider,
+        credentials,
+      );
     },
     async validateStored(
       apiKeyId: string,
@@ -750,58 +1017,83 @@ const cockpitApi = {
       fields: Array<{ key: string; account: string }>,
       config?: Record<string, string>,
     ) {
-      return ipcRenderer.invoke('cockpit:apikey:validateStored', apiKeyId, provider, fields, config);
+      return ipcRenderer.invoke(
+        "cockpit:apikey:validateStored",
+        apiKeyId,
+        provider,
+        fields,
+        config,
+      );
     },
   },
   centralAI: {
     async track(interaction: Record<string, unknown>, authToken?: string) {
       const resolvedToken = await resolveAuthToken(authToken);
-      return ipcRenderer.invoke('centralAI:track', { ...interaction, authToken: resolvedToken });
+      return ipcRenderer.invoke("centralAI:track", {
+        ...interaction,
+        authToken: resolvedToken,
+      });
     },
     async predict(limit?: number, authToken?: string) {
       const resolvedToken = await resolveAuthToken(authToken);
-      return ipcRenderer.invoke('centralAI:predict', { limit, authToken: resolvedToken });
+      return ipcRenderer.invoke("centralAI:predict", {
+        limit,
+        authToken: resolvedToken,
+      });
     },
     async validate(response: string, context: unknown) {
-      return ipcRenderer.invoke('centralAI:validate', response, context);
+      return ipcRenderer.invoke("centralAI:validate", response, context);
     },
     async getIntelligence() {
-      return ipcRenderer.invoke('centralAI:getIntelligence');
+      return ipcRenderer.invoke("centralAI:getIntelligence");
     },
     async getStats() {
-      return ipcRenderer.invoke('centralAI:getStats');
+      return ipcRenderer.invoke("centralAI:getStats");
     },
     onPreloadIntelligence(handler: (data: unknown) => void) {
-      const listener: AnyListener = (_event: unknown, data: unknown) => handler(data);
+      const listener: AnyListener = (_event: unknown, data: unknown) =>
+        handler(data);
       const ipcListener = asIpcListener(listener);
-      ipcRenderer.on('centralAI:preload:intelligence', ipcListener);
-      return () => ipcRenderer.off('centralAI:preload:intelligence', ipcListener);
+      ipcRenderer.on("centralAI:preload:intelligence", ipcListener);
+      return () =>
+        ipcRenderer.off("centralAI:preload:intelligence", ipcListener);
     },
   },
   externalFeeds: {
     async getConfig() {
-      return ipcRenderer.invoke('externalFeeds:getConfig');
+      return ipcRenderer.invoke("externalFeeds:getConfig");
     },
     async setConfig(next: unknown) {
-      return ipcRenderer.invoke('externalFeeds:setConfig', next);
+      return ipcRenderer.invoke("externalFeeds:setConfig", next);
     },
-    async testProvider(providerId: string, credentials?: Record<string, string>) {
-      return ipcRenderer.invoke('externalFeeds:testProvider', providerId, credentials ?? {});
+    async testProvider(
+      providerId: string,
+      credentials?: Record<string, string>,
+    ) {
+      return ipcRenderer.invoke(
+        "externalFeeds:testProvider",
+        providerId,
+        credentials ?? {},
+      );
     },
     async getCotSummary(symbols: string[]) {
-      return ipcRenderer.invoke('externalFeeds:getCftcSummary', symbols);
+      return ipcRenderer.invoke("externalFeeds:getCftcSummary", symbols);
     },
     async getJoltsSeries() {
-      return ipcRenderer.invoke('externalFeeds:getJoltsSeries');
+      return ipcRenderer.invoke("externalFeeds:getJoltsSeries");
     },
     async getSecEvents(params: { tickers?: string[]; limit?: number }) {
-      return ipcRenderer.invoke('externalFeeds:getSecEvents', params);
+      return ipcRenderer.invoke("externalFeeds:getSecEvents", params);
     },
   },
   economicCalendar: {
-    async generateInsights(request: unknown, preference?: string, authToken?: string) {
+    async generateInsights(
+      request: unknown,
+      preference?: string,
+      authToken?: string,
+    ) {
       const resolvedToken = await resolveAuthToken(authToken);
-      return ipcRenderer.invoke('economicCalendar:insights', {
+      return ipcRenderer.invoke("economicCalendar:insights", {
         request,
         preference,
         authToken: resolvedToken,
@@ -810,33 +1102,35 @@ const cockpitApi = {
   },
   trading: {
     async placeOrder(req: unknown) {
-      return ipcRenderer.invoke('cockpit:trading:placeOrder', req);
+      return ipcRenderer.invoke("cockpit:trading:placeOrder", req);
     },
     async cancelOrder(orderId: string) {
-      return ipcRenderer.invoke('cockpit:trading:cancelOrder', orderId);
+      return ipcRenderer.invoke("cockpit:trading:cancelOrder", orderId);
     },
     async getOrders() {
-      return ipcRenderer.invoke('cockpit:trading:getOrders');
+      return ipcRenderer.invoke("cockpit:trading:getOrders");
     },
     async getPositions() {
-      return ipcRenderer.invoke('cockpit:trading:getPositions');
+      return ipcRenderer.invoke("cockpit:trading:getPositions");
     },
     async getAccount() {
-      return ipcRenderer.invoke('cockpit:trading:getAccount');
+      return ipcRenderer.invoke("cockpit:trading:getAccount");
     },
     onEvent(handler: (event: unknown) => void) {
-      const listener: AnyListener = (_event: unknown, paperEvent: unknown) => handler(paperEvent);
+      const listener: AnyListener = (_event: unknown, paperEvent: unknown) =>
+        handler(paperEvent);
       const ipcListener = asIpcListener(listener);
-      ipcRenderer.on('cockpit:trading:event', ipcListener);
-      return () => ipcRenderer.off('cockpit:trading:event', ipcListener);
+      ipcRenderer.on("cockpit:trading:event", ipcListener);
+      return () => ipcRenderer.off("cockpit:trading:event", ipcListener);
     },
   },
   risk: {
     onEvent(handler: (event: unknown) => void) {
-      const listener: AnyListener = (_event: unknown, riskEvent: unknown) => handler(riskEvent);
+      const listener: AnyListener = (_event: unknown, riskEvent: unknown) =>
+        handler(riskEvent);
       const ipcListener = asIpcListener(listener);
-      ipcRenderer.on('cockpit:risk:event', ipcListener);
-      return () => ipcRenderer.off('cockpit:risk:event', ipcListener);
+      ipcRenderer.on("cockpit:risk:event", ipcListener);
+      return () => ipcRenderer.off("cockpit:risk:event", ipcListener);
     },
   },
   backendWs: {
@@ -855,7 +1149,7 @@ const cockpitApi = {
         backendWsSubscriptions.add(symbol);
       }
       if (normalized.length > 0) {
-        sendBackendWsJson({ type: 'subscribe', symbols: normalized });
+        sendBackendWsJson({ type: "subscribe", symbols: normalized });
       }
       return [...backendWsSubscriptions.values()];
     },
@@ -865,7 +1159,7 @@ const cockpitApi = {
         backendWsSubscriptions.delete(symbol);
       }
       if (normalized.length > 0) {
-        sendBackendWsJson({ type: 'unsubscribe', symbols: normalized });
+        sendBackendWsJson({ type: "unsubscribe", symbols: normalized });
       }
       return [...backendWsSubscriptions.values()];
     },
@@ -884,7 +1178,7 @@ const cockpitApi = {
 // @ts-ignore
 window.cockpit = cockpitApi;
 
-contextBridge.exposeInMainWorld('cockpit', cockpitApi);
+contextBridge.exposeInMainWorld("cockpit", cockpitApi);
 
 // --------------------
 // COMPAT: window.streaming (make it accept many signatures)
@@ -892,8 +1186,8 @@ contextBridge.exposeInMainWorld('cockpit', cockpitApi);
 let compatSeq = 0;
 
 function pickFn(x: unknown): AnyListener | null {
-  if (typeof x === 'function') return x as AnyListener;
-  if (x && typeof x === 'object') {
+  if (typeof x === "function") return x as AnyListener;
+  if (x && typeof x === "object") {
     const candidateMap = x as Record<string, unknown>;
     const candidates = [
       candidateMap.handler,
@@ -906,7 +1200,8 @@ function pickFn(x: unknown): AnyListener | null {
       candidateMap.callback,
       candidateMap.cb,
     ];
-    for (const c of candidates) if (typeof c === 'function') return c as AnyListener;
+    for (const c of candidates)
+      if (typeof c === "function") return c as AnyListener;
   }
   return null;
 }
@@ -921,26 +1216,26 @@ function pickFn(x: unknown): AnyListener | null {
  */
 function normalizeOnEventsArgs(a: unknown, b: unknown) {
   const fnB = pickFn(b);
-  if (fnB) return { kind: 'events' as const, fn: fnB };
+  if (fnB) return { kind: "events" as const, fn: fnB };
 
   const fnA = pickFn(a);
-  if (fnA) return { kind: 'events' as const, fn: fnA };
+  if (fnA) return { kind: "events" as const, fn: fnA };
 
   // if a is object with batch handler, prefer batch delivery
-  if (a && typeof a === 'object') {
+  if (a && typeof a === "object") {
     const candidateMap = a as Record<string, unknown>;
     const batchFn =
       pickFn(candidateMap.onBatch) ||
       pickFn(candidateMap.onEventBatch) ||
       pickFn(candidateMap.onEventsBatch);
-    if (batchFn) return { kind: 'batch' as const, fn: batchFn };
+    if (batchFn) return { kind: "batch" as const, fn: batchFn };
   }
 
-  return { kind: 'none' as const, fn: null as AnyListener | null };
+  return { kind: "none" as const, fn: null as AnyListener | null };
 }
 
 function subscribeWithNormalizedHandler(norm: {
-  kind: 'events' | 'batch' | 'none';
+  kind: "events" | "batch" | "none";
   fn: AnyListener | null;
 }) {
   const listener = (_event: unknown, events: unknown[]) => {
@@ -950,7 +1245,7 @@ function subscribeWithNormalizedHandler(norm: {
     if (!norm.fn) return; // never crash if caller passed wrong shape
 
     try {
-      if (norm.kind === 'batch') {
+      if (norm.kind === "batch") {
         norm.fn({ ...meta, events });
       } else {
         // events style: pass (events, meta) AND also allow (meta, events) consumers to ignore order
@@ -958,7 +1253,7 @@ function subscribeWithNormalizedHandler(norm: {
       }
     } catch (err) {
       // never take down the renderer because a handler threw
-      console.error('[streamingCompat] handler threw', err);
+      console.error("[streamingCompat] handler threw", err);
     }
   };
 
@@ -968,7 +1263,7 @@ function subscribeWithNormalizedHandler(norm: {
 }
 
 const streamingCompat = {
-  version: 'compat-3' as const,
+  version: "compat-3" as const,
   ipcRenderer: ipcCompat,
 
   onEvents(a: unknown, b?: unknown) {
@@ -978,20 +1273,32 @@ const streamingCompat = {
 
   // keep common aliases too
   onEventBatch(handler: unknown) {
-    return subscribeWithNormalizedHandler({ kind: 'batch' as const, fn: pickFn(handler) });
+    return subscribeWithNormalizedHandler({
+      kind: "batch" as const,
+      fn: pickFn(handler),
+    });
   },
   onEventsBatch(handler: unknown) {
-    return subscribeWithNormalizedHandler({ kind: 'batch' as const, fn: pickFn(handler) });
+    return subscribeWithNormalizedHandler({
+      kind: "batch" as const,
+      fn: pickFn(handler),
+    });
   },
 
   subscribe(handler: unknown) {
-    return subscribeWithNormalizedHandler({ kind: 'events' as const, fn: pickFn(handler) });
+    return subscribeWithNormalizedHandler({
+      kind: "events" as const,
+      fn: pickFn(handler),
+    });
   },
   subscribeBatch(handler: unknown) {
-    return subscribeWithNormalizedHandler({ kind: 'batch' as const, fn: pickFn(handler) });
+    return subscribeWithNormalizedHandler({
+      kind: "batch" as const,
+      fn: pickFn(handler),
+    });
   },
 
-  async setSource(source: 'demo' | 'replay' | 'live') {
+  async setSource(source: "demo" | "replay" | "live") {
     await ipcRenderer.invoke(IPC_STREAM_SET_SOURCE, source);
   },
   async getStatus() {
@@ -1017,6 +1324,6 @@ const streamingCompat = {
   },
 };
 
-contextBridge.exposeInMainWorld('streaming', streamingCompat);
+contextBridge.exposeInMainWorld("streaming", streamingCompat);
 
-console.log('[preload] loaded (electron + streaming + cockpit)');
+console.log("[preload] loaded (electron + streaming + cockpit)");

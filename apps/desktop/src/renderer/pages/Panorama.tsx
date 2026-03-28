@@ -6,6 +6,7 @@ import { SectorMatrixComponent } from "../panorama/SectorMatrix";
 import { CrossAssetMonitorComponent } from "../panorama/CrossAssetMonitor";
 import { RegimeLabelComponent } from "../panorama/RegimeLabel";
 import { EconomicCalendar } from "../panorama/EconomicCalendar";
+import { TedDemandPulsePanel } from "../components/tedIntel/TedIntelWidgets";
 import {
   generateDemoPanoramaSnapshot,
 } from "../panorama/demoProvider";
@@ -298,6 +299,8 @@ export default function Panorama() {
         <b>📌 Decision Support Dashboard</b> — Real-time market overview with graceful
         degradation. All data in Demo mode uses synthetic stubs and ETF proxies. Works in Replay mode.
       </div>
+
+      <TedDemandPulsePanel windowDays="30d" />
 
       {/* Overview Row */}
       <div style={{ display: "grid", gap: 12 }}>

@@ -1,8 +1,8 @@
-import { create } from 'zustand';
-import { authGet, authRequest } from '../lib/apiClient';
-import type { CloudAiModelConfig } from './settingsStore';
+import { create } from "zustand";
+import { authGet, authRequest } from "../lib/apiClient";
+import type { CloudAiModelConfig } from "./settingsStore";
 
-const AI_RESEARCH_CONFIG_KEY = 'trading_terminal_ai_research_config';
+const AI_RESEARCH_CONFIG_KEY = "trading_terminal_ai_research_config";
 
 type AiBriefSource = {
   title: string;
@@ -61,7 +61,7 @@ type AiRuntimeStatus = {
 };
 
 type AiProgress = {
-  stage: 'ingest' | 'store' | string;
+  stage: "ingest" | "store" | string;
   runId: string;
   counts?: { items: number; clusters: number; briefs: number };
   modelProvider?: string;
@@ -84,7 +84,9 @@ type AiResearchState = {
   init: () => void;
   loadConfig: () => Promise<void>;
   saveConfig: (next: AiConfig) => Promise<void>;
-  runNow: (manualItems?: Array<{ title: string; text: string }>) => Promise<void>;
+  runNow: (
+    manualItems?: Array<{ title: string; text: string }>,
+  ) => Promise<void>;
   refreshBriefs: (limit?: number) => Promise<void>;
   checkRuntime: () => Promise<void>;
   setCloudModels: (models: CloudAiModelConfig[]) => void;
@@ -93,17 +95,91 @@ type AiResearchState = {
 
 function formatError(err: unknown): string {
   if (err instanceof Error) return err.message;
-  if (typeof err === 'string') return err;
-  return 'Unknown error';
+  if (typeof err === "string") return err;
+  return "Unknown error";
+}
+
+type IpcWrappedResponse<T> = {
+  ok?: boolean;
+  data?: T;
+  error?: string;
+};
+
+function unwrapIpcResponse<T>(value: unknown): T {
+  if (
+    value &&
+    typeof value === "object" &&
+    ("ok" in value || "data" in value || "error" in value)
+  ) {
+    const wrapped = value as IpcWrappedResponse<T>;
+    if (wrapped.ok === false) {
+      throw new Error(wrapped.error ?? "Request failed");
+    }
+    if ("data" in wrapped) {
+      return (wrapped.data as T) ?? (null as T);
+    }
+  }
+  return value as T;
+}
+
+function normalizeBriefs(value: unknown): AiBrief[] {
+  const unwrapped = unwrapIpcResponse<unknown>(value);
+  if (Array.isArray(unwrapped)) {
+    return unwrapped as AiBrief[];
+  }
+  if (
+    unwrapped &&
+    typeof unwrapped === "object" &&
+    "briefs" in unwrapped &&
+    Array.isArray((unwrapped as { briefs?: unknown }).briefs)
+  ) {
+    return (unwrapped as { briefs: AiBrief[] }).briefs;
+  }
+  return [];
+}
+
+function normalizeStatus(value: unknown): AiRunStatus | null {
+  const unwrapped = unwrapIpcResponse<unknown>(value);
+  if (unwrapped && typeof unwrapped === "object") {
+    return unwrapped as AiRunStatus;
+  }
+  return null;
+}
+
+function normalizeConfig(value: unknown): AiConfig {
+  const unwrapped = unwrapIpcResponse<unknown>(value);
+  if (unwrapped && typeof unwrapped === "object") {
+    return {
+      ...getDefaultAiConfig(),
+      ...(unwrapped as Partial<AiConfig>),
+      rssFeeds: Array.isArray((unwrapped as Partial<AiConfig>).rssFeeds)
+        ? ((unwrapped as Partial<AiConfig>).rssFeeds as string[])
+        : [],
+      secForms: Array.isArray((unwrapped as Partial<AiConfig>).secForms)
+        ? ((unwrapped as Partial<AiConfig>).secForms as string[])
+        : ["8-K", "10-Q", "10-K"],
+      watchlistTickers: Array.isArray(
+        (unwrapped as Partial<AiConfig>).watchlistTickers,
+      )
+        ? ((unwrapped as Partial<AiConfig>).watchlistTickers as string[])
+        : [],
+      watchlistKeywords: Array.isArray(
+        (unwrapped as Partial<AiConfig>).watchlistKeywords,
+      )
+        ? ((unwrapped as Partial<AiConfig>).watchlistKeywords as string[])
+        : [],
+    };
+  }
+  return getDefaultAiConfig();
 }
 
 function getDefaultAiConfig(): AiConfig {
   return {
     enabled: false,
-    model: 'deepseek-r1:14b',
+    model: "deepseek-r1:14b",
     pollIntervalSec: 300,
     rssFeeds: [],
-    secForms: ['8-K', '10-Q', '10-K'],
+    secForms: ["8-K", "10-Q", "10-K"],
     watchlistTickers: [],
     watchlistKeywords: [],
     useX: false,
@@ -119,9 +195,15 @@ function loadLocalAiConfig(): AiConfig {
       ...getDefaultAiConfig(),
       ...parsed,
       rssFeeds: Array.isArray(parsed.rssFeeds) ? parsed.rssFeeds : [],
-      secForms: Array.isArray(parsed.secForms) ? parsed.secForms : ['8-K', '10-Q', '10-K'],
-      watchlistTickers: Array.isArray(parsed.watchlistTickers) ? parsed.watchlistTickers : [],
-      watchlistKeywords: Array.isArray(parsed.watchlistKeywords) ? parsed.watchlistKeywords : [],
+      secForms: Array.isArray(parsed.secForms)
+        ? parsed.secForms
+        : ["8-K", "10-Q", "10-K"],
+      watchlistTickers: Array.isArray(parsed.watchlistTickers)
+        ? parsed.watchlistTickers
+        : [],
+      watchlistKeywords: Array.isArray(parsed.watchlistKeywords)
+        ? parsed.watchlistKeywords
+        : [],
     };
   } catch {
     return getDefaultAiConfig();
@@ -142,7 +224,10 @@ async function checkRuntimeViaHttp(): Promise<AiRuntimeStatus> {
     const result = await window.cockpit.aiResearch.checkRuntime();
     return result as AiRuntimeStatus;
   } catch (err) {
-    return { available: false, message: `Runtime check failed: ${formatError(err)}` };
+    return {
+      available: false,
+      message: `Runtime check failed: ${formatError(err)}`,
+    };
   }
 }
 
@@ -155,7 +240,7 @@ export const useAiResearchStore = create<AiResearchState>((set, get) => ({
   briefs: [],
   progress: null,
   lastErrors: [],
-  focusDraft: '',
+  focusDraft: "",
   setFocusDraft: (value) => set({ focusDraft: value }),
   loading: false,
   error: null,
@@ -172,31 +257,38 @@ export const useAiResearchStore = create<AiResearchState>((set, get) => ({
       setInterval(() => {
         void get().refreshBriefs();
         authGet<{ running: boolean; queueDepth: number; lastRun?: unknown }>(
-          '/api/ai/research/status',
+          "/api/ai/research/status",
         )
-          .then((status) => set({ status: status as AiRunStatus }))
+          .then((status) => set({ status: normalizeStatus(status) }))
           .catch(() => {});
       }, 30_000);
       return;
     }
 
-    api.onBriefs?.((briefs) => set({ briefs: briefs ?? [] }));
-    api.onStatus?.((status) => set({ status }));
+    api.onBriefs?.((briefs) => set({ briefs: normalizeBriefs(briefs) }));
+    api.onStatus?.((status) => set({ status: normalizeStatus(status) }));
     api.onProgress?.((progress) => set({ progress }));
 
     // Optional WS path for backend-pushed AI updates (kept alongside IPC for compatibility).
     const wsApi = window.cockpit?.backendWs;
     void wsApi?.connect?.();
     wsApi?.onMessage?.((message) => {
-      if (!message || typeof message !== 'object') {
+      if (!message || typeof message !== "object") {
         return;
       }
-      const payload = message as { type?: string; data?: unknown; progress?: unknown };
-      if (payload.type === 'ai:status') {
-        set({ status: payload.data as AiRunStatus });
-      } else if (payload.type === 'ai:briefs') {
-        set({ briefs: (payload.data as AiBrief[]) ?? [] });
-      } else if (payload.type === 'ai:progress' || payload.type === 'job:progress') {
+      const payload = message as {
+        type?: string;
+        data?: unknown;
+        progress?: unknown;
+      };
+      if (payload.type === "ai:status") {
+        set({ status: normalizeStatus(payload.data) });
+      } else if (payload.type === "ai:briefs") {
+        set({ briefs: normalizeBriefs(payload.data) });
+      } else if (
+        payload.type === "ai:progress" ||
+        payload.type === "job:progress"
+      ) {
         set({ progress: (payload.progress ?? payload.data) as AiProgress });
       }
     });
@@ -208,9 +300,9 @@ export const useAiResearchStore = create<AiResearchState>((set, get) => ({
       // Web mode: try backend HTTP, fall back to localStorage
       set({ loading: true, error: null });
       try {
-        const config = await authGet<AiConfig>('/api/ai/research/config');
+        const config = await authGet<AiConfig>("/api/ai/research/config");
         saveLocalAiConfig(config);
-        set({ config, focusDraft: config?.focusPrompt ?? '', loading: false });
+        set({ config, focusDraft: config?.focusPrompt ?? "", loading: false });
       } catch {
         const localConfig = loadLocalAiConfig();
         set({ config: localConfig, loading: false, error: null });
@@ -219,9 +311,9 @@ export const useAiResearchStore = create<AiResearchState>((set, get) => ({
     }
     set({ loading: true, error: null });
     try {
-      const config = await api.getConfig();
+      const config = normalizeConfig(await api.getConfig());
       saveLocalAiConfig(config);
-      set({ config, focusDraft: config?.focusPrompt ?? '', loading: false });
+      set({ config, focusDraft: config?.focusPrompt ?? "", loading: false });
     } catch (err) {
       const localConfig = loadLocalAiConfig();
       set({ config: localConfig, loading: false, error: null });
@@ -234,8 +326,8 @@ export const useAiResearchStore = create<AiResearchState>((set, get) => ({
       // Web mode: persist to localStorage immediately, then sync to backend
       saveLocalAiConfig(next);
       set({ config: next, error: null, loading: false });
-      authRequest('/api/ai/research/config', {
-        method: 'PUT',
+      authRequest("/api/ai/research/config", {
+        method: "PUT",
         body: JSON.stringify(next),
       }).catch(() => {});
       return;
@@ -257,8 +349,8 @@ export const useAiResearchStore = create<AiResearchState>((set, get) => ({
       // Web mode: call backend REST endpoint directly
       set({ loading: true, error: null });
       try {
-        await authRequest('/api/ai/research/run', {
-          method: 'POST',
+        await authRequest("/api/ai/research/run", {
+          method: "POST",
           body: JSON.stringify({ manualItems: manualItems ?? [] }),
         });
         set({ lastErrors: [], loading: false });
@@ -273,7 +365,7 @@ export const useAiResearchStore = create<AiResearchState>((set, get) => ({
     try {
       const res = await api.runNow(manualItems ?? []);
       if (isRunError(res)) {
-        set({ loading: false, error: res.error ?? 'AI run failed' });
+        set({ loading: false, error: res.error ?? "AI run failed" });
         return;
       }
       if (hasRunWarnings(res)) {
@@ -296,7 +388,7 @@ export const useAiResearchStore = create<AiResearchState>((set, get) => ({
         const data = await authGet<{ briefs: AiBrief[] }>(
           `/api/ai/research/briefs?limit=${limit}`,
         );
-        set({ briefs: data.briefs ?? [] });
+        set({ briefs: normalizeBriefs(data) });
       } catch (err) {
         set({ error: formatError(err) });
       }
@@ -304,7 +396,7 @@ export const useAiResearchStore = create<AiResearchState>((set, get) => ({
     }
     try {
       const briefs = await api.listBriefs(limit);
-      set({ briefs: briefs ?? [] });
+      set({ briefs: normalizeBriefs(briefs) });
     } catch (err) {
       set({ error: formatError(err) });
     }
@@ -312,20 +404,23 @@ export const useAiResearchStore = create<AiResearchState>((set, get) => ({
 
   async checkRuntime() {
     const api = window.cockpit?.aiResearch;
-    console.log('[aiResearchStore] checkRuntime() called, API available:', !!api?.checkRuntime);
+    console.log(
+      "[aiResearchStore] checkRuntime() called, API available:",
+      !!api?.checkRuntime,
+    );
 
     if (!api?.checkRuntime) {
       console.warn(
-        '[aiResearchStore] IPC checkRuntime unavailable, falling back to direct Ollama HTTP check',
+        "[aiResearchStore] IPC checkRuntime unavailable, falling back to direct Ollama HTTP check",
       );
       const runtime = await checkRuntimeViaHttp();
-      console.log('[aiResearchStore] Direct HTTP runtime result:', runtime);
+      console.log("[aiResearchStore] Direct HTTP runtime result:", runtime);
       set({ runtime, error: runtime.available ? null : get().error });
       return;
     }
 
     try {
-      console.log('[aiResearchStore] 🔍 Calling api.checkRuntime()...');
+      console.log("[aiResearchStore] 🔍 Calling api.checkRuntime()...");
       const startTime = Date.now();
       const runtime = await api.checkRuntime();
       const duration = Date.now() - startTime;
@@ -335,17 +430,23 @@ export const useAiResearchStore = create<AiResearchState>((set, get) => ({
       );
       set({ runtime, error: runtime.available ? null : get().error });
     } catch (err) {
-      console.error('[aiResearchStore] ❌ Runtime check failed with exception:', err);
       console.error(
-        '[aiResearchStore] Error type:',
+        "[aiResearchStore] ❌ Runtime check failed with exception:",
+        err,
+      );
+      console.error(
+        "[aiResearchStore] Error type:",
         err instanceof Error ? err.constructor.name : typeof err,
       );
       console.error(
-        '[aiResearchStore] Error message:',
+        "[aiResearchStore] Error message:",
         err instanceof Error ? err.message : String(err),
       );
       const fallbackRuntime = await checkRuntimeViaHttp();
-      console.log('[aiResearchStore] IPC failed, direct HTTP fallback result:', fallbackRuntime);
+      console.log(
+        "[aiResearchStore] IPC failed, direct HTTP fallback result:",
+        fallbackRuntime,
+      );
       set({
         runtime: fallbackRuntime.available
           ? fallbackRuntime
@@ -378,8 +479,8 @@ export const useAiResearchStore = create<AiResearchState>((set, get) => ({
 function isRunError(value: unknown): value is { ok: false; error?: string } {
   return (
     !!value &&
-    typeof value === 'object' &&
-    'ok' in value &&
+    typeof value === "object" &&
+    "ok" in value &&
     (value as { ok?: boolean }).ok === false
   );
 }
@@ -387,8 +488,8 @@ function isRunError(value: unknown): value is { ok: false; error?: string } {
 function hasRunWarnings(value: unknown): value is { errors?: string[] } {
   return (
     !!value &&
-    typeof value === 'object' &&
-    'errors' in value &&
+    typeof value === "object" &&
+    "errors" in value &&
     Array.isArray((value as { errors?: unknown }).errors)
   );
 }

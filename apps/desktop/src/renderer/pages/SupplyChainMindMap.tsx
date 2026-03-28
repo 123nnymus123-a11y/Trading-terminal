@@ -11,6 +11,8 @@ import { useStreamStore } from "../store/streamStore";
 import { useTradingStore } from "../store/tradingStore";
 import VisualizationSurface from "../components/supplyChain/VisualizationSurface";
 import ContextPanel from "../components/supplyChain/ContextPanel";
+import { TedSupplyChainOverlayPanel } from "../components/tedIntel/TedIntelWidgets";
+import ExposureBriefPanel from "../components/exposureBrief/ExposureBriefPanel";
 import type { MindMapData, SupplyChainAdvisorRequest, SupplyChainGraph } from "@tc/shared/supplyChain";
 
 const COLORS = {
@@ -26,6 +28,115 @@ const COLORS = {
 };
 
 const GWMD_FILTERS_KEY = "gwmdFilters.v1";
+const SUPPLY_CHAIN_INTEL_SETTINGS_KEY = "supplyChainIntelligence.settings.v1";
+
+type IntelligenceWorkspaceSettings = {
+  upstreamDepth: number;
+  downstreamDepth: number;
+  totalVisibleTiers: number;
+  relationScope: "suppliers" | "customers" | "both";
+  showFacilities: boolean;
+  showRoutes: boolean;
+  confidenceThreshold: number;
+  dataStyle: "reported-first" | "blended" | "inference-heavy";
+  pointInTimeMode: "live" | "historical";
+  displayDensity: "compact" | "balanced" | "dense";
+  rankingMethod: "exposure" | "criticality" | "confidence";
+  exposureMethod: "weight" | "hhi" | "hybrid";
+  scenario: string;
+  timeHorizon: "1D" | "1W" | "1M" | "1Q";
+  activeOverlays: string[];
+};
+
+const DEFAULT_INTELLIGENCE_SETTINGS: IntelligenceWorkspaceSettings = {
+  upstreamDepth: 2,
+  downstreamDepth: 2,
+  totalVisibleTiers: 3,
+  relationScope: "both",
+  showFacilities: true,
+  showRoutes: true,
+  confidenceThreshold: 0.6,
+  dataStyle: "blended",
+  pointInTimeMode: "live",
+  displayDensity: "balanced",
+  rankingMethod: "exposure",
+  exposureMethod: "hybrid",
+  scenario: "Baseline",
+  timeHorizon: "1M",
+  activeOverlays: ["Geopolitical", "Shipping", "Commodity"],
+};
+
+type EnrichmentInspectorPayload = {
+  summary: {
+    totalEntities: number;
+    totalEdges: number;
+    candidateItems: number;
+    validationItems: number;
+    productionItems: number;
+    staleItems: number;
+    lowConfidenceItems: number;
+    pendingRevalidation: number;
+    queuedSyncJobs: number;
+    lastQueryAt: string | null;
+    hotTargets: number;
+    warmTargets: number;
+    coldTargets: number;
+  };
+  staleEntities: Array<{
+    id: string;
+    canonicalName: string;
+    confidenceScore: number;
+    freshnessScore: number;
+    zone: "candidate" | "validation" | "production";
+    lastSeenAt: string;
+  }>;
+  lowConfidenceEdges: Array<{
+    id: string;
+    relationType: string;
+    fromEntityId: string;
+    toEntityId: string;
+    confidenceScore: number;
+    zone: "candidate" | "validation" | "production";
+    validationStatus: "unvalidated" | "pending_validation" | "validated" | "contradicted" | "rejected";
+  }>;
+};
+
+type SyncStatusPayload = {
+  cloudEnabled: boolean;
+  connected: boolean;
+  provider: string;
+  mode: "manual" | "pull" | "push" | "bidirectional";
+  lastSyncAt: string | null;
+  queueSize: number;
+  message: string;
+};
+
+function loadIntelligenceSettings(): IntelligenceWorkspaceSettings {
+  if (typeof window === "undefined") return DEFAULT_INTELLIGENCE_SETTINGS;
+  try {
+    const raw = window.localStorage.getItem(SUPPLY_CHAIN_INTEL_SETTINGS_KEY);
+    if (!raw) return DEFAULT_INTELLIGENCE_SETTINGS;
+    const parsed = JSON.parse(raw) as Partial<IntelligenceWorkspaceSettings>;
+    return {
+      ...DEFAULT_INTELLIGENCE_SETTINGS,
+      ...parsed,
+      activeOverlays: Array.isArray(parsed.activeOverlays)
+        ? parsed.activeOverlays.filter((value): value is string => typeof value === "string")
+        : DEFAULT_INTELLIGENCE_SETTINGS.activeOverlays,
+    };
+  } catch {
+    return DEFAULT_INTELLIGENCE_SETTINGS;
+  }
+}
+
+function saveIntelligenceSettings(settings: IntelligenceWorkspaceSettings) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(SUPPLY_CHAIN_INTEL_SETTINGS_KEY, JSON.stringify(settings));
+  } catch {
+    // Ignore persistence failures
+  }
+}
 
 function loadGwmdFilters() {
   if (typeof window === "undefined") {
@@ -101,13 +212,57 @@ export default function SupplyChainMindMap() {
   );
   const currentModel = getCloudModelFor("supplyChain");
   const lastOptionsRef = useRef({ strictMode, includeHypothesis, hops, minEdgeWeight });
+  const regenerateTimerRef = useRef<number | null>(null);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [showSettingsPanel, setShowSettingsPanel] = useState(true);
+  const [showEnrichmentPanel, setShowEnrichmentPanel] = useState(false);
+  const [showExposureBrief, setShowExposureBrief] = useState(false);
+  const [enrichmentInspector, setEnrichmentInspector] = useState<EnrichmentInspectorPayload | null>(null);
+  const [enrichmentSync, setEnrichmentSync] = useState<SyncStatusPayload | null>(null);
+  const [enrichmentSubgraphQuery, setEnrichmentSubgraphQuery] = useState("");
+  const [enrichmentSubgraphStats, setEnrichmentSubgraphStats] = useState<{ entities: number; edges: number; staleDetected: number } | null>(null);
+  const [enrichmentStatusText, setEnrichmentStatusText] = useState<string | null>(null);
+  const [enrichmentLoading, setEnrichmentLoading] = useState(false);
+  const [workspaceSettings, setWorkspaceSettings] = useState<IntelligenceWorkspaceSettings>(loadIntelligenceSettings);
   
   const [gwmdFilters, setGwmdFilters] = useState(loadGwmdFilters);
+
+  const refreshEnrichmentInspector = useCallback(async () => {
+    const api = window.cockpit?.supplyChain;
+    if (!api?.getEnrichmentInspector || !api.getEnrichmentSyncStatus) return;
+    setEnrichmentLoading(true);
+    setEnrichmentStatusText(null);
+    try {
+      const [inspectorRes, syncRes] = await Promise.all([
+        api.getEnrichmentInspector(),
+        api.getEnrichmentSyncStatus(),
+      ]);
+      if (inspectorRes?.success && inspectorRes.data) {
+        setEnrichmentInspector(inspectorRes.data as EnrichmentInspectorPayload);
+      }
+      if (syncRes?.success && syncRes.data) {
+        setEnrichmentSync(syncRes.data as SyncStatusPayload);
+      }
+    } catch (err) {
+      setEnrichmentStatusText(`Inspector refresh failed: ${String(err)}`);
+    } finally {
+      setEnrichmentLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     saveGwmdFilters(gwmdFilters);
   }, [gwmdFilters]);
+
+  useEffect(() => {
+    saveIntelligenceSettings(workspaceSettings);
+  }, [workspaceSettings]);
+
+  useEffect(() => {
+    if (showEnrichmentPanel) {
+      void refreshEnrichmentInspector();
+    }
+  }, [showEnrichmentPanel, refreshEnrichmentInspector]);
 
   const resolveNodeIdByTicker = useCallback(
     (ticker: string) => {
@@ -170,13 +325,25 @@ export default function SupplyChainMindMap() {
       last.includeHypothesis !== includeHypothesis ||
       last.hops !== hops ||
       last.minEdgeWeight !== minEdgeWeight;
-    if (changed && searchTicker.trim()) {
+    if (changed && searchTicker.trim() && !loading) {
       lastOptionsRef.current = { strictMode, includeHypothesis, hops, minEdgeWeight };
       if (mindMapData) {
-        generate();
+        if (regenerateTimerRef.current !== null) {
+          window.clearTimeout(regenerateTimerRef.current);
+        }
+        regenerateTimerRef.current = window.setTimeout(() => {
+          regenerateTimerRef.current = null;
+          void generate();
+        }, 220);
       }
     }
-  }, [strictMode, includeHypothesis, hops, minEdgeWeight, generate, mindMapData, searchTicker]);
+    return () => {
+      if (regenerateTimerRef.current !== null) {
+        window.clearTimeout(regenerateTimerRef.current);
+        regenerateTimerRef.current = null;
+      }
+    };
+  }, [strictMode, includeHypothesis, hops, minEdgeWeight, generate, loading, mindMapData, searchTicker]);
 
   useEffect(() => {
     if (selectedNodeId) {
@@ -284,6 +451,12 @@ export default function SupplyChainMindMap() {
         }}
       >
         <div style={{ display: "flex", gap: 16, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
+          <div style={{ minWidth: 260 }}>
+            <div style={{ fontSize: 16, fontWeight: 700, letterSpacing: 0.4 }}>AI Supply Chain Intelligence</div>
+            <div style={{ fontSize: 11, color: COLORS.textMuted, marginTop: 2 }}>
+              Institutional network, risk, and scenario monitor
+            </div>
+          </div>
           <div style={{ display: "flex", alignItems: "center", gap: 12, flex: 1, minWidth: 320 }}>
             <form onSubmit={handleSubmit} style={{ display: "flex", alignItems: "center", gap: 8, flex: 1 }}>
               <div style={{ position: "relative", flex: 1 }}>
@@ -410,7 +583,11 @@ export default function SupplyChainMindMap() {
             <div style={{ display: "flex", gap: 6 }}>
               {[
                 { id: "flow", label: "Graph" },
+                { id: "impact", label: "Map" },
+                { id: "radial", label: "Flow" },
+                { id: "risk", label: "Risk" },
                 { id: "shock", label: "Top Paths" },
+                { id: "global", label: "Global" },
               ].map((mode) => (
                 <button
                   key={mode.id}
@@ -493,12 +670,13 @@ export default function SupplyChainMindMap() {
               </button>
               <button
                 type="button"
+                onClick={() => setShowSettingsPanel((value) => !value)}
                 title="Settings"
                 style={{
                   padding: "8px 10px",
                   borderRadius: 10,
                   border: `1px solid ${COLORS.border}`,
-                  background: "rgba(15,23,42,0.6)",
+                  background: showSettingsPanel ? "rgba(59,130,246,0.2)" : "rgba(15,23,42,0.6)",
                   color: COLORS.text,
                   cursor: "pointer",
                   fontSize: 12,
@@ -522,11 +700,51 @@ export default function SupplyChainMindMap() {
               >
                 ⤓
               </button>
+              <button
+                type="button"
+                onClick={() => setShowExposureBrief(true)}
+                title="Exposure Brief"
+                style={{
+                  padding: "8px 10px",
+                  borderRadius: 10,
+                  border: `1px solid ${COLORS.accent}`,
+                  background: "rgba(59,130,246,0.16)",
+                  color: COLORS.accent,
+                  cursor: "pointer",
+                  fontSize: 12,
+                  fontWeight: 700,
+                }}
+              >
+                Brief
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowEnrichmentPanel((value) => !value)}
+                title="Graph enrichment memory inspector"
+                style={{
+                  padding: "8px 10px",
+                  borderRadius: 10,
+                  border: `1px solid ${COLORS.border}`,
+                  background: showEnrichmentPanel ? "rgba(34,197,94,0.2)" : "rgba(15,23,42,0.6)",
+                  color: COLORS.text,
+                  cursor: "pointer",
+                  fontSize: 12,
+                }}
+              >
+                MEM
+              </button>
             </div>
           </div>
         </div>
 
         <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <ContextChip label="Name" value={(mindMapData?.centerTicker ?? searchTicker) || "-"} />
+          <ContextChip label="Mode" value={viewMode.toUpperCase()} />
+          <ContextChip label="Scenario" value={workspaceSettings.scenario} />
+          <ContextChip label="Horizon" value={workspaceSettings.timeHorizon} />
+          <ContextChip label="Style" value={workspaceSettings.dataStyle} />
+          <ContextChip label="Confidence" value={`${Math.round(workspaceSettings.confidenceThreshold * 100)}%+`} />
+          <ContextChip label="Overlays" value={workspaceSettings.activeOverlays.slice(0, 2).join(" + ")} />
           {currentModel && (
             <div style={{ fontSize: 11, color: COLORS.textMuted }}>
               Model: <b>{currentModel.provider}</b> • <b>{currentModel.model}</b>
@@ -545,6 +763,13 @@ export default function SupplyChainMindMap() {
           )}
         </div>
 
+        <div style={{ marginTop: 12 }}>
+          <TedSupplyChainOverlayPanel
+            tickerOrName={mindMapData?.centerTicker ?? searchTicker}
+            windowDays="90d"
+          />
+        </div>
+
         {error && (
           <div
             style={{
@@ -558,6 +783,200 @@ export default function SupplyChainMindMap() {
             }}
           >
             {error}
+          </div>
+        )}
+
+        {showEnrichmentPanel && (
+          <div
+            style={{
+              marginTop: 12,
+              padding: 12,
+              borderRadius: 12,
+              border: "1px solid rgba(34,197,94,0.35)",
+              background: "rgba(15,23,42,0.85)",
+              display: "flex",
+              flexDirection: "column",
+              gap: 10,
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <div style={{ fontSize: 12, fontWeight: 700 }}>Graph Enrichment Memory Inspector</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  type="button"
+                  onClick={() => void refreshEnrichmentInspector()}
+                  style={{
+                    padding: "6px 10px",
+                    borderRadius: 8,
+                    border: `1px solid ${COLORS.border}`,
+                    background: "rgba(15,23,42,0.65)",
+                    color: COLORS.text,
+                    fontSize: 11,
+                    cursor: "pointer",
+                  }}
+                >
+                  Refresh
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const api = window.cockpit?.supplyChain;
+                    if (!api?.exportEnrichmentSnapshot) return;
+                    setEnrichmentStatusText(null);
+                    try {
+                      const result = await api.exportEnrichmentSnapshot();
+                      if (result?.success && result.data) {
+                        setEnrichmentStatusText(`Exported JSON: ${result.data.jsonPath}`);
+                      } else {
+                        setEnrichmentStatusText(result?.error || "Export failed");
+                      }
+                    } catch (err) {
+                      setEnrichmentStatusText(`Export failed: ${String(err)}`);
+                    }
+                  }}
+                  style={{
+                    padding: "6px 10px",
+                    borderRadius: 8,
+                    border: `1px solid ${COLORS.border}`,
+                    background: "rgba(15,23,42,0.65)",
+                    color: COLORS.text,
+                    fontSize: 11,
+                    cursor: "pointer",
+                  }}
+                >
+                  Export JSON/CSV
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const api = window.cockpit?.supplyChain;
+                    if (!api?.runEnrichmentMaintenance) return;
+                    setEnrichmentStatusText(null);
+                    try {
+                      const result = await api.runEnrichmentMaintenance();
+                      if (result?.success && result.data) {
+                        setEnrichmentStatusText(
+                          `Maintenance: stale entities ${result.data.staleEntities}, stale edges ${result.data.staleEdges}, queued revalidations ${result.data.queuedRevalidations}`,
+                        );
+                        await refreshEnrichmentInspector();
+                      } else {
+                        setEnrichmentStatusText(result?.error || "Maintenance failed");
+                      }
+                    } catch (err) {
+                      setEnrichmentStatusText(`Maintenance failed: ${String(err)}`);
+                    }
+                  }}
+                  style={{
+                    padding: "6px 10px",
+                    borderRadius: 8,
+                    border: `1px solid ${COLORS.border}`,
+                    background: "rgba(15,23,42,0.65)",
+                    color: COLORS.text,
+                    fontSize: 11,
+                    cursor: "pointer",
+                  }}
+                >
+                  Run Maintenance
+                </button>
+              </div>
+            </div>
+
+            <div style={{ display: "flex", gap: 14, flexWrap: "wrap", fontSize: 11, color: COLORS.textMuted }}>
+              <span>Entities: {enrichmentInspector?.summary.totalEntities ?? 0}</span>
+              <span>Edges: {enrichmentInspector?.summary.totalEdges ?? 0}</span>
+              <span>Candidate: {enrichmentInspector?.summary.candidateItems ?? 0}</span>
+              <span>Validation: {enrichmentInspector?.summary.validationItems ?? 0}</span>
+              <span>Production: {enrichmentInspector?.summary.productionItems ?? 0}</span>
+              <span>Stale: {enrichmentInspector?.summary.staleItems ?? 0}</span>
+              <span>Low confidence: {enrichmentInspector?.summary.lowConfidenceItems ?? 0}</span>
+            </div>
+
+            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+              <input
+                value={enrichmentSubgraphQuery}
+                onChange={(e) => setEnrichmentSubgraphQuery(e.target.value)}
+                placeholder="Lookup cached subgraph by entity/alias"
+                style={{
+                  flex: 1,
+                  minWidth: 260,
+                  padding: "8px 10px",
+                  borderRadius: 8,
+                  border: `1px solid ${COLORS.border}`,
+                  background: "rgba(2,6,23,0.6)",
+                  color: COLORS.text,
+                  fontSize: 12,
+                }}
+              />
+              <button
+                type="button"
+                onClick={async () => {
+                  const api = window.cockpit?.supplyChain;
+                  if (!api?.getEnrichmentCachedSubgraph) return;
+                  try {
+                    const result = await api.getEnrichmentCachedSubgraph({ query: enrichmentSubgraphQuery, hops: 1 });
+                    if (result?.success && result.data) {
+                      setEnrichmentSubgraphStats({
+                        entities: result.data.entities.length,
+                        edges: result.data.edges.length,
+                        staleDetected: result.data.staleDetected,
+                      });
+                    } else {
+                      setEnrichmentStatusText(result?.error || "Subgraph lookup failed");
+                    }
+                  } catch (err) {
+                    setEnrichmentStatusText(`Subgraph lookup failed: ${String(err)}`);
+                  }
+                }}
+                style={{
+                  padding: "8px 10px",
+                  borderRadius: 8,
+                  border: `1px solid ${COLORS.border}`,
+                  background: "rgba(15,23,42,0.65)",
+                  color: COLORS.text,
+                  fontSize: 11,
+                  cursor: "pointer",
+                }}
+              >
+                Cached Lookup
+              </button>
+              {enrichmentSubgraphStats && (
+                <span style={{ fontSize: 11, color: COLORS.textMuted }}>
+                  Subgraph entities {enrichmentSubgraphStats.entities}, edges {enrichmentSubgraphStats.edges}, stale {enrichmentSubgraphStats.staleDetected}
+                </span>
+              )}
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
+              <div style={{ border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 10, minHeight: 84 }}>
+                <div style={{ fontSize: 11, color: COLORS.textMuted, marginBottom: 6 }}>Stale Entities</div>
+                {(enrichmentInspector?.staleEntities ?? []).slice(0, 4).map((item) => (
+                  <div key={item.id} style={{ fontSize: 11, marginBottom: 4 }}>
+                    {item.canonicalName} ({item.zone}) c={item.confidenceScore.toFixed(2)}
+                  </div>
+                ))}
+              </div>
+              <div style={{ border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 10, minHeight: 84 }}>
+                <div style={{ fontSize: 11, color: COLORS.textMuted, marginBottom: 6 }}>Low Confidence Edges</div>
+                {(enrichmentInspector?.lowConfidenceEdges ?? []).slice(0, 4).map((item) => (
+                  <div key={item.id} style={{ fontSize: 11, marginBottom: 4 }}>
+                    {item.fromEntityId} → {item.toEntityId} ({item.relationType}) c={item.confidenceScore.toFixed(2)}
+                  </div>
+                ))}
+              </div>
+              <div style={{ border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 10, minHeight: 84 }}>
+                <div style={{ fontSize: 11, color: COLORS.textMuted, marginBottom: 6 }}>Cloud-Ready Sync</div>
+                <div style={{ fontSize: 11 }}>Provider: {enrichmentSync?.provider ?? "placeholder"}</div>
+                <div style={{ fontSize: 11 }}>Mode: {enrichmentSync?.mode ?? "manual"}</div>
+                <div style={{ fontSize: 11 }}>Connected: {enrichmentSync?.connected ? "yes" : "no"}</div>
+                <div style={{ fontSize: 11 }}>Queue: {enrichmentSync?.queueSize ?? 0}</div>
+              </div>
+            </div>
+
+            {(enrichmentStatusText || enrichmentLoading) && (
+              <div style={{ fontSize: 11, color: enrichmentStatusText?.toLowerCase().includes("failed") ? COLORS.error : COLORS.textMuted }}>
+                {enrichmentLoading ? "Loading inspector..." : enrichmentStatusText}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -606,11 +1025,19 @@ export default function SupplyChainMindMap() {
             onSetShockDamping={setShockDamping}
             onSetShockIncludeKinds={setShockIncludeKinds}
             onResetSimulation={resetSimulation}
+            settings={workspaceSettings}
+            showSettingsPanel={showSettingsPanel}
+            onSettingsChange={setWorkspaceSettings}
           />
         )}
       </div>
 
       <SupplyChainAdvisorPopup mindMapData={mindMapData} />
+      <ExposureBriefPanel
+        open={showExposureBrief}
+        onClose={() => setShowExposureBrief(false)}
+        preferredSource="supplyChain"
+      />
     </div>
   );
 }
@@ -715,6 +1142,9 @@ interface SupplyChainWorkspaceProps {
   onSetShockDamping: (value: number) => void;
   onSetShockIncludeKinds: (kinds: SupplyChainGraph["edges"][number]["kind"][] | undefined) => void;
   onResetSimulation: () => void;
+  settings: IntelligenceWorkspaceSettings;
+  showSettingsPanel: boolean;
+  onSettingsChange: React.Dispatch<React.SetStateAction<IntelligenceWorkspaceSettings>>;
 }
 
 function SupplyChainWorkspace(props: SupplyChainWorkspaceProps) {
@@ -744,6 +1174,12 @@ function SupplyChainWorkspace(props: SupplyChainWorkspaceProps) {
 
   return (
     <div style={{ display: "flex", gap: 16, flex: 1, minHeight: 0, padding: 20 }}>
+      {props.showSettingsPanel && (
+        <IntelligenceSettingsPanel
+          settings={props.settings}
+          onChange={props.onSettingsChange}
+        />
+      )}
       <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", gap: 12 }}>
         <div
           style={{
@@ -827,6 +1263,7 @@ function SupplyChainWorkspace(props: SupplyChainWorkspaceProps) {
             includeHypothesis={props.includeHypothesis}
             hops={props.hops}
             minEdgeWeight={props.minEdgeWeight}
+            intelligenceSettings={props.settings}
             globalTickers={props.globalTickers}
             gwmdFilters={props.gwmdFilters}
             onGwmdFiltersChange={props.onGwmdFiltersChange}
@@ -877,8 +1314,211 @@ function SupplyChainWorkspace(props: SupplyChainWorkspaceProps) {
         onSetShockDamping={props.onSetShockDamping}
         onSetShockIncludeKinds={props.onSetShockIncludeKinds}
         onResetSimulation={props.onResetSimulation}
+        intelligenceSettings={props.settings}
       />
     </div>
+  );
+}
+
+function ContextChip({ label, value }: { label: string; value: string }) {
+  return (
+    <span
+      style={{
+        fontSize: 10,
+        textTransform: "uppercase",
+        letterSpacing: 0.8,
+        color: "#bfdbfe",
+        border: "1px solid rgba(59,130,246,0.3)",
+        background: "rgba(59,130,246,0.12)",
+        borderRadius: 999,
+        padding: "4px 8px",
+      }}
+    >
+      {label}: <strong style={{ color: "#e2e8f0" }}>{value}</strong>
+    </span>
+  );
+}
+
+function IntelligenceSettingsPanel({
+  settings,
+  onChange,
+}: {
+  settings: IntelligenceWorkspaceSettings;
+  onChange: React.Dispatch<React.SetStateAction<IntelligenceWorkspaceSettings>>;
+}) {
+  const toggleOverlay = (overlay: string) => {
+    onChange((previous) => {
+      const exists = previous.activeOverlays.includes(overlay);
+      return {
+        ...previous,
+        activeOverlays: exists
+          ? previous.activeOverlays.filter((value) => value !== overlay)
+          : [...previous.activeOverlays, overlay],
+      };
+    });
+  };
+
+  return (
+    <aside
+      style={{
+        width: 290,
+        minWidth: 260,
+        border: "1px solid rgba(148,163,184,0.16)",
+        borderRadius: 16,
+        background: "rgba(15,23,42,0.86)",
+        padding: 14,
+        display: "flex",
+        flexDirection: "column",
+        gap: 10,
+        overflowY: "auto",
+      }}
+    >
+      <div style={{ fontSize: 13, fontWeight: 700 }}>Filters & Methods</div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+        <SelectControl
+          label="Upstream"
+          value={String(settings.upstreamDepth)}
+          options={["1", "2", "3"]}
+          onChange={(value) => onChange((previous) => ({ ...previous, upstreamDepth: Number(value) }))}
+        />
+        <SelectControl
+          label="Downstream"
+          value={String(settings.downstreamDepth)}
+          options={["1", "2", "3"]}
+          onChange={(value) => onChange((previous) => ({ ...previous, downstreamDepth: Number(value) }))}
+        />
+      </div>
+      <SelectControl
+        label="Relation scope"
+        value={settings.relationScope}
+        options={["suppliers", "customers", "both"]}
+        onChange={(value) => onChange((previous) => ({ ...previous, relationScope: value as IntelligenceWorkspaceSettings["relationScope"] }))}
+      />
+      <SelectControl
+        label="Point in time"
+        value={settings.pointInTimeMode}
+        options={["live", "historical"]}
+        onChange={(value) => onChange((previous) => ({ ...previous, pointInTimeMode: value as IntelligenceWorkspaceSettings["pointInTimeMode"] }))}
+      />
+      <SelectControl
+        label="Data style"
+        value={settings.dataStyle}
+        options={["reported-first", "blended", "inference-heavy"]}
+        onChange={(value) => onChange((previous) => ({ ...previous, dataStyle: value as IntelligenceWorkspaceSettings["dataStyle"] }))}
+      />
+      <SelectControl
+        label="Ranking"
+        value={settings.rankingMethod}
+        options={["exposure", "criticality", "confidence"]}
+        onChange={(value) => onChange((previous) => ({ ...previous, rankingMethod: value as IntelligenceWorkspaceSettings["rankingMethod"] }))}
+      />
+      <SelectControl
+        label="Exposure model"
+        value={settings.exposureMethod}
+        options={["weight", "hhi", "hybrid"]}
+        onChange={(value) => onChange((previous) => ({ ...previous, exposureMethod: value as IntelligenceWorkspaceSettings["exposureMethod"] }))}
+      />
+      <SelectControl
+        label="Scenario"
+        value={settings.scenario}
+        options={["Baseline", "Supplier Outage", "Sanctions", "Tariff Shock", "Shipping Delay"]}
+        onChange={(value) => onChange((previous) => ({ ...previous, scenario: value }))}
+      />
+      <SelectControl
+        label="Horizon"
+        value={settings.timeHorizon}
+        options={["1D", "1W", "1M", "1Q"]}
+        onChange={(value) => onChange((previous) => ({ ...previous, timeHorizon: value as IntelligenceWorkspaceSettings["timeHorizon"] }))}
+      />
+      <label style={{ fontSize: 11, color: "#94a3b8" }}>
+        Confidence floor {Math.round(settings.confidenceThreshold * 100)}%
+      </label>
+      <input
+        type="range"
+        min={0.3}
+        max={0.95}
+        step={0.05}
+        value={settings.confidenceThreshold}
+        onChange={(event) => onChange((previous) => ({ ...previous, confidenceThreshold: Number(event.target.value) }))}
+      />
+      <div style={{ display: "flex", gap: 8 }}>
+        <label style={{ fontSize: 11, color: "#94a3b8", display: "flex", alignItems: "center", gap: 6 }}>
+          <input
+            type="checkbox"
+            checked={settings.showFacilities}
+            onChange={(event) => onChange((previous) => ({ ...previous, showFacilities: event.target.checked }))}
+          />
+          Facilities
+        </label>
+        <label style={{ fontSize: 11, color: "#94a3b8", display: "flex", alignItems: "center", gap: 6 }}>
+          <input
+            type="checkbox"
+            checked={settings.showRoutes}
+            onChange={(event) => onChange((previous) => ({ ...previous, showRoutes: event.target.checked }))}
+          />
+          Routes
+        </label>
+      </div>
+      <div style={{ fontSize: 11, color: "#94a3b8" }}>Risk overlays</div>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+        {["Geopolitical", "Tariff", "Shipping", "Weather", "Energy", "Default"].map((overlay) => {
+          const active = settings.activeOverlays.includes(overlay);
+          return (
+            <button
+              key={overlay}
+              onClick={() => toggleOverlay(overlay)}
+              style={{
+                border: active ? "1px solid rgba(59,130,246,0.65)" : "1px solid rgba(148,163,184,0.28)",
+                borderRadius: 999,
+                background: active ? "rgba(59,130,246,0.2)" : "transparent",
+                color: active ? "#bfdbfe" : "#94a3b8",
+                fontSize: 10,
+                padding: "4px 8px",
+                cursor: "pointer",
+              }}
+            >
+              {overlay}
+            </button>
+          );
+        })}
+      </div>
+    </aside>
+  );
+}
+
+function SelectControl({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: string[];
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 11, color: "#94a3b8" }}>
+      {label}
+      <select
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        style={{
+          border: "1px solid rgba(148,163,184,0.25)",
+          borderRadius: 8,
+          background: "rgba(2,6,23,0.9)",
+          color: "#e2e8f0",
+          fontSize: 11,
+          padding: "6px 8px",
+        }}
+      >
+        {options.map((option) => (
+          <option key={option} value={option}>
+            {option}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
 

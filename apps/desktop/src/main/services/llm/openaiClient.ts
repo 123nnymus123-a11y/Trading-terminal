@@ -10,6 +10,9 @@ import { getApiKey, getModel } from "./cloudLlmConfig";
 export interface OpenAiCallOptions {
   temperature?: number;
   maxTokens?: number;
+  modelOverride?: string;
+  apiKeyOverride?: string;
+  baseUrlOverride?: string;
   /** Abort signal — if not provided, a 30 s internal timeout is used */
   signal?: AbortSignal;
 }
@@ -32,8 +35,11 @@ export async function callOpenAi(
   userPrompt: string,
   opts: OpenAiCallOptions = {},
 ): Promise<string> {
-  const apiKey = getApiKey("openai");
-  const model = getModel("openai");
+  const apiKey = opts.apiKeyOverride?.trim() || getApiKey("openai");
+  const model = opts.modelOverride?.trim() || getModel("openai");
+  const baseUrl = (
+    opts.baseUrlOverride?.trim() || "https://api.openai.com"
+  ).replace(/\/+$/, "");
 
   const messages: OpenAiMessage[] = [];
   if (systemPrompt) {
@@ -42,16 +48,21 @@ export async function callOpenAi(
   messages.push({ role: "user", content: userPrompt });
 
   const internalController = new AbortController();
-  const internalTimeout = setTimeout(() => internalController.abort(), opts.signal ? 0 : 30_000);
+  const internalTimeout = setTimeout(
+    () => internalController.abort(),
+    opts.signal ? 0 : 30_000,
+  );
 
   // If caller supplies their own signal, cancel ours when theirs fires
   if (opts.signal) {
-    opts.signal.addEventListener("abort", () => internalController.abort(), { once: true });
+    opts.signal.addEventListener("abort", () => internalController.abort(), {
+      once: true,
+    });
     clearTimeout(internalTimeout);
   }
 
   try {
-    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    const res = await fetch(`${baseUrl}/v1/chat/completions`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -96,7 +107,11 @@ export async function callOpenAi(
  * Health-check: returns true when the API key can reach the models list.
  * Uses a short 10 s timeout.
  */
-export async function checkOpenAiAvailable(): Promise<{ ok: boolean; model: string; error?: string }> {
+export async function checkOpenAiAvailable(): Promise<{
+  ok: boolean;
+  model: string;
+  error?: string;
+}> {
   const model = getModel("openai");
   try {
     const apiKey = getApiKey("openai");
@@ -108,14 +123,24 @@ export async function checkOpenAiAvailable(): Promise<{ ok: boolean; model: stri
         signal: controller.signal,
       });
       if (!res.ok) {
-        const json = (await res.json().catch(() => ({}))) as { error?: { message?: string } };
-        return { ok: false, model, error: `HTTP ${res.status}: ${json.error?.message ?? res.statusText}` };
+        const json = (await res.json().catch(() => ({}))) as {
+          error?: { message?: string };
+        };
+        return {
+          ok: false,
+          model,
+          error: `HTTP ${res.status}: ${json.error?.message ?? res.statusText}`,
+        };
       }
       return { ok: true, model };
     } finally {
       clearTimeout(timeout);
     }
   } catch (err) {
-    return { ok: false, model, error: err instanceof Error ? err.message : String(err) };
+    return {
+      ok: false,
+      model,
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
 }

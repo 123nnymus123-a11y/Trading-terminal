@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { PublicFlowIntelPanel } from "../components/PublicFlowIntel/PublicFlowIntelPanel";
+import { TedRadarPanel } from "../components/tedIntel/TedIntelWidgets";
 import { useAiResearchStore } from "../store/aiResearchStore";
 import { useSettingsStore } from "../store/settingsStore";
 
@@ -170,6 +171,9 @@ export default function Intelligence() {
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <div style={{ fontSize: 12, opacity: 0.7, letterSpacing: 0.6 }}>TED INTEL</div>
+          <TedRadarPanel windowDays="90d" />
+
           <div style={{ fontSize: 12, opacity: 0.7, letterSpacing: 0.6 }}>FLOW INTEL</div>
           <PublicFlowIntelPanel />
         </div>

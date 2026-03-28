@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import type { AuthSession, LoginPayload, SignupPayload } from '../lib/apiClient';
-import { getBackendBaseUrl } from '../lib/apiClient';
+import { getBackendBaseUrl, refreshBackendBaseUrl } from '../lib/apiClient';
 
 type Props = {
   onLogin: (payload: LoginPayload) => Promise<AuthSession>;
@@ -86,7 +86,10 @@ export function AuthPanel({ onLogin, onSignup, onAuthenticated, initialError }: 
   const [signupPassword, setSignupPassword] = useState('');
   const [signupLicenseKey, setSignupLicenseKey] = useState(DEFAULT_LICENSE_KEY);
 
-  const backendUrl = getBackendBaseUrl();
+  const [backendUrl, setBackendUrl] = useState(getBackendBaseUrl);
+  useEffect(() => {
+    void refreshBackendBaseUrl().then(setBackendUrl);
+  }, []);
   const health = useHealthCheck(backendUrl);
 
   const switchTab = (next: AuthTab) => {

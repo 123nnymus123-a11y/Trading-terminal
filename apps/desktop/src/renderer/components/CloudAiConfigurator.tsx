@@ -1,436 +1,464 @@
-import React, { useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import { API_KEY_TEMPLATES } from "../constants/apiKeyTemplates";
 import { useSettingsStore } from "../store/settingsStore";
 import type { CloudProvider } from "../store/settingsStore";
 
-const CLOUD_PROVIDERS: Record<CloudProvider, { label: string; icon: string; color: string; type: "cloud" | "local" }> = {
-  ollama: { label: "Local Ollama", icon: "🦙", color: "#4a5568", type: "local" },
-};
-
-const CLOUD_MODELS_BY_PROVIDER: Record<CloudProvider, string[]> = {
-  ollama: [
-    // DeepSeek models
-    "deepseek-r1:1.5b",
-    "deepseek-r1:7b",
-    "deepseek-r1:8b",
-    "deepseek-r1:14b",
-    "deepseek-r1:32b",
-    "deepseek-r1:70b",
-    "deepseek-r1:671b",
-    "deepseek-coder:6.7b",
-    "deepseek-coder:33b",
-    // Llama models
-    "llama2",
-    "llama2:7b",
-    "llama2:13b",
-    "llama2:70b",
-    "llama3:8b",
-    "llama3:70b",
-    "llama3.1:8b",
-    "llama3.1:70b",
-    "llama3.1:405b",
-    "llama3.2:1b",
-    "llama3.2:3b",
-    "codellama:7b",
-    "codellama:13b",
-    "codellama:34b",
-    // Mistral models
-    "mistral:7b",
-    "mistral-large",
-    "mixtral:8x7b",
-    "mixtral:8x22b",
-    // Phi models
-    "phi:2.7b",
-    "phi-3-mini",
-    "phi-3-medium",
-    "phi-3-small",
-    // Gemma models
-    "gemma:2b",
-    "gemma:7b",
-    "gemma2:2b",
-    "gemma2:9b",
-    "gemma2:27b",
-    // Qwen models
-    "qwen:0.5b",
-    "qwen:1.8b",
-    "qwen:4b",
-    "qwen:7b",
-    "qwen:14b",
-    "qwen:32b",
-    "qwen:72b",
-    "qwen2:0.5b",
-    "qwen2:1.5b",
-    "qwen2:7b",
-    "qwen2.5:7b",
-    "qwen2.5:14b",
-    "qwen2.5-coder:7b",
-    // Other popular models
-    "neural-chat:7b",
-    "starling-lm:7b",
-    "vicuna:7b",
-    "vicuna:13b",
-    "orca-mini:3b",
-    "orca-mini:7b",
-    "orca2:7b",
-    "orca2:13b",
-    "wizardcoder:7b",
-    "wizardcoder:13b",
-    "wizardcoder:34b",
-    "solar:10.7b",
-    "yi:6b",
-    "yi:34b",
-    "falcon:7b",
-    "falcon:40b",
-    "tinyllama:1.1b",
-    "stablelm2:1.6b",
-    "stablelm2:12b",
-  ],
-};
-
-interface CloudAiConfiguratorProps {
+type CloudAiConfiguratorProps = {
   onConfigUpdated?: () => void;
+};
+
+type CloudProviderConfig = {
+  key: Exclude<CloudProvider, "ollama">;
+  label: string;
+  icon: string;
+  secretField: string;
+  models: string[];
+};
+
+const CLOUD_PROVIDER_CONFIGS: CloudProviderConfig[] = [
+  { key: "openai", label: "OpenAI", icon: "🧠", secretField: "OPENAI_API_KEY", models: ["gpt-4o", "gpt-4o-mini", "o1", "o3"] },
+  { key: "anthropic", label: "Anthropic", icon: "🪶", secretField: "ANTHROPIC_API_KEY", models: ["claude-3-5-sonnet-latest", "claude-3-opus-20240229"] },
+  { key: "gemini", label: "Google Gemini", icon: "✨", secretField: "GEMINI_API_KEY", models: ["gemini-2.5-pro", "gemini-2.5-flash"] },
+  { key: "mistral", label: "Mistral", icon: "🌬️", secretField: "MISTRAL_API_KEY", models: ["mistral-large-latest", "codestral-latest"] },
+  { key: "groq", label: "Groq", icon: "⚡", secretField: "GROQ_API_KEY", models: ["llama-3.3-70b-versatile", "deepseek-r1-distill-llama-70b"] },
+  { key: "xai", label: "xAI / Grok", icon: "🚀", secretField: "XAI_API_KEY", models: ["grok-3", "grok-3-mini"] },
+];
+
+const OLLAMA_MODEL_PRESETS = [
+  "deepseek-r1:14b",
+  "deepseek-r1:7b",
+  "llama3.1:8b",
+  "llama3.1:70b",
+  "mixtral:8x7b",
+  "phi-3-medium",
+  "qwen2.5-coder:7b",
+  "gemma2:9b",
+  "mistral:7b",
+  "gpt-oss:120b-cloud",
+  "gpt-oss:20b-cloud",
+  "deepseek-v3.1:671b-cloud",
+  "qwen3-coder:480b-cloud",
+  "qwen3-vl:235b-cloud",
+  "minimax-m2:cloud",
+  "glm-4.6:cloud",
+];
+
+type RuntimeInfo = {
+  available: boolean;
+  version?: string;
+  message?: string;
+};
+
+function toModelId(provider: CloudProvider, model: string): string {
+  return `${provider}:${model}`;
+}
+
+function hasConnectedKey(provider: string, apiKeys: Array<{ provider: string }>): boolean {
+  return apiKeys.some((entry) => entry.provider === provider);
 }
 
 export const CloudAiConfigurator: React.FC<CloudAiConfiguratorProps> = ({ onConfigUpdated }) => {
   const cloudAiModels = useSettingsStore((s) => s.cloudAiModels);
+  const apiKeys = useSettingsStore((s) => s.apiKeys);
   const addCloudAiModel = useSettingsStore((s) => s.addCloudAiModel);
   const updateCloudAiModel = useSettingsStore((s) => s.updateCloudAiModel);
-  const removeCloudAiModel = useSettingsStore((s) => s.removeCloudAiModel);
-  const getActiveCloudModels = useSettingsStore((s) => s.getActiveCloudModels);
+  const addApiKey = useSettingsStore((s) => s.addApiKey);
 
-  const [showAddForm, setShowAddForm] = useState(false);
-  const [selectedProvider, setSelectedProvider] = useState<CloudProvider>("ollama");
-  const [selectedModel, setSelectedModel] = useState("deepseek-r1:14b");
-  const [selectedTier, setSelectedTier] = useState<"standard" | "advanced" | "expert">("standard");
-  const [formError, setFormError] = useState<string | null>(null);
+  const [runtime, setRuntime] = useState<RuntimeInfo>({ available: false });
+  const [ollamaHost, setOllamaHost] = useState<string>("");
+  const [ollamaModels, setOllamaModels] = useState<string[]>([]);
+  const [refreshingOllama, setRefreshingOllama] = useState(false);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [testingModel, setTestingModel] = useState<string | null>(null);
 
-  const handleAddModel = () => {
-    if (!selectedModel) {
-      setFormError("Please select a model");
+  const [expandedProvider, setExpandedProvider] = useState<string | null>(null);
+  const [providerModel, setProviderModel] = useState<Record<string, string>>({});
+  const [providerApiKey, setProviderApiKey] = useState<Record<string, string>>({});
+
+  const secretsApi = window.cockpit?.secrets;
+  const apiHubApi = window.cockpit?.apiHub;
+  const settingsApi = window.cockpit?.journal;
+
+  const localModels = useMemo(() => {
+    const fromStore = cloudAiModels
+      .filter((entry) => entry.provider === "ollama")
+      .map((entry) => entry.model);
+    return Array.from(new Set([...ollamaModels, ...fromStore, ...OLLAMA_MODEL_PRESETS]));
+  }, [cloudAiModels, ollamaModels]);
+
+  const ollamaCloudModels = useMemo(
+    () => localModels.filter((model) => model.toLowerCase().includes(":cloud") || model.toLowerCase().endsWith("-cloud")),
+    [localModels],
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadOllamaHost = async () => {
+      try {
+        const settings = await settingsApi?.settingsGet?.();
+        const configured =
+          typeof settings?.ollamaHostUrl === "string"
+            ? settings.ollamaHostUrl
+            : typeof settings?.ollama_host_url === "string"
+              ? settings.ollama_host_url
+              : localStorage.getItem("ollama_host_url");
+        if (!cancelled) {
+          setOllamaHost(configured ?? "http://localhost:11434");
+        }
+      } catch {
+        if (!cancelled) {
+          setOllamaHost(
+            localStorage.getItem("ollama_host_url") ?? "http://localhost:11434",
+          );
+        }
+      }
+    };
+
+    void loadOllamaHost();
+    return () => {
+      cancelled = true;
+    };
+  }, [settingsApi]);
+
+  useEffect(() => {
+    const next: Record<string, string> = {};
+    CLOUD_PROVIDER_CONFIGS.forEach((provider) => {
+      const existing = cloudAiModels.find((entry) => entry.provider === provider.key && entry.enabled);
+      next[provider.key] = existing?.model ?? provider.models[0];
+    });
+    setProviderModel(next);
+  }, [cloudAiModels]);
+
+  const refreshOllama = async () => {
+    setRefreshingOllama(true);
+    setStatusMessage(null);
+    try {
+      const runtimeResult = await window.cockpit.aiResearch.checkRuntime();
+      setRuntime({
+        available: !!runtimeResult?.available,
+        version: runtimeResult?.version,
+        message: runtimeResult?.message,
+      });
+      const listed = await window.cockpit.aiResearch.listModels();
+      setOllamaModels(Array.isArray(listed?.models) ? listed.models : []);
+      setStatusMessage("Ollama model catalog refreshed.");
+    } catch (err) {
+      setRuntime({ available: false, message: err instanceof Error ? err.message : String(err) });
+      setStatusMessage("Failed to refresh Ollama. Check runtime and host.");
+    } finally {
+      setRefreshingOllama(false);
+    }
+  };
+
+  useEffect(() => {
+    void refreshOllama();
+  }, []);
+
+  const setOllamaModelEnabled = (model: string, enabled: boolean) => {
+    const existing = cloudAiModels.find((entry) => entry.provider === "ollama" && entry.model === model);
+    if (existing) {
+      updateCloudAiModel(`cloud-ai-${existing.createdAt}`, { enabled });
+      onConfigUpdated?.();
       return;
     }
 
-    try {
+    if (enabled) {
       addCloudAiModel({
-        provider: selectedProvider,
-        model: selectedModel,
-        tier: selectedTier,
+        provider: "ollama",
+        model,
+        tier: "standard",
         enabled: true,
-        temperature: 0.7,
-        maxTokens: 2000,
         useForResearch: true,
         useForSupplyChain: true,
         useForCongress: true,
         useForCftc: true,
       });
+      onConfigUpdated?.();
+    }
+  };
 
-      setShowAddForm(false);
-      setFormError(null);
+  const saveProviderKey = async (provider: CloudProviderConfig) => {
+    const keyValue = (providerApiKey[provider.key] ?? "").trim();
+    if (!keyValue) {
+      setStatusMessage(`${provider.label}: API key is required.`);
+      return;
+    }
+
+    const selectedModel = providerModel[provider.key] ?? provider.models[0];
+    const recordId = crypto.randomUUID();
+    const account = `apikey:${provider.key}:${recordId}:${provider.secretField}`;
+    const apiLabel = API_KEY_TEMPLATES[provider.key]?.label ?? provider.label;
+
+    try {
+      await secretsApi?.set(account, keyValue);
+      const newRecord = {
+        id: recordId,
+        name: `${apiLabel} Credentials`,
+        provider: provider.key,
+        fields: [{ key: provider.secretField, label: "API Key", account }],
+        config: { DEFAULT_MODEL: selectedModel },
+      };
+
+      addApiKey(newRecord as any);
+      await apiHubApi?.save?.(newRecord as any);
+
+      const existing = cloudAiModels.find((entry) => entry.provider === provider.key);
+      if (existing) {
+        updateCloudAiModel(`cloud-ai-${existing.createdAt}`, {
+          model: selectedModel,
+          enabled: true,
+          tier: "advanced",
+          useForResearch: true,
+          useForSupplyChain: true,
+          useForCongress: true,
+          useForCftc: true,
+        });
+      } else {
+        addCloudAiModel({
+          provider: provider.key,
+          model: selectedModel,
+          tier: "advanced",
+          enabled: true,
+          useForResearch: true,
+          useForSupplyChain: true,
+          useForCongress: true,
+          useForCftc: true,
+        });
+      }
+
+      setProviderApiKey((prev) => ({ ...prev, [provider.key]: "" }));
+      setStatusMessage(`${provider.label} connected and saved to API Key Hub.`);
       onConfigUpdated?.();
     } catch (err) {
-      setFormError(String(err));
+      setStatusMessage(`${provider.label} save failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   };
-
-  const handleToggleFeature = (modelIndex: number, feature: "useForResearch" | "useForSupplyChain" | "useForCongress" | "useForCftc") => {
-    const model = cloudAiModels[modelIndex];
-    if (model) {
-      updateCloudAiModel(`cloud-ai-${model.createdAt}`, {
-        [feature]: !model[feature],
-      });
-    }
-  };
-
-  const activeModels = getActiveCloudModels();
 
   return (
-    <div style={{ display: "grid", gap: 20 }}>
-      {cloudAiModels.length === 0 && (
-        <div style={{
-          padding: "16px 20px",
-          background: "rgba(59,130,246,0.08)",
-          border: "1px solid rgba(59,130,246,0.3)",
-          borderRadius: 8,
-          fontSize: 13,
-          color: "#bfdbfe",
-          lineHeight: 1.6,
-        }}>
-          <div style={{ fontWeight: 600, marginBottom: 8 }}>💡 Getting Started with Cloud AI</div>
-          <div>
-            Click "+ Add Cloud Model" below to configure the local Ollama model used by desktop fallback.
-            <br />
-            <strong>Note:</strong> AI processing is backend-first; local Ollama is used for desktop fallback when enabled.
-          </div>
-        </div>
-      )}
-      <div style={{ display: "grid", gap: 12 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <div style={{ fontSize: 16, fontWeight: 700 }}>
-            ☁️ Cloud AI Models
-          </div>
-          <button
-            onClick={() => setShowAddForm(!showAddForm)}
-            style={{
-              padding: "8px 16px",
-              background: "#3b82f6",
-              border: "none",
-              borderRadius: 6,
-              color: "#fff",
-              cursor: "pointer",
-              fontSize: 12,
-              fontWeight: 600,
-            }}
-          >
-            {showAddForm ? "Cancel" : "+ Add Cloud Model"}
-          </button>
-        </div>
-
-        {showAddForm && (
-          <div style={{
-            padding: 16,
-            border: "1px solid rgba(255,255,255,0.2)",
-            borderRadius: 8,
-            background: "rgba(59, 130, 246, 0.05)",
-            display: "grid",
-            gap: 12,
-          }}>
-            <div style={{ fontSize: 13, fontWeight: 600, opacity: 0.9 }}>Add New Cloud Model</div>
-
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-              <div>
-                <label style={{ fontSize: 12, opacity: 0.7, display: "block", marginBottom: 4 }}>Provider</label>
-                <select
-                  value={selectedProvider}
-                  onChange={(e) => {
-                    const provider = e.target.value as CloudProvider;
-                    setSelectedProvider(provider);
-                    const models = CLOUD_MODELS_BY_PROVIDER[provider];
-                    setSelectedModel(models?.[0] || "");
-                  }}
-                  style={{
-                    width: "100%",
-                    padding: "8px 12px",
-                    background: "rgba(0,0,0,0.3)",
-                    border: "1px solid rgba(255,255,255,0.2)",
-                    borderRadius: 4,
-                    color: "#fff",
-                    fontSize: 12,
-                  }}
-                >
-                  <optgroup label="💻 Local Providers">
-                    {Object.entries(CLOUD_PROVIDERS).filter(([_, val]) => val.type === "local").map(([key, val]) => (
-                      <option key={key} value={key}>{val.label}</option>
-                    ))}
-                  </optgroup>
-                </select>
-              </div>
-
-              <div>
-                <label style={{ fontSize: 12, opacity: 0.7, display: "block", marginBottom: 4 }}>Model</label>
-                <select
-                  value={selectedModel}
-                  onChange={(e) => setSelectedModel(e.target.value)}
-                  style={{
-                    width: "100%",
-                    padding: "8px 12px",
-                    background: "rgba(0,0,0,0.3)",
-                    border: "1px solid rgba(255,255,255,0.2)",
-                    borderRadius: 4,
-                    color: "#fff",
-                    fontSize: 12,
-                  }}
-                >
-                  {CLOUD_MODELS_BY_PROVIDER[selectedProvider].map((model) => (
-                    <option key={model} value={model}>{model}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label style={{ fontSize: 12, opacity: 0.7, display: "block", marginBottom: 4 }}>Tier</label>
-                <select
-                  value={selectedTier}
-                  onChange={(e) => setSelectedTier(e.target.value as "standard" | "advanced" | "expert")}
-                  style={{
-                    width: "100%",
-                    padding: "8px 12px",
-                    background: "rgba(0,0,0,0.3)",
-                    border: "1px solid rgba(255,255,255,0.2)",
-                    borderRadius: 4,
-                    color: "#fff",
-                    fontSize: 12,
-                  }}
-                >
-                  <option value="standard">Standard (Cost-effective)</option>
-                  <option value="advanced">Advanced (Balanced)</option>
-                  <option value="expert">Expert (Highest Quality)</option>
-                </select>
-              </div>
-
-              <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
-                <button
-                  onClick={handleAddModel}
-                  style={{
-                    flex: 1,
-                    padding: "8px 12px",
-                    background: "#22c55e",
-                    border: "none",
-                    borderRadius: 4,
-                    color: "#fff",
-                    cursor: "pointer",
-                    fontSize: 12,
-                    fontWeight: 600,
-                  }}
-                >
-                  Add Model
-                </button>
-              </div>
+    <div style={{ display: "grid", gap: 16 }}>
+      <div style={{ display: "grid", gap: 14, gridTemplateColumns: "repeat(auto-fit, minmax(360px, 1fr))" }}>
+        <section style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 16, background: "rgba(15,23,42,0.35)", display: "grid", gap: 12 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 16 }}>🦙 Ollama Configuration</div>
+              <div style={{ fontSize: 12, opacity: 0.75 }}>Local runtime, model scanning, and Ollama Cloud models</div>
             </div>
-
-            {formError && (
-              <div style={{
-                fontSize: 12,
-                color: "#fca5a5",
-                background: "rgba(248, 113, 113, 0.15)",
-                padding: "8px 12px",
-                borderRadius: 4,
-              }}>
-                {formError}
-              </div>
-            )}
+            <div
+              style={{
+                fontSize: 11,
+                borderRadius: 999,
+                padding: "5px 10px",
+                border: runtime.available ? "1px solid rgba(34,197,94,0.45)" : "1px solid rgba(248,113,113,0.45)",
+                background: runtime.available ? "rgba(34,197,94,0.13)" : "rgba(248,113,113,0.13)",
+                color: runtime.available ? "#86efac" : "#fca5a5",
+              }}
+            >
+              {runtime.available ? `Online ${runtime.version ?? ""}` : "Offline"}
+            </div>
           </div>
-        )}
-      </div>
 
-      {/* Active Models List */}
-      {activeModels.length > 0 && (
-        <div style={{
-          display: "grid",
-          gap: 12,
-          gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))",
-        }}>
-          {cloudAiModels.map((model, idx) => {
-            const providerInfo = CLOUD_PROVIDERS[model.provider];
-            return (
-              <div
-                key={`${model.createdAt}-${idx}`}
-                style={{
-                  padding: 16,
-                  border: model.enabled
-                    ? "1px solid rgba(34,197,94,0.4)"
-                    : "1px solid rgba(255,255,255,0.1)",
-                  borderRadius: 8,
-                  background: model.enabled
-                    ? "rgba(34,197,94,0.08)"
-                    : "rgba(255,255,255,0.02)",
-                  display: "grid",
-                  gap: 12,
+          <div style={{ display: "grid", gap: 6 }}>
+            <label style={{ fontSize: 12, opacity: 0.7 }}>Ollama Host URL</label>
+            <div style={{ display: "flex", gap: 8 }}>
+              <input
+                value={ollamaHost}
+                onChange={(e) => setOllamaHost(e.target.value)}
+                placeholder="http://localhost:11434"
+                style={{ flex: 1, padding: "8px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "rgba(0,0,0,0.2)", color: "inherit" }}
+              />
+              <button
+                type="button"
+                onClick={async () => {
+                  const nextHost = ollamaHost.trim();
+                  if (!nextHost) {
+                    setStatusMessage("Ollama host URL is required.");
+                    return;
+                  }
+                  localStorage.setItem("ollama_host_url", nextHost);
+                  try {
+                    const current = await settingsApi?.settingsGet?.();
+                    await settingsApi?.settingsSet?.({
+                      ...(current ?? {}),
+                      ollamaHostUrl: nextHost,
+                    });
+                    setStatusMessage("Ollama host URL saved.");
+                    await refreshOllama();
+                  } catch (err) {
+                    setStatusMessage(
+                      `Failed to save Ollama host: ${err instanceof Error ? err.message : String(err)}`,
+                    );
+                  }
                 }}
+                style={{ padding: "8px 12px" }}
               >
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start" }}>
-                  <div>
-                    <div style={{ fontSize: 14, fontWeight: 700 }}>
-                      {providerInfo.icon} {model.model}
-                    </div>
-                    <div style={{ fontSize: 11, opacity: 0.6, marginTop: 2 }}>
-                      {providerInfo.label} • {model.tier}
-                    </div>
-                  </div>
-                  <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
-                    <input
-                      type="checkbox"
-                      checked={model.enabled}
-                      onChange={(e) => {
-                        updateCloudAiModel(`cloud-ai-${model.createdAt}`, {
-                          enabled: e.target.checked,
-                        });
-                      }}
-                      style={{ width: 16, height: 16 }}
-                    />
-                    <span style={{ fontSize: 11 }}>Active</span>
-                  </label>
-                </div>
+                Save
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  const modelToTest = providerModel.ollama || localModels[0] || "";
+                  if (!modelToTest) {
+                    setStatusMessage("No Ollama model available to test.");
+                    return;
+                  }
+                  setTestingModel(`ollama:${modelToTest}`);
+                  try {
+                    const result = await window.cockpit?.aiResearch?.testModelConnection?.({
+                      provider: "ollama",
+                      model: modelToTest,
+                    });
+                    setStatusMessage(
+                      result?.message ?? "Ollama test completed.",
+                    );
+                    await refreshOllama();
+                  } finally {
+                    setTestingModel(null);
+                  }
+                }}
+                style={{ padding: "8px 12px" }}
+              >
+                {testingModel?.startsWith("ollama:") ? "Testing..." : "Test Ollama Model"}
+              </button>
+            </div>
+          </div>
 
-                <div style={{ display: "grid", gap: 8, fontSize: 12 }}>
-                  <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
-                    <input
-                      type="checkbox"
-                      checked={model.useForResearch || false}
-                      onChange={() => handleToggleFeature(idx, "useForResearch")}
-                      disabled={!model.enabled}
-                      style={{ width: 14, height: 14 }}
-                    />
-                    <span>Use for Research</span>
-                  </label>
-                  <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
-                    <input
-                      type="checkbox"
-                      checked={model.useForSupplyChain || false}
-                      onChange={() => handleToggleFeature(idx, "useForSupplyChain")}
-                      disabled={!model.enabled}
-                      style={{ width: 14, height: 14 }}
-                    />
-                    <span>Use for Supply Chain</span>
-                  </label>
-                  <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
-                    <input
-                      type="checkbox"
-                      checked={model.useForCongress || false}
-                      onChange={() => handleToggleFeature(idx, "useForCongress")}
-                      disabled={!model.enabled}
-                      style={{ width: 14, height: 14 }}
-                    />
-                    <span>Use for Congress</span>
-                  </label>
-                  <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
-                    <input
-                      type="checkbox"
-                      checked={model.useForCftc || false}
-                      onChange={() => handleToggleFeature(idx, "useForCftc")}
-                      disabled={!model.enabled}
-                      style={{ width: 14, height: 14 }}
-                    />
-                    <span>Use for CFTC</span>
-                  </label>
-                </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <button type="button" onClick={() => void refreshOllama()} disabled={refreshingOllama} style={{ padding: "8px 12px" }}>
+              {refreshingOllama ? "Scanning..." : "Scan Models"}
+            </button>
+            <span style={{ fontSize: 12, opacity: 0.7 }}>{localModels.length} local models detected</span>
+          </div>
 
-                <div style={{ fontSize: 11, opacity: 0.5, display: "flex", justifyContent: "space-between" }}>
-                  <span>Added: {new Date(model.createdAt).toLocaleDateString()}</span>
-                  {model.lastUsed && (
-                    <span>Used: {new Date(model.lastUsed).toLocaleString()}</span>
-                  )}
-                </div>
+          <div style={{ display: "grid", gap: 8, maxHeight: 220, overflowY: "auto", paddingRight: 4 }}>
+            {localModels.map((model) => {
+              const existing = cloudAiModels.find((entry) => entry.provider === "ollama" && entry.model === model);
+              const enabled = !!existing?.enabled;
+              return (
+                <label key={toModelId("ollama", model)} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 12, padding: "6px 8px", borderRadius: 8, background: enabled ? "rgba(34,197,94,0.12)" : "rgba(255,255,255,0.03)" }}>
+                  <input type="checkbox" checked={enabled} onChange={(e) => setOllamaModelEnabled(model, e.target.checked)} style={{ width: 15, height: 15 }} />
+                  <span style={{ fontFamily: "var(--mono)" }}>{model}</span>
+                </label>
+              );
+            })}
+          </div>
 
+          <div style={{ borderTop: "1px solid var(--border)", paddingTop: 10, display: "grid", gap: 6 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, opacity: 0.85 }}>Ollama Cloud Models</div>
+            <div style={{ fontSize: 12, opacity: 0.72 }}>
+              {ollamaCloudModels.length > 0 ? ollamaCloudModels.join(", ") : "No Ollama cloud models detected yet."}
+            </div>
+          </div>
+        </section>
+
+        <section style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 16, background: "rgba(15,23,42,0.35)", display: "grid", gap: 10 }}>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: 16 }}>☁️ Cloud AI Providers</div>
+            <div style={{ fontSize: 12, opacity: 0.75 }}>Connect provider keys and choose default models. Keys are saved to API Key Hub.</div>
+          </div>
+
+          {CLOUD_PROVIDER_CONFIGS.map((provider) => {
+            const connected = hasConnectedKey(provider.key, apiKeys as Array<{ provider: string }>);
+            const expanded = expandedProvider === provider.key;
+            return (
+              <div key={provider.key} style={{ border: "1px solid var(--border)", borderRadius: 10, overflow: "hidden", background: "rgba(255,255,255,0.02)" }}>
                 <button
-                  onClick={() => removeCloudAiModel(`cloud-ai-${model.createdAt}`)}
-                  style={{
-                    padding: "6px 12px",
-                    background: "rgba(248,113,113,0.2)",
-                    border: "1px solid rgba(248,113,113,0.4)",
-                    borderRadius: 4,
-                    color: "#fca5a5",
-                    cursor: "pointer",
-                    fontSize: 11,
-                    fontWeight: 600,
-                  }}
+                  type="button"
+                  onClick={() => setExpandedProvider(expanded ? null : provider.key)}
+                  style={{ width: "100%", textAlign: "left", border: "none", background: "transparent", color: "inherit", padding: "10px 12px", display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }}
                 >
-                  Remove
+                  <span style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13, fontWeight: 600 }}>
+                    <span>{provider.icon}</span>
+                    <span>{provider.label}</span>
+                  </span>
+                  <span
+                    style={{
+                      fontSize: 11,
+                      borderRadius: 999,
+                      padding: "4px 10px",
+                      border: connected ? "1px solid rgba(34,197,94,0.45)" : "1px solid rgba(255,255,255,0.2)",
+                      background: connected ? "rgba(34,197,94,0.14)" : "rgba(255,255,255,0.06)",
+                      color: connected ? "#86efac" : "rgba(255,255,255,0.8)",
+                    }}
+                  >
+                    {connected ? "Connected" : "No API Key"}
+                  </span>
                 </button>
+
+                {expanded && (
+                  <div style={{ padding: 12, borderTop: "1px solid var(--border)", display: "grid", gap: 8 }}>
+                    <div style={{ display: "grid", gap: 6 }}>
+                      <label style={{ fontSize: 12, opacity: 0.7 }}>Default Model</label>
+                      <select
+                        value={providerModel[provider.key] ?? provider.models[0]}
+                        onChange={(e) => setProviderModel((prev) => ({ ...prev, [provider.key]: e.target.value }))}
+                        style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "rgba(0,0,0,0.2)", color: "inherit" }}
+                      >
+                        {provider.models.map((model) => (
+                          <option key={toModelId(provider.key, model)} value={model}>{model}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div style={{ display: "grid", gap: 6 }}>
+                      <label style={{ fontSize: 12, opacity: 0.7 }}>{provider.secretField}</label>
+                      <input
+                        type="password"
+                        value={providerApiKey[provider.key] ?? ""}
+                        onChange={(e) => setProviderApiKey((prev) => ({ ...prev, [provider.key]: e.target.value }))}
+                        placeholder="Enter API key"
+                        style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "rgba(0,0,0,0.2)", color: "inherit", fontFamily: "var(--mono)" }}
+                      />
+                    </div>
+
+                    <button type="button" onClick={() => void saveProviderKey(provider)} style={{ padding: "8px 12px", justifySelf: "start" }}>
+                      Save to API Key Hub
+                    </button>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const model = providerModel[provider.key] ?? provider.models[0];
+                        const rawKey = (providerApiKey[provider.key] ?? "").trim();
+                        if (!rawKey && !connected) {
+                          setStatusMessage(`${provider.label}: save or enter an API key before testing.`);
+                          return;
+                        }
+                        setTestingModel(`${provider.key}:${model}`);
+                        try {
+                          const result = await window.cockpit?.aiResearch?.testModelConnection?.({
+                            provider: provider.key,
+                            model,
+                            ...(rawKey ? { apiKey: rawKey } : {}),
+                          });
+                          setStatusMessage(
+                            result?.message ?? "Model test completed.",
+                          );
+                        } finally {
+                          setTestingModel(null);
+                        }
+                      }}
+                      style={{ padding: "8px 12px", justifySelf: "start" }}
+                    >
+                      {testingModel === `${provider.key}:${providerModel[provider.key] ?? provider.models[0]}`
+                        ? "Testing..."
+                        : "Test Model Connection"}
+                    </button>
+                  </div>
+                )}
               </div>
             );
           })}
+        </section>
+      </div>
+
+      {statusMessage && (
+        <div style={{ fontSize: 12, padding: "10px 12px", borderRadius: 8, border: "1px solid rgba(59,130,246,0.35)", background: "rgba(59,130,246,0.12)", color: "#bfdbfe" }}>
+          {statusMessage}
         </div>
       )}
 
-      {cloudAiModels.length === 0 && (
-        <div style={{
-          padding: 24,
-          border: "1px solid rgba(255,255,255,0.1)",
-          borderRadius: 8,
-          textAlign: "center",
-          opacity: 0.6,
-          fontSize: 13,
-        }}>
-          No cloud models configured. Add one to get started.
+      {!runtime.available && runtime.message && (
+        <div style={{ fontSize: 12, padding: "10px 12px", borderRadius: 8, border: "1px solid rgba(248,113,113,0.45)", background: "rgba(248,113,113,0.12)", color: "#fecaca" }}>
+          Ollama runtime warning: {runtime.message}
         </div>
       )}
     </div>

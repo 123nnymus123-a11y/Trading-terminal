@@ -4,35 +4,87 @@
  */
 
 import { create } from "zustand";
-import type { MindMapData, SupplyChainGenerationOptions, SupplyChainGenerationResponse, SupplyChainGraph } from "@tc/shared/supplyChain";
+import type {
+  MindMapData,
+  SupplyChainGenerationOptions,
+  SupplyChainGenerationResponse,
+  SupplyChainGraph,
+} from "@tc/shared/supplyChain";
 import { runShockSimulation } from "@tc/shared/supplyChainSimulation";
-import { buildViewUrl, showWindow } from "../lib/tauriWindows";
 import { ensureCanonicalStructures } from "@tc/shared/supplyChainGraph";
 
-export type SupplyChainViewMode = "hierarchy" | "flow" | "impact" | "radial" | "risk" | "shock" | "global";
+export type SupplyChainViewMode =
+  | "hierarchy"
+  | "flow"
+  | "impact"
+  | "radial"
+  | "risk"
+  | "shock"
+  | "global";
 
-const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+const clamp = (value: number, min: number, max: number) =>
+  Math.max(min, Math.min(max, value));
+
+const SUPPLY_CHAIN_REQUEST_TIMEOUT_MS = 45_000;
+let latestGenerateRequestId = 0;
+
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  message: string,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error(message));
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
+}
 
 function deriveShockParams(graph: SupplyChainGraph, nodeId: string) {
-  const nodeEdges = graph.edges.filter((edge) => edge.from === nodeId || edge.to === nodeId);
+  const nodeEdges = graph.edges.filter(
+    (edge) => edge.from === nodeId || edge.to === nodeId,
+  );
   const degree = nodeEdges.length;
   const degreeByNode = new Map<string, number>();
   graph.nodes.forEach((node) => {
-    const count = graph.edges.filter((edge) => edge.from === node.id || edge.to === node.id).length;
+    const count = graph.edges.filter(
+      (edge) => edge.from === node.id || edge.to === node.id,
+    ).length;
     degreeByNode.set(node.id, count);
   });
   const maxDegree = Math.max(1, ...Array.from(degreeByNode.values()));
   const degreeRatio = degree / maxDegree;
 
   const avgWeight = nodeEdges.length
-    ? nodeEdges.reduce((sum, edge) => sum + (typeof edge.weight === "number" ? edge.weight : edge.criticality ?? 1), 0) / nodeEdges.length
+    ? nodeEdges.reduce(
+        (sum, edge) =>
+          sum +
+          (typeof edge.weight === "number"
+            ? edge.weight
+            : (edge.criticality ?? 1)),
+        0,
+      ) / nodeEdges.length
     : 0;
   const weightNorm = clamp(Math.log1p(avgWeight) / 6, 0, 1);
 
   const maxEdges = Math.max(1, graph.nodes.length * (graph.nodes.length - 1));
   const density = clamp(graph.edges.length / maxEdges, 0, 1);
 
-  const severity = clamp(0.35 + 0.45 * degreeRatio + 0.2 * weightNorm, 0.2, 0.95);
+  const severity = clamp(
+    0.35 + 0.45 * degreeRatio + 0.2 * weightNorm,
+    0.2,
+    0.95,
+  );
   const damping = clamp(0.25 + 0.55 * density + 0.15 * weightNorm, 0.2, 0.9);
 
   return { severity, damping };
@@ -42,15 +94,15 @@ interface SupplyChainState {
   // Input state
   searchTicker: string;
   globalTickers: string[];
-  
+
   // Loading & error states
   loading: boolean;
   error: string | null;
-  
+
   // Data state
   mindMapData: MindMapData | null;
   fromCache: boolean;
-  
+
   // UI state
   selectedCategory: string | null;
   selectedCompany: string | null;
@@ -63,7 +115,12 @@ interface SupplyChainState {
     impactScores?: Record<string, number>;
     impactRanges?: Record<string, { min: number; max: number }>;
     impactedEdgeIds?: string[];
-    rankedImpacts?: Array<{ nodeId: string; score: number; minScore?: number; maxScore?: number }>;
+    rankedImpacts?: Array<{
+      nodeId: string;
+      score: number;
+      minScore?: number;
+      maxScore?: number;
+    }>;
     params: {
       severity: number;
       damping: number;
@@ -74,7 +131,7 @@ interface SupplyChainState {
   includeHypothesis: boolean;
   hops: number;
   minEdgeWeight: number;
-  
+
   // Actions
   setSearchTicker: (ticker: string) => void;
   generate: () => Promise<void>;
@@ -93,7 +150,9 @@ interface SupplyChainState {
   setMinEdgeWeight: (value: number) => void;
   setShockSeverity: (value: number) => void;
   setShockDamping: (value: number) => void;
-  setShockIncludeKinds: (kinds: SupplyChainGraph["edges"][number]["kind"][] | undefined) => void;
+  setShockIncludeKinds: (
+    kinds: SupplyChainGraph["edges"][number]["kind"][] | undefined,
+  ) => void;
   seedShockParamsFromNode: (nodeId: string) => void;
   runShockSimulation: (nodeId: string) => void;
   resetSimulation: () => void;
@@ -126,41 +185,47 @@ export const useSupplyChainStore = create<SupplyChainState>((set, get) => ({
   includeHypothesis: false,
   hops: 2,
   minEdgeWeight: 0,
-  
+
   // Actions
   setSearchTicker: (ticker: string) => {
     set({ searchTicker: ticker.toUpperCase(), error: null });
   },
-  
+
   generate: async () => {
     const api = window.cockpit?.supplyChain;
     if (!api?.generate) {
       set({ error: "Supply Chain API not available" });
       return;
     }
-    
+
     const ticker = get().searchTicker.trim();
     if (!ticker) {
       set({ error: "Please enter a ticker symbol" });
       return;
     }
-    
-    set({ loading: true, error: null, mindMapData: null });
-    
+
+    const requestId = ++latestGenerateRequestId;
+    set({ loading: true, error: null });
+
     try {
-      const currentGlobal = get().globalTickers;
-      const nextGlobalTickers = Array.from(new Set([...currentGlobal, ticker]));
       const baseOptions: SupplyChainGenerationOptions = {
         ticker,
-        globalTickers: nextGlobalTickers,
         strictMode: get().strictMode,
         includeHypothesis: get().includeHypothesis,
         hops: get().hops,
         minEdgeWeight: get().minEdgeWeight,
         refresh: false,
       };
-      const response = await api.generate(baseOptions) as SupplyChainGenerationResponse;
-      
+      const response = (await withTimeout(
+        api.generate(baseOptions) as Promise<SupplyChainGenerationResponse>,
+        SUPPLY_CHAIN_REQUEST_TIMEOUT_MS,
+        "Supply chain request timed out",
+      )) as SupplyChainGenerationResponse;
+
+      if (requestId !== latestGenerateRequestId) {
+        return;
+      }
+
       if (response.success && response.data) {
         const hydrated = ensureCanonicalStructures(response.data);
         set({
@@ -168,19 +233,29 @@ export const useSupplyChainStore = create<SupplyChainState>((set, get) => ({
           fromCache: response.fromCache,
           loading: false,
           error: null,
-          globalTickers: nextGlobalTickers,
+          globalTickers: [ticker],
           selectedCategory: null,
           selectedCompany: null,
           selectedNodeId: null,
           selectedEdgeId: null,
-          simulation: { failedNodeIds: [], failedEdgeIds: [], params: get().simulation.params },
+          simulation: {
+            failedNodeIds: [],
+            failedEdgeIds: [],
+            params: get().simulation.params,
+          },
         });
 
         if (response.fromCache && response.needsRefresh) {
-          api.generate({ ...baseOptions, refresh: true })
+          api
+            .generate({ ...baseOptions, refresh: true })
             .then((refreshResponse: SupplyChainGenerationResponse) => {
+              if (requestId !== latestGenerateRequestId) {
+                return;
+              }
               if (refreshResponse.success && refreshResponse.data) {
-                const refreshed = ensureCanonicalStructures(refreshResponse.data);
+                const refreshed = ensureCanonicalStructures(
+                  refreshResponse.data,
+                );
                 set({ mindMapData: refreshed, fromCache: false });
               }
             })
@@ -195,6 +270,9 @@ export const useSupplyChainStore = create<SupplyChainState>((set, get) => ({
         });
       }
     } catch (err) {
+      if (requestId !== latestGenerateRequestId) {
+        return;
+      }
       console.error("[supplyChainStore] generate error:", err);
       set({
         loading: false,
@@ -202,17 +280,20 @@ export const useSupplyChainStore = create<SupplyChainState>((set, get) => ({
       });
     }
   },
-  
+
   clearCache: async () => {
     const api = window.cockpit?.supplyChain;
     if (!api?.clearCache) return;
-    
+
     const ticker = get().searchTicker.trim();
     if (!ticker) return;
-    
+
     try {
       await api.clearCache(ticker);
-      const globalKey = get().globalTickers.length > 1 ? `GLOBAL:${get().globalTickers.join("|")}` : null;
+      const globalKey =
+        get().globalTickers.length > 1
+          ? `GLOBAL:${get().globalTickers.join("|")}`
+          : null;
       if (globalKey) {
         await api.clearCache(globalKey);
       }
@@ -221,7 +302,7 @@ export const useSupplyChainStore = create<SupplyChainState>((set, get) => ({
       console.error("[supplyChainStore] clearCache error:", err);
     }
   },
-  
+
   reset: () => {
     set({
       searchTicker: "",
@@ -235,14 +316,23 @@ export const useSupplyChainStore = create<SupplyChainState>((set, get) => ({
       selectedNodeId: null,
       selectedEdgeId: null,
       viewMode: "flow",
-      simulation: { failedNodeIds: [], failedEdgeIds: [], params: get().simulation.params },
+      simulation: {
+        failedNodeIds: [],
+        failedEdgeIds: [],
+        params: get().simulation.params,
+      },
     });
   },
-  
+
   setSelectedCategory: (categoryId: string | null) => {
-    set({ selectedCategory: categoryId, selectedCompany: null, selectedNodeId: null, selectedEdgeId: null });
+    set({
+      selectedCategory: categoryId,
+      selectedCompany: null,
+      selectedNodeId: null,
+      selectedEdgeId: null,
+    });
   },
-  
+
   setSelectedCompany: (companyId: string | null) => {
     set({ selectedCompany: companyId, selectedNodeId: companyId });
   },
@@ -252,7 +342,11 @@ export const useSupplyChainStore = create<SupplyChainState>((set, get) => ({
   },
 
   setSelectedNode: (nodeId: string | null) => {
-    set({ selectedNodeId: nodeId, selectedEdgeId: null, selectedCompany: nodeId });
+    set({
+      selectedNodeId: nodeId,
+      selectedEdgeId: null,
+      selectedCompany: nodeId,
+    });
   },
 
   setSelectedEdge: (edgeId: string | null) => {
@@ -362,8 +456,14 @@ export const useSupplyChainStore = create<SupplyChainState>((set, get) => ({
     const impactRanges: Record<string, { min: number; max: number }> = {};
     result.ranked.forEach((impact) => {
       impactScores[impact.nodeId] = impact.score;
-      if (typeof impact.minScore === "number" && typeof impact.maxScore === "number") {
-        impactRanges[impact.nodeId] = { min: impact.minScore, max: impact.maxScore };
+      if (
+        typeof impact.minScore === "number" &&
+        typeof impact.maxScore === "number"
+      ) {
+        impactRanges[impact.nodeId] = {
+          min: impact.minScore,
+          max: impact.maxScore,
+        };
       }
     });
     set((state) => ({
@@ -394,11 +494,14 @@ export const useSupplyChainStore = create<SupplyChainState>((set, get) => ({
       set({ error: "Supply Chain API not available" });
       return;
     }
-    const cleaned = Array.from(new Set(tickers.map((t) => t.trim().toUpperCase()))).filter(Boolean);
+    const cleaned = Array.from(
+      new Set(tickers.map((t) => t.trim().toUpperCase())),
+    ).filter(Boolean);
     if (cleaned.length === 0) {
       set({ error: "No tickers provided" });
       return;
     }
+    const requestId = ++latestGenerateRequestId;
     set({ loading: true, error: null });
     try {
       const baseOptions: SupplyChainGenerationOptions = {
@@ -410,7 +513,14 @@ export const useSupplyChainStore = create<SupplyChainState>((set, get) => ({
         minEdgeWeight: get().minEdgeWeight,
         refresh: false,
       };
-      const response = await api.generate(baseOptions) as SupplyChainGenerationResponse;
+      const response = (await withTimeout(
+        api.generate(baseOptions) as Promise<SupplyChainGenerationResponse>,
+        SUPPLY_CHAIN_REQUEST_TIMEOUT_MS,
+        "Global supply chain request timed out",
+      )) as SupplyChainGenerationResponse;
+      if (requestId !== latestGenerateRequestId) {
+        return;
+      }
       if (response.success && response.data) {
         const hydrated = ensureCanonicalStructures(response.data);
         set({
@@ -424,12 +534,22 @@ export const useSupplyChainStore = create<SupplyChainState>((set, get) => ({
           selectedCompany: null,
           selectedNodeId: null,
           selectedEdgeId: null,
-          simulation: { failedNodeIds: [], failedEdgeIds: [], params: get().simulation.params },
+          simulation: {
+            failedNodeIds: [],
+            failedEdgeIds: [],
+            params: get().simulation.params,
+          },
         });
       } else {
-        set({ loading: false, error: response.error || "Failed to generate global graph" });
+        set({
+          loading: false,
+          error: response.error || "Failed to generate global graph",
+        });
       }
     } catch (err) {
+      if (requestId !== latestGenerateRequestId) {
+        return;
+      }
       set({ loading: false, error: String(err) });
     }
   },
@@ -437,9 +557,6 @@ export const useSupplyChainStore = create<SupplyChainState>((set, get) => ({
   openGlobalMap: async () => {
     const tickers = get().globalTickers;
     if (tickers.length === 0) return;
-    const viewUrl = buildViewUrl("global-map", { tickers: tickers.join("|") });
-    const opened = await showWindow("global-map", viewUrl);
-    if (opened) return;
 
     const api = window.cockpit?.supplyChain;
     if (!api?.openGlobalMap) return;

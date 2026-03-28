@@ -2,7 +2,14 @@ import { z } from "zod";
 import { callCloudLlm } from "../../llm/cloudLlmClient";
 import { getModel } from "../../llm/cloudLlmConfig";
 
-export type CloudProvider = "openai" | "ollama";
+export type CloudProvider =
+  | "ollama"
+  | "openai"
+  | "anthropic"
+  | "gemini"
+  | "mistral"
+  | "groq"
+  | "xai";
 export type ModelTier = "standard" | "advanced" | "expert";
 
 export interface CloudModelConfig {
@@ -42,7 +49,9 @@ const AVAILABLE_MODELS: Record<string, CloudModelCapability[]> = {
   ],
 };
 
-export function getAvailableModels(provider?: CloudProvider): CloudModelCapability[] {
+export function getAvailableModels(
+  provider?: CloudProvider,
+): CloudModelCapability[] {
   if (provider) {
     return AVAILABLE_MODELS[provider] || [];
   }
@@ -60,6 +69,8 @@ export async function callCloudModel(
   _fallbackToOllama: boolean = true,
 ): Promise<string> {
   return callCloudLlm(systemPrompt, userPrompt, {
+    providerOverride: config.provider,
+    modelOverride: config.model,
     temperature: config.temperature ?? 0.3,
     maxTokens: config.maxTokens ?? 2000,
   });
@@ -70,7 +81,7 @@ export async function callCloudModel(
  */
 export async function parseCloudResponse(
   response: string,
-  schema: z.ZodSchema
+  schema: z.ZodSchema,
 ): Promise<unknown> {
   try {
     const json = JSON.parse(response);

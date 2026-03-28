@@ -784,6 +784,27 @@ kbd {
   height: var(--tab-height);
 }
 
+.tab.dragging {
+  transform: translateY(-2px) scale(1.01);
+  box-shadow: 0 12px 26px rgba(0, 0, 0, 0.28);
+  border-bottom-color: rgba(var(--accent-rgb), 0.55);
+  color: var(--text);
+  z-index: 3;
+}
+
+.tabDetachedRestore {
+  border: 1px dashed rgba(var(--accent-rgb), 0.45);
+  border-radius: 8px;
+  margin-left: 6px;
+  color: rgba(var(--accent-rgb), 1);
+  background: rgba(var(--accent-rgb), 0.08);
+}
+
+.tabDetachedRestore:hover {
+  background: rgba(var(--accent-rgb), 0.16);
+  border-color: rgba(var(--accent-rgb), 0.75);
+}
+
 .tab:hover {
   color: var(--text);
   border-bottom-color: var(--border);
@@ -904,6 +925,44 @@ body[data-ui-profile="sleek"] .tab.active {
   flex: 1;
   display: flex;
   flex-direction: column;
+}
+
+.detachedWindowChrome {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.detachedTabBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  background: linear-gradient(180deg, rgba(12, 16, 28, 0.96), rgba(8, 11, 20, 0.9));
+}
+
+.detachedTabTitle {
+  font-size: var(--font-md);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text);
+}
+
+.detachedTabAction {
+  border: 1px solid rgba(var(--accent-rgb), 0.45);
+  border-radius: 8px;
+  padding: 8px 12px;
+  height: auto;
+  color: var(--text);
+  background: rgba(var(--accent-rgb), 0.14);
+}
+
+.detachedTabAction:hover {
+  border-color: rgba(var(--accent-rgb), 0.8);
+  background: rgba(var(--accent-rgb), 0.22);
 }
 
 .pageHeader {

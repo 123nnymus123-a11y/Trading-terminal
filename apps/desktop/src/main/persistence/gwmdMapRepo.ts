@@ -6,13 +6,22 @@
 import { getDb } from "./db";
 import type { SupplyChainGraph } from "@tc/shared/supplyChain";
 
-const GWMD_ALLOWED_RELATION_TYPES = ["supplier", "customer", "partner", "competitor", "financing", "license"] as const;
+const GWMD_ALLOWED_RELATION_TYPES = [
+  "supplier",
+  "customer",
+  "partner",
+  "competitor",
+  "financing",
+  "license",
+] as const;
 type GwmdRelationType = (typeof GWMD_ALLOWED_RELATION_TYPES)[number];
 
 const isGwmdRelationType = (value: string): value is GwmdRelationType =>
   GWMD_ALLOWED_RELATION_TYPES.includes(value.toLowerCase() as GwmdRelationType);
 
-const toGraphDependencyKind = (value: string): SupplyChainGraph["edges"][number]["kind"] | null => {
+const toGraphDependencyKind = (
+  value: string,
+): SupplyChainGraph["edges"][number]["kind"] | null => {
   const relationType = value.toLowerCase();
   if (!isGwmdRelationType(relationType)) return null;
   return relationType;
@@ -49,7 +58,18 @@ export class GwmdMapRepository {
   /**
    * Add or update companies
    */
-  addCompanies(companies: Array<{ ticker: string; name: string; hq_lat?: number; hq_lon?: number; hq_city?: string; hq_country?: string; industry?: string; health_score?: number }>) {
+  addCompanies(
+    companies: Array<{
+      ticker: string;
+      name: string;
+      hq_lat?: number;
+      hq_lon?: number;
+      hq_city?: string;
+      hq_country?: string;
+      industry?: string;
+      health_score?: number;
+    }>,
+  ) {
     const db = getDb();
     const stmt = db.prepare(`
       INSERT INTO gwmd_company (ticker, name, hq_lat, hq_lon, hq_city, hq_country, industry, health_score)
@@ -65,12 +85,32 @@ export class GwmdMapRepository {
         updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
     `);
 
-    const insert = db.transaction((cmp: { ticker: string; name: string; hq_lat?: number; hq_lon?: number; hq_city?: string; hq_country?: string; industry?: string; health_score?: number }) => {
-      const ticker = normalizeTicker(cmp.ticker);
-      const lat = cmp.hq_lat ?? null;
-      const lon = cmp.hq_lon ?? null;
-      stmt.run(ticker, cmp.name, lat, lon, cmp.hq_city ?? null, cmp.hq_country ?? null, cmp.industry ?? null, cmp.health_score ?? null);
-    });
+    const insert = db.transaction(
+      (cmp: {
+        ticker: string;
+        name: string;
+        hq_lat?: number;
+        hq_lon?: number;
+        hq_city?: string;
+        hq_country?: string;
+        industry?: string;
+        health_score?: number;
+      }) => {
+        const ticker = normalizeTicker(cmp.ticker);
+        const lat = cmp.hq_lat ?? null;
+        const lon = cmp.hq_lon ?? null;
+        stmt.run(
+          ticker,
+          cmp.name,
+          lat,
+          lon,
+          cmp.hq_city ?? null,
+          cmp.hq_country ?? null,
+          cmp.industry ?? null,
+          cmp.health_score ?? null,
+        );
+      },
+    );
 
     companies.forEach(insert);
   }
@@ -78,32 +118,56 @@ export class GwmdMapRepository {
   /**
    * Add or update relationships
    */
-  addRelationships(relationships: Array<{ id: string; from_ticker: string; to_ticker: string; relation_type: string; weight?: number; confidence?: number; evidence?: string }>) {
+  addRelationships(
+    relationships: Array<{
+      id: string;
+      from_ticker: string;
+      to_ticker: string;
+      relation_type: string;
+      weight?: number;
+      confidence?: number;
+      evidence?: string;
+    }>,
+  ) {
     const db = getDb();
     const stmt = db.prepare(`
       INSERT INTO gwmd_relationship (id, from_ticker, to_ticker, relation_type, weight, confidence, evidence)
       VALUES (?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(id) DO UPDATE SET
+      ON CONFLICT(from_ticker, to_ticker, relation_type) DO UPDATE SET
         weight = excluded.weight,
         confidence = excluded.confidence,
         evidence = excluded.evidence,
         updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
     `);
 
-    const insert = db.transaction((rel: { id: string; from_ticker: string; to_ticker: string; relation_type: string; weight?: number; confidence?: number; evidence?: string }) => {
-      if (!isGwmdRelationType(rel.relation_type)) {
-        return;
-      }
-      stmt.run(
-        rel.id,
-        normalizeTicker(rel.from_ticker),
-        normalizeTicker(rel.to_ticker),
-        rel.relation_type.toLowerCase(),
-        rel.weight ?? null,
-        rel.confidence ?? null,
-        rel.evidence ?? null
-      );
-    });
+    const insert = db.transaction(
+      (rel: {
+        id: string;
+        from_ticker: string;
+        to_ticker: string;
+        relation_type: string;
+        weight?: number;
+        confidence?: number;
+        evidence?: string;
+      }) => {
+        if (!isGwmdRelationType(rel.relation_type)) {
+          return;
+        }
+        const fromTicker = normalizeTicker(rel.from_ticker);
+        const toTicker = normalizeTicker(rel.to_ticker);
+        const relationType = rel.relation_type.toLowerCase();
+        const semanticId = `${fromTicker}-${toTicker}-${relationType}`;
+        stmt.run(
+          semanticId,
+          fromTicker,
+          toTicker,
+          relationType,
+          rel.weight ?? null,
+          rel.confidence ?? null,
+          rel.evidence ?? null,
+        );
+      },
+    );
 
     relationships.forEach(insert);
   }
@@ -113,7 +177,9 @@ export class GwmdMapRepository {
    */
   getAllCompanies(): GwmdCompanyRecord[] {
     const db = getDb();
-    return db.prepare("SELECT * FROM gwmd_company ORDER BY added_at DESC").all() as GwmdCompanyRecord[];
+    return db
+      .prepare("SELECT * FROM gwmd_company ORDER BY added_at DESC")
+      .all() as GwmdCompanyRecord[];
   }
 
   /**
@@ -121,17 +187,24 @@ export class GwmdMapRepository {
    */
   getAllRelationships(): GwmdRelationshipRecord[] {
     const db = getDb();
-    return db.prepare("SELECT * FROM gwmd_relationship").all() as GwmdRelationshipRecord[];
+    return db
+      .prepare("SELECT * FROM gwmd_relationship")
+      .all() as GwmdRelationshipRecord[];
   }
 
   /**
    * Get ticker-scoped snapshot (connected component including focal ticker)
    */
-  getScopedSnapshot(ticker: string): { companies: GwmdCompanyRecord[]; edges: GwmdRelationshipRecord[] } {
+  getScopedSnapshot(ticker: string): {
+    companies: GwmdCompanyRecord[];
+    edges: GwmdRelationshipRecord[];
+  } {
     const focal = ticker.toUpperCase();
     const companies = this.getAllCompanies();
     const edges = this.getAllRelationships();
-    const companyByTicker = new Map(companies.map((company) => [company.ticker.toUpperCase(), company]));
+    const companyByTicker = new Map(
+      companies.map((company) => [company.ticker.toUpperCase(), company]),
+    );
 
     if (!companyByTicker.has(focal)) {
       return { companies: [], edges: [] };
@@ -161,7 +234,11 @@ export class GwmdMapRepository {
       .map((key) => companyByTicker.get(key))
       .filter((company): company is GwmdCompanyRecord => !!company);
 
-    const scopedEdges = edges.filter((edge) => included.has(edge.from_ticker.toUpperCase()) && included.has(edge.to_ticker.toUpperCase()));
+    const scopedEdges = edges.filter(
+      (edge) =>
+        included.has(edge.from_ticker.toUpperCase()) &&
+        included.has(edge.to_ticker.toUpperCase()),
+    );
 
     return {
       companies: scopedCompanies,
@@ -172,11 +249,25 @@ export class GwmdMapRepository {
   /**
    * Get companies missing coordinates
    */
-  getCompaniesMissingCoords(limit: number = 200): Array<Pick<GwmdCompanyRecord, "ticker" | "name" | "hq_lat" | "hq_lon" | "hq_city" | "hq_country">> {
+  getCompaniesMissingCoords(
+    limit: number = 200,
+  ): Array<
+    Pick<
+      GwmdCompanyRecord,
+      "ticker" | "name" | "hq_lat" | "hq_lon" | "hq_city" | "hq_country"
+    >
+  > {
     const db = getDb();
     return db
-      .prepare("SELECT ticker, name, hq_lat, hq_lon, hq_city, hq_country FROM gwmd_company WHERE hq_lat IS NULL OR hq_lon IS NULL LIMIT ?")
-      .all(limit) as Array<Pick<GwmdCompanyRecord, "ticker" | "name" | "hq_lat" | "hq_lon" | "hq_city" | "hq_country">>;
+      .prepare(
+        "SELECT ticker, name, hq_lat, hq_lon, hq_city, hq_country FROM gwmd_company WHERE hq_lat IS NULL OR hq_lon IS NULL LIMIT ?",
+      )
+      .all(limit) as Array<
+      Pick<
+        GwmdCompanyRecord,
+        "ticker" | "name" | "hq_lat" | "hq_lon" | "hq_city" | "hq_country"
+      >
+    >;
   }
 
   /**
@@ -185,7 +276,9 @@ export class GwmdMapRepository {
   getCompanyRelationships(ticker: string): GwmdRelationshipRecord[] {
     const db = getDb();
     return db
-      .prepare("SELECT * FROM gwmd_relationship WHERE from_ticker = ? OR to_ticker = ?")
+      .prepare(
+        "SELECT * FROM gwmd_relationship WHERE from_ticker = ? OR to_ticker = ?",
+      )
       .all(ticker, ticker) as GwmdRelationshipRecord[];
   }
 
@@ -194,7 +287,9 @@ export class GwmdMapRepository {
    */
   companyExists(ticker: string): boolean {
     const db = getDb();
-    const result = db.prepare("SELECT 1 FROM gwmd_company WHERE ticker = ?").get(normalizeTicker(ticker));
+    const result = db
+      .prepare("SELECT 1 FROM gwmd_company WHERE ticker = ?")
+      .get(normalizeTicker(ticker));
     return !!result;
   }
 
@@ -203,16 +298,43 @@ export class GwmdMapRepository {
    */
   getCompany(ticker: string): GwmdCompanyRecord | null {
     const db = getDb();
-    return (db.prepare("SELECT * FROM gwmd_company WHERE ticker = ?").get(normalizeTicker(ticker)) as GwmdCompanyRecord) || null;
+    return (
+      (db
+        .prepare("SELECT * FROM gwmd_company WHERE ticker = ?")
+        .get(normalizeTicker(ticker)) as GwmdCompanyRecord) || null
+    );
   }
 
   /**
    * Build graph from all stored data
    */
-  buildGraph(): { nodes: SupplyChainGraph["nodes"]; edges: SupplyChainGraph["edges"] } {
+  buildGraph(): {
+    nodes: SupplyChainGraph["nodes"];
+    edges: SupplyChainGraph["edges"];
+  } {
     const rawCompanies = this.getAllCompanies();
     const rawRelationships = this.getAllRelationships();
+    return this.buildGraphFromRecords(rawCompanies, rawRelationships);
+  }
 
+  /**
+   * Build graph only for companies connected to focal ticker
+   */
+  buildScopedGraph(ticker: string): {
+    nodes: SupplyChainGraph["nodes"];
+    edges: SupplyChainGraph["edges"];
+  } {
+    const scoped = this.getScopedSnapshot(ticker);
+    return this.buildGraphFromRecords(scoped.companies, scoped.edges);
+  }
+
+  private buildGraphFromRecords(
+    rawCompanies: GwmdCompanyRecord[],
+    rawRelationships: GwmdRelationshipRecord[],
+  ): {
+    nodes: SupplyChainGraph["nodes"];
+    edges: SupplyChainGraph["edges"];
+  } {
     const companyMap = new Map<string, GwmdCompanyRecord>();
     rawCompanies.forEach((company) => {
       const ticker = normalizeTicker(company.ticker);
@@ -237,9 +359,13 @@ export class GwmdMapRepository {
         ...(mergedHqLat !== undefined ? { hq_lat: mergedHqLat } : {}),
         ...(mergedHqLon !== undefined ? { hq_lon: mergedHqLon } : {}),
         ...(mergedHqCity !== undefined ? { hq_city: mergedHqCity } : {}),
-        ...(mergedHqCountry !== undefined ? { hq_country: mergedHqCountry } : {}),
+        ...(mergedHqCountry !== undefined
+          ? { hq_country: mergedHqCountry }
+          : {}),
         ...(mergedIndustry !== undefined ? { industry: mergedIndustry } : {}),
-        ...(mergedHealthScore !== undefined ? { health_score: mergedHealthScore } : {}),
+        ...(mergedHealthScore !== undefined
+          ? { health_score: mergedHealthScore }
+          : {}),
         added_at: existing.added_at,
         updated_at: next.updated_at || existing.updated_at,
       });
@@ -275,7 +401,9 @@ export class GwmdMapRepository {
         to_ticker: toTicker,
         relation_type: relationType,
         ...(mergedWeight !== undefined ? { weight: mergedWeight } : {}),
-        ...(mergedConfidence !== undefined ? { confidence: mergedConfidence } : {}),
+        ...(mergedConfidence !== undefined
+          ? { confidence: mergedConfidence }
+          : {}),
         ...(mergedEvidence !== undefined ? { evidence: mergedEvidence } : {}),
         added_at: existing.added_at,
         updated_at: next.updated_at || existing.updated_at,
@@ -300,7 +428,10 @@ export class GwmdMapRepository {
         hqCity: c.hq_city,
         hqCountry: c.hq_country,
         industry: c.industry,
-        geoSource: c.hq_lat != null && c.hq_lon != null ? "stored_snapshot" : "unresolved",
+        geoSource:
+          c.hq_lat != null && c.hq_lon != null
+            ? "stored_snapshot"
+            : "unresolved",
         geoConfidence: c.hq_lat != null && c.hq_lon != null ? 0.55 : 0,
         gwmdDepth: depthByTicker.get(c.ticker.toUpperCase()) ?? 0,
       },
@@ -310,15 +441,17 @@ export class GwmdMapRepository {
       const kind = toGraphDependencyKind(r.relation_type);
       if (!kind) return [];
 
-      return [{
-        id: r.id,
-        from: r.from_ticker,
-        to: r.to_ticker,
-        kind,
-        magnitude: r.weight ?? 0.5,
-        confidence: r.confidence ?? 0.5,
-        explanation: r.evidence || "",
-      }];
+      return [
+        {
+          id: r.id,
+          from: r.from_ticker,
+          to: r.to_ticker,
+          kind,
+          magnitude: r.weight ?? 0.5,
+          confidence: r.confidence ?? 0.5,
+          explanation: r.evidence || "",
+        },
+      ];
     });
 
     return { nodes, edges };
@@ -326,7 +459,7 @@ export class GwmdMapRepository {
 
   private computeTierByTicker(
     companies: GwmdCompanyRecord[],
-    relationships: GwmdRelationshipRecord[]
+    relationships: GwmdRelationshipRecord[],
   ): Map<string, "direct" | "indirect" | "systemic"> {
     const depthByTicker = this.computeDepthByTicker(companies, relationships);
     const tierByTicker = new Map<string, "direct" | "indirect" | "systemic">();
@@ -348,7 +481,7 @@ export class GwmdMapRepository {
 
   private computeDepthByTicker(
     companies: GwmdCompanyRecord[],
-    relationships: GwmdRelationshipRecord[]
+    relationships: GwmdRelationshipRecord[],
   ): Map<string, number> {
     const depthByTicker = new Map<string, number>();
     const adjacency = new Map<string, Set<string>>();
@@ -390,16 +523,16 @@ export class GwmdMapRepository {
         }
       }
 
-      const anchor = component
-        .slice()
-        .sort((left, right) => {
-          const degreeDiff = (degree.get(right) ?? 0) - (degree.get(left) ?? 0);
-          if (degreeDiff !== 0) return degreeDiff;
-          return left.localeCompare(right);
-        })[0];
+      const anchor = component.slice().sort((left, right) => {
+        const degreeDiff = (degree.get(right) ?? 0) - (degree.get(left) ?? 0);
+        if (degreeDiff !== 0) return degreeDiff;
+        return left.localeCompare(right);
+      })[0];
       if (!anchor) continue;
 
-      const depthQueue: Array<{ ticker: string; depth: number }> = [{ ticker: anchor, depth: 0 }];
+      const depthQueue: Array<{ ticker: string; depth: number }> = [
+        { ticker: anchor, depth: 0 },
+      ];
       const seen = new Set<string>();
 
       while (depthQueue.length > 0) {
@@ -422,9 +555,15 @@ export class GwmdMapRepository {
   /**
    * Log search history
    */
-  logSearch(ticker: string, companiesFound: number, relationshipsFound: number) {
+  logSearch(
+    ticker: string,
+    companiesFound: number,
+    relationshipsFound: number,
+  ) {
     const db = getDb();
-    db.prepare("INSERT INTO gwmd_search_history (ticker, companies_found, relationships_found) VALUES (?, ?, ?)").run(ticker, companiesFound, relationshipsFound);
+    db.prepare(
+      "INSERT INTO gwmd_search_history (ticker, companies_found, relationships_found) VALUES (?, ?, ?)",
+    ).run(ticker, companiesFound, relationshipsFound);
   }
 
   /**
@@ -432,17 +571,31 @@ export class GwmdMapRepository {
    */
   clear() {
     const db = getDb();
-    db.exec("DELETE FROM gwmd_relationship; DELETE FROM gwmd_company; DELETE FROM gwmd_search_history;");
+    db.exec(
+      "DELETE FROM gwmd_relationship; DELETE FROM gwmd_company; DELETE FROM gwmd_search_history;",
+    );
   }
 
   /**
    * Get search history
    */
-  getSearchHistory(limit: number = 50): Array<{ ticker: string; searched_at: string; companies_found: number; relationships_found: number }> {
+  getSearchHistory(limit: number = 50): Array<{
+    ticker: string;
+    searched_at: string;
+    companies_found: number;
+    relationships_found: number;
+  }> {
     const db = getDb();
     return db
-      .prepare("SELECT ticker, searched_at, companies_found, relationships_found FROM gwmd_search_history ORDER BY searched_at DESC LIMIT ?")
-      .all(limit) as Array<{ ticker: string; searched_at: string; companies_found: number; relationships_found: number }>;
+      .prepare(
+        "SELECT ticker, searched_at, companies_found, relationships_found FROM gwmd_search_history ORDER BY searched_at DESC LIMIT ?",
+      )
+      .all(limit) as Array<{
+      ticker: string;
+      searched_at: string;
+      companies_found: number;
+      relationships_found: number;
+    }>;
   }
 }
 

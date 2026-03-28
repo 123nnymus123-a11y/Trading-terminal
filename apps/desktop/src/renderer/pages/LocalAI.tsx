@@ -2,7 +2,7 @@ import React, { useEffect, useMemo } from "react";
 import { useAiResearchStore } from "../store/aiResearchStore";
 import { useSettingsStore } from "../store/settingsStore";
 
-export default function LocalAI() {
+export default function TerminalAI() {
   const aiInit = useAiResearchStore((s) => s.init);
   const aiLoadConfig = useAiResearchStore((s) => s.loadConfig);
   const aiSaveConfig = useAiResearchStore((s) => s.saveConfig);
@@ -37,6 +37,7 @@ export default function LocalAI() {
   const canRun = !!aiConfig?.enabled && aiRuntime?.available && !aiLoading;
   const activeCloudModels = getActiveCloudModels();
   const hasCloudFallback = aiEnginePreference !== "local-only";
+  const safeBriefs = Array.isArray(aiBriefs) ? aiBriefs : [];
 
   const summary = useMemo(() => {
     if (!aiConfig) return "";
@@ -54,8 +55,8 @@ export default function LocalAI() {
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div>
-          <div style={{ fontSize: 20, fontWeight: 800 }}>Local AI Research</div>
-          <div style={{ fontSize: 12, opacity: 0.7 }}>Customize today's focus and run local/cloud briefings</div>
+          <div style={{ fontSize: 20, fontWeight: 800 }}>Terminal AI Research</div>
+          <div style={{ fontSize: 12, opacity: 0.7 }}>Customize today's focus and run terminal/cloud briefings</div>
         </div>
         <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
           <div style={{ fontSize: 12, opacity: 0.7 }}>
@@ -139,11 +140,11 @@ export default function LocalAI() {
 
       <div>
         <div style={{ fontWeight: 700, marginBottom: 6 }}>Latest briefs</div>
-        {aiBriefs.length === 0 ? (
+        {safeBriefs.length === 0 ? (
           <div style={{ fontSize: 12, opacity: 0.7 }}>No briefs yet.</div>
         ) : (
           <div style={{ display: "grid", gap: 8 }}>
-            {aiBriefs.map((brief) => (
+            {safeBriefs.map((brief) => (
               <div key={brief.id} style={{ padding: 10, borderRadius: 10, border: "1px solid rgba(255,255,255,0.08)" }}>
                 <div style={{ fontWeight: 700 }}>{brief.headline}</div>
                 <div style={{ fontSize: 12, opacity: 0.7 }}>

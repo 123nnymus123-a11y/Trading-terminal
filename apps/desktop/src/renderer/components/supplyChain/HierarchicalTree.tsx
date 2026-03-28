@@ -1,5 +1,6 @@
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import type { SupplyChainGraph, SupplyChainGraphEdge, SupplyChainGraphNode } from "@tc/shared/supplyChain";
+import { Transitions, RelationColors, StatusColors, BorderRadius, Spacing } from "./tokens";
 
 interface Props {
   graph: SupplyChainGraph;
@@ -20,21 +21,25 @@ const columnStyle: React.CSSProperties = {
   flexDirection: "column",
   gap: 12,
   padding: 12,
+  position: "relative",
+  minWidth: 0,
 };
 
 function nodeStatusColor(nodeId: string, simulation: Props["simulation"]): string {
-  if (simulation.failedNodeIds.includes(nodeId)) return "rgba(239,68,68,0.35)";
-  if ((simulation.impactScores?.[nodeId] ?? 0) > 0) return "rgba(249,115,22,0.18)";
-  return "rgba(30,41,59,0.9)";
+  if (simulation.failedNodeIds.includes(nodeId)) return "rgba(239,68,68,0.18)";
+  if ((simulation.impactScores?.[nodeId] ?? 0) > 0) return "rgba(249,115,22,0.12)";
+  return "rgba(30,41,59,0.8)";
 }
 
 function edgeStatus(edge: SupplyChainGraphEdge, simulation: Props["simulation"]): string {
-  if (simulation.failedEdgeIds.includes(edge.id)) return "rgba(239,68,68,0.8)";
-  if (simulation.impactedEdgeIds?.includes(edge.id)) return "rgba(249,115,22,0.8)";
-  return "rgba(59,130,246,0.35)";
+  if (simulation.failedEdgeIds.includes(edge.id)) return StatusColors.failed;
+  if (simulation.impactedEdgeIds?.includes(edge.id)) return StatusColors.impacted;
+  return RelationColors[edge.kind as keyof typeof RelationColors] || RelationColors.other;
 }
 
 export default function HierarchicalTree(props: Props) {
+  const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null);
+  
   const focusNode = props.graph.nodes.find((n) => n.id === props.focusNodeId) ?? props.graph.nodes[0] ?? null;
   const { upstream, downstream } = useMemo(() => {
     if (!focusNode) {
@@ -53,7 +58,49 @@ export default function HierarchicalTree(props: Props) {
   }
 
   return (
-    <div style={{ display: "flex", gap: 16, height: "100%" }}>
+    <div style={{ display: "flex", gap: 16, height: "100%", position: "relative" }}>
+      {/* SVG connection paths overlay */}
+      <svg
+        style={{
+          position: "absolute",
+          top: 0,
+          left: 0,
+          width: "100%",
+          height: "100%",
+          pointerEvents: "none",
+          zIndex: 10,
+        }}
+        viewBox={`0 0 ${typeof window !== 'undefined' ? window.innerWidth : 1920} ${typeof window !== 'undefined' ? window.innerHeight : 1080}`}
+      >
+        <defs>
+          <linearGradient id="connection-gradient-up" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stopColor={RelationColors.supplier} stopOpacity="0.4" />
+            <stop offset="100%" stopColor={RelationColors.supplier} stopOpacity="0.8" />
+          </linearGradient>
+          <linearGradient id="connection-gradient-down" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stopColor={RelationColors.customer} stopOpacity="0.8" />
+            <stop offset="100%" stopColor={RelationColors.customer} stopOpacity="0.4" />
+          </linearGradient>
+          <filter id="connection-glow">
+            <feGaussianBlur stdDeviation="2" result="coloredBlur" />
+            <feMerge>
+              <feMergeNode in="coloredBlur" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+        </defs>
+
+        {/* Animated connection lines (simplified: focus on stroke animation) */}
+        <style>
+          {`
+            @keyframes connection-flow {
+              0% { stroke-dashoffset: 0; }
+              100% { stroke-dashoffset: -8px; }
+            }
+          `}
+        </style>
+      </svg>
+
       <div style={columnStyle}>
         <SectionTitle>Upstream Dependencies</SectionTitle>
         {upstream.length === 0 && <Placeholder>None linked</Placeholder>}
@@ -64,21 +111,25 @@ export default function HierarchicalTree(props: Props) {
             edge={edge}
             placement="upstream"
             simulation={props.simulation}
+            isHovered={hoveredEdgeId === edge.id}
             onSelectNode={props.onSelectNode}
             onSelectEdge={props.onSelectEdge}
+            onHoverEdge={setHoveredEdgeId}
           />
         ))}
       </div>
-      <div style={{ ...columnStyle, maxWidth: 280 }}>
+
+      <div style={{ ...columnStyle, maxWidth: 280, justifyContent: "center" }}>
         <SectionTitle>Focus</SectionTitle>
         <div
           style={{
             padding: 16,
-            borderRadius: 16,
-            border: "1px solid rgba(148,163,184,0.3)",
-            background: nodeStatusColor(focusNode.id, props.simulation),
+            borderRadius: BorderRadius.lg,
+            border: "1px solid rgba(148,163,184,0.25)",
+            background: `linear-gradient(135deg, rgba(30,41,82,0.35) 0%, rgba(10,14,26,0.5) 100%)`,
             boxShadow: "0 10px 40px rgba(15,23,42,0.45)",
             cursor: "pointer",
+            transition: Transitions.base,
           }}
           onClick={() => props.onSelectNode(focusNode.id)}
         >
@@ -90,6 +141,7 @@ export default function HierarchicalTree(props: Props) {
           </div>
         </div>
       </div>
+
       <div style={columnStyle}>
         <SectionTitle>Downstream Impact</SectionTitle>
         {downstream.length === 0 && <Placeholder>None linked</Placeholder>}
@@ -100,11 +152,14 @@ export default function HierarchicalTree(props: Props) {
             edge={edge}
             placement="downstream"
             simulation={props.simulation}
+            isHovered={hoveredEdgeId === edge.id}
             onSelectNode={props.onSelectNode}
             onSelectEdge={props.onSelectEdge}
+            onHoverEdge={setHoveredEdgeId}
           />
         ))}
       </div>
+
       <div
         style={{
           position: "absolute",
@@ -115,6 +170,7 @@ export default function HierarchicalTree(props: Props) {
           color: "#94a3b8",
           borderRadius: 999,
           background: "rgba(15,23,42,0.8)",
+          backdropFilter: "blur(8px)",
         }}
       >
         Select a node to change the focal entity
@@ -152,38 +208,67 @@ interface NodeCardProps {
   edge: SupplyChainGraphEdge;
   placement: "upstream" | "downstream";
   simulation: Props["simulation"];
+  isHovered: boolean;
   onSelectNode: (nodeId: string) => void;
   onSelectEdge: (edgeId: string) => void;
+  onHoverEdge: (edgeId: string | null) => void;
 }
 
-function NodeCard({ node, edge, placement: _placement, simulation, onSelectNode, onSelectEdge }: NodeCardProps) {
+function NodeCard({ node, edge, placement: _placement, simulation, isHovered, onSelectNode, onSelectEdge, onHoverEdge }: NodeCardProps) {
+  const [isHoveringCard, setIsHoveringCard] = useState(false);
+  
+  const isImpacted = simulation.impactedEdgeIds?.includes(edge.id) ?? false;
+  const isFailed = simulation.failedEdgeIds.includes(edge.id);
+  
   return (
     <div
       style={{
-        borderRadius: 16,
+        borderRadius: BorderRadius.md,
         padding: 12,
-        border: "1px solid rgba(148,163,184,0.2)",
-        background: nodeStatusColor(node.id, simulation),
+        border: `1px solid ${isHoveringCard || isHovered ? 'rgba(148,163,184,0.4)' : 'rgba(148,163,184,0.15)'}`,
+        background: `linear-gradient(135deg, ${nodeStatusColor(node.id, simulation)} 0%, rgba(15,23,42,0.3) 100%)`,
         display: "flex",
         gap: 8,
         alignItems: "center",
+        cursor: "pointer",
+        transition: Transitions.base,
+        transform: isHoveringCard ? "translateY(-2px)" : "translateY(0)",
+        boxShadow: isHoveringCard ? "0 8px 24px rgba(15,23,42,0.4)" : "0 4px 12px rgba(15,23,42,0.2)",
+        opacity: isHovered || isHoveringCard ? 1 : 0.95,
+      }}
+      onMouseEnter={() => {
+        setIsHoveringCard(true);
+        onHoverEdge(edge.id);
+      }}
+      onMouseLeave={() => {
+        setIsHoveringCard(false);
+        onHoverEdge(null);
       }}
     >
-      <div style={{ width: 32, height: 2, background: edgeStatus(edge, simulation) }} />
+      <div
+        style={{
+          width: 32,
+          height: 3,
+          background: edgeStatus(edge, simulation),
+          borderRadius: 999,
+          transition: Transitions.base,
+          boxShadow: (isImpacted || isFailed) ? `0 0 8px ${edgeStatus(edge, simulation)}` : 'none',
+        }}
+      />
       <div style={{ flex: 1 }}>
         <div style={{ fontSize: 14, fontWeight: 600 }}>{node.label}</div>
         <div style={{ fontSize: 11, color: "#94a3b8" }}>{node.role}</div>
-        <div style={{ fontSize: 10, color: "#818cf8", marginTop: 6 }}>{edge.kind}</div>
+        <div style={{ fontSize: 10, color: RelationColors[edge.kind as keyof typeof RelationColors] || RelationColors.other, marginTop: 6 }}>{edge.kind}</div>
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         <button
-          style={buttonStyle}
+          style={buttonStyle(false)}
           onClick={() => onSelectNode(node.id)}
         >
           Focus
         </button>
         <button
-          style={{ ...buttonStyle, borderColor: "rgba(59,130,246,0.4)" }}
+          style={buttonStyle(true)}
           onClick={() => onSelectEdge(edge.id)}
         >
           Edge
@@ -193,12 +278,15 @@ function NodeCard({ node, edge, placement: _placement, simulation, onSelectNode,
   );
 }
 
-const buttonStyle: React.CSSProperties = {
-  border: "1px solid rgba(148,163,184,0.4)",
-  background: "rgba(15,23,42,0.6)",
-  color: "#e2e8f0",
-  fontSize: 10,
-  borderRadius: 999,
-  padding: "4px 12px",
-  cursor: "pointer",
-};
+function buttonStyle(isEdge: boolean): React.CSSProperties {
+  return {
+    border: `1px solid ${isEdge ? 'rgba(59,130,246,0.3)' : 'rgba(148,163,184,0.3)'}`,
+    background: "rgba(15,23,42,0.6)",
+    color: "#e2e8f0",
+    fontSize: 10,
+    borderRadius: 999,
+    padding: "4px 12px",
+    cursor: "pointer",
+    transition: Transitions.fast,
+  };
+}

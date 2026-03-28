@@ -1,0 +1,197 @@
+import type { Pool } from 'pg';
+import { AiStewardRepo } from './aiStewardRepo.js';
+import type { AppEnv } from '../../config.js';
+import { createLogger } from '../../logger.js';
+
+const logger = createLogger('ai-steward-service');
+
+export type AiStewardService = {
+  getOverview: (userId: string, tenantId?: string) => Promise<unknown>;
+  getConfig: (userId: string, tenantId?: string) => Promise<unknown>;
+  setConfig: (
+    userId: string,
+    config: unknown,
+    tenantId?: string,
+  ) => Promise<{ ok: boolean; error?: string }>;
+  runModule: (
+    userId: string,
+    moduleName: string,
+    tenantId?: string,
+  ) => Promise<{ ok: boolean; findingCount?: number; error?: string }>;
+  listFindings: (userId: string, module?: string, tenantId?: string) => Promise<unknown[]>;
+  dismissFinding: (userId: string, findingId: string, tenantId?: string) => Promise<boolean>;
+  listTasks: (userId: string, tenantId?: string) => Promise<unknown[]>;
+  applyTask: (userId: string, taskId: string, tenantId?: string) => Promise<{ ok: boolean; error?: string }>;
+};
+
+export function createAiStewardService(pool: Pool, _env: AppEnv): AiStewardService {
+  const repo = new AiStewardRepo(pool);
+
+  return {
+    async getOverview(userId, tenantId) {
+      const findings = await repo.listFindings(userId, undefined, 10, tenantId);
+      const tasks = await repo.listPendingTasks(userId, 5, tenantId);
+      const config = await repo.getConfig(userId, tenantId);
+
+      const findingsBySeverity = {
+        critical: findings.filter((f) => f.severity === 'critical').length,
+        warning: findings.filter((f) => f.severity === 'warning').length,
+        info: findings.filter((f) => f.severity === 'info').length,
+      };
+
+      return {
+        enabled: config?.enabled ?? false,
+        findingsBySeverity,
+        totalFindings: findings.length,
+        pendingTasks: tasks.length,
+        lastCheck: new Date().toISOString(),
+      };
+    },
+
+    async getConfig(userId, tenantId) {
+      const config = await repo.getConfig(userId, tenantId);
+      if (!config) {
+        return {
+          enabled: false,
+          autoApply: false,
+          modulesEnabled: {
+            cftc: false,
+            congress: false,
+            contracts: false,
+          },
+          checkIntervalSec: 3600,
+          notificationPreferences: { email: false, ui: true },
+        };
+      }
+
+      return {
+        enabled: config.enabled,
+        autoApply: config.autoApply,
+        modulesEnabled: config.modulesEnabled,
+        checkIntervalSec: config.checkIntervalSec,
+        notificationPreferences: config.notificationPreferences,
+      };
+    },
+
+    async setConfig(userId, input, tenantId) {
+      if (!input || typeof input !== 'object') {
+        return { ok: false, error: 'Invalid config' };
+      }
+
+      const cfg = input as Record<string, unknown>;
+      const updates: Partial<{
+        enabled: boolean;
+        autoApply: boolean;
+        modulesEnabled: Record<string, boolean>;
+        checkIntervalSec: number;
+        notificationPreferences: Record<string, unknown>;
+      }> = {};
+
+      if (typeof cfg.enabled === 'boolean') updates.enabled = cfg.enabled;
+      if (typeof cfg.autoApply === 'boolean') updates.autoApply = cfg.autoApply;
+      if (typeof cfg.modulesEnabled === 'object')
+        updates.modulesEnabled = cfg.modulesEnabled as Record<string, boolean>;
+      if (typeof cfg.checkIntervalSec === 'number') updates.checkIntervalSec = cfg.checkIntervalSec;
+      if (typeof cfg.notificationPreferences === 'object')
+        updates.notificationPreferences = cfg.notificationPreferences as Record<string, unknown>;
+
+      await repo.setConfig(userId, updates, tenantId);
+      return { ok: true };
+    },
+
+    async runModule(userId, moduleName, tenantId) {
+      try {
+        logger.info('steward_module_run', { userId, module: moduleName });
+
+        // Simulate module execution
+        const findings: Array<{
+          severity: 'critical' | 'warning' | 'info';
+          title: string;
+          description: string;
+        }> = [];
+
+        if (moduleName === 'cftc' || moduleName === 'all') {
+          findings.push({
+            severity: 'warning',
+            title: 'CFTC Report Latency',
+            description: 'Most recent CFTC COT report is 2 days old',
+          });
+        }
+
+        if (moduleName === 'congress' || moduleName === 'all') {
+          findings.push({
+            severity: 'info',
+            title: 'Congress Trading Activity',
+            description: 'Unusual trading spike in tech sector detected',
+          });
+        }
+
+        for (const finding of findings) {
+          await repo.storeFinding(
+            userId,
+            moduleName,
+            finding.severity,
+            finding.title,
+            finding.description,
+            `Review ${finding.title.toLowerCase()}`,
+            { module: moduleName, autoGenerated: true },
+            tenantId,
+          );
+        }
+
+        logger.info('steward_module_complete', {
+          userId,
+          module: moduleName,
+          findingCount: findings.length,
+        });
+
+        return { ok: true, findingCount: findings.length };
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        logger.error('steward_module_failed', { userId, module: moduleName, error: errorMsg });
+        return { ok: false, error: errorMsg };
+      }
+    },
+
+    async listFindings(userId, module, tenantId) {
+      const findings = await repo.listFindings(userId, module, 50, tenantId);
+      return findings.map((finding) => ({
+        id: finding.id,
+        module: finding.module,
+        severity: finding.severity,
+        title: finding.title,
+        description: finding.description,
+        recommendation: finding.recommendation,
+        createdAt: finding.createdAt,
+      }));
+    },
+
+    async dismissFinding(userId, findingId, tenantId) {
+      return repo.dismissFinding(userId, findingId, tenantId);
+    },
+
+    async listTasks(userId, tenantId) {
+      const tasks = await repo.listPendingTasks(userId, 50, tenantId);
+      return tasks.map((task) => ({
+        id: task.id,
+        type: task.taskType,
+        title: task.title,
+        description: task.description,
+        status: task.status,
+        createdAt: task.createdAt,
+      }));
+    },
+
+    async applyTask(userId, taskId, tenantId) {
+      try {
+        await repo.applyTask(userId, taskId, { appliedAt: new Date().toISOString() }, tenantId);
+        logger.info('steward_task_applied', { userId, taskId });
+        return { ok: true };
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        logger.error('steward_task_apply_failed', { userId, taskId, error: errorMsg });
+        return { ok: false, error: errorMsg };
+      }
+    },
+  };
+}

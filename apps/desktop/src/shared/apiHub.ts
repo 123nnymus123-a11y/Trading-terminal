@@ -7,7 +7,14 @@ export type ApiKeyProvider =
   | "coinbase"
   | "bls"
   | "fred"
+  | "openai"
+  | "anthropic"
+  | "gemini"
+  | "mistral"
+  | "groq"
+  | "xai"
   | "brave"
+  | "ted"
   | "other";
 
 export interface ApiCredentialField {

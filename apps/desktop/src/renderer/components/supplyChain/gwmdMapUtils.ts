@@ -1,4 +1,7 @@
-import type { SupplyChainGraphEdge, SupplyChainGraphNode } from "@tc/shared/supplyChain";
+import type {
+  SupplyChainGraphEdge,
+  SupplyChainGraphNode,
+} from "@tc/shared/supplyChain";
 import type { GwmdRegion } from "./gwmdUtils";
 
 type Position = [number, number];
@@ -40,13 +43,20 @@ export interface GwmdGeoNode {
   hasGeo: boolean;
   lat: number | null;
   lon: number | null;
+  /** True when coordinates come from a country-centroid fallback rather than a real geocode */
+  isCentroid?: boolean;
 }
 
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
 }
 
-function offsetCoordinate(lat: number, lon: number, radiusKm: number, angleRad: number): { lat: number; lon: number } {
+function offsetCoordinate(
+  lat: number,
+  lon: number,
+  radiusKm: number,
+  angleRad: number,
+): { lat: number; lon: number } {
   const latOffset = (radiusKm / 111) * Math.sin(angleRad);
   const cosLat = Math.cos(toRadians(lat));
   const lonDivisor = 111 * (Math.abs(cosLat) < 0.2 ? 0.2 : Math.abs(cosLat));
@@ -75,7 +85,9 @@ export function spreadOverlappingGeoNodes(nodes: GwmdGeoNode[]): GwmdGeoNode[] {
 
   groups.forEach((group) => {
     if (group.length < 2) return;
-    const ordered = [...group].sort((a, b) => a.node.id.localeCompare(b.node.id));
+    const ordered = [...group].sort((a, b) =>
+      a.node.id.localeCompare(b.node.id),
+    );
     ordered.forEach((item, index) => {
       const baseLat = item.lat as number;
       const baseLon = item.lon as number;
@@ -114,7 +126,30 @@ function toDegrees(value: number) {
   return (value * 180) / Math.PI;
 }
 
-function greatCircleArc(start: Position, end: Position, steps = 64): Position[] {
+function greatCircleArc(
+  start: Position,
+  end: Position,
+  steps = 32,
+): Position[] {
+  if (!Array.isArray(start) || !Array.isArray(end)) {
+    return [];
+  }
+  if (start.length < 2 || end.length < 2) {
+    return [];
+  }
+  if (
+    typeof start[0] !== "number" ||
+    typeof start[1] !== "number" ||
+    typeof end[0] !== "number" ||
+    typeof end[1] !== "number" ||
+    !Number.isFinite(start[0]) ||
+    !Number.isFinite(start[1]) ||
+    !Number.isFinite(end[0]) ||
+    !Number.isFinite(end[1])
+  ) {
+    return [];
+  }
+
   const [lon1, lat1] = start;
   const [lon2, lat2] = end;
   const φ1 = toRadians(lat1);
@@ -122,10 +157,21 @@ function greatCircleArc(start: Position, end: Position, steps = 64): Position[] 
   const φ2 = toRadians(lat2);
   const λ2 = toRadians(lon2);
 
-  const v1: [number, number, number] = [Math.cos(φ1) * Math.cos(λ1), Math.cos(φ1) * Math.sin(λ1), Math.sin(φ1)];
-  const v2: [number, number, number] = [Math.cos(φ2) * Math.cos(λ2), Math.cos(φ2) * Math.sin(λ2), Math.sin(φ2)];
+  const v1: [number, number, number] = [
+    Math.cos(φ1) * Math.cos(λ1),
+    Math.cos(φ1) * Math.sin(λ1),
+    Math.sin(φ1),
+  ];
+  const v2: [number, number, number] = [
+    Math.cos(φ2) * Math.cos(λ2),
+    Math.cos(φ2) * Math.sin(λ2),
+    Math.sin(φ2),
+  ];
 
-  const dot = Math.min(1, Math.max(-1, v1[0] * v2[0] + v1[1] * v2[1] + v1[2] * v2[2]));
+  const dot = Math.min(
+    1,
+    Math.max(-1, v1[0] * v2[0] + v1[1] * v2[1] + v1[2] * v2[2]),
+  );
   const angle = Math.acos(dot);
   if (!Number.isFinite(angle) || angle === 0) {
     return [start, end];
@@ -154,7 +200,8 @@ function bearingDegrees(start: Position, end: Position) {
   const φ2 = toRadians(lat2);
   const Δλ = toRadians(lon2 - lon1);
   const y = Math.sin(Δλ) * Math.cos(φ2);
-  const x = Math.cos(φ1) * Math.sin(φ2) - Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ);
+  const x =
+    Math.cos(φ1) * Math.sin(φ2) - Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ);
   const θ = Math.atan2(y, x);
   return (toDegrees(θ) + 360) % 360;
 }
@@ -164,19 +211,47 @@ export function toNodeFeatures(
   simulation: {
     failedNodeIds: string[];
     impactScores?: Record<string, number>;
-  }
+  },
 ): FeatureCollection<
   PointGeometry,
-  { id: string; label: string; region: GwmdRegion; status: string; impactScore: number; entityType: string }
+  {
+    id: string;
+    label: string;
+    region: GwmdRegion;
+    status: string;
+    impactScore: number;
+    entityType: string;
+    isCentroid: boolean;
+  }
 > {
   const features: Array<
-    Feature<PointGeometry, { id: string; label: string; region: GwmdRegion; status: string; impactScore: number; entityType: string }>
+    Feature<
+      PointGeometry,
+      {
+        id: string;
+        label: string;
+        region: GwmdRegion;
+        status: string;
+        impactScore: number;
+        entityType: string;
+        isCentroid: boolean;
+      }
+    >
   > = nodes
-    .filter((item) => item.hasGeo && typeof item.lon === "number" && typeof item.lat === "number")
+    .filter(
+      (item) =>
+        item.hasGeo &&
+        typeof item.lon === "number" &&
+        typeof item.lat === "number",
+    )
     .map((item) => {
       const impactScore = simulation.impactScores?.[item.node.id] ?? 0;
       const failed = simulation.failedNodeIds.includes(item.node.id);
-      const status = failed ? "failed" : impactScore > 0 ? "impacted" : "normal";
+      const status = failed
+        ? "failed"
+        : impactScore > 0
+          ? "impacted"
+          : "normal";
       return {
         type: "Feature",
         geometry: {
@@ -190,6 +265,7 @@ export function toNodeFeatures(
           status,
           impactScore,
           entityType: item.node.entityType ?? "company",
+          isCentroid: item.isCentroid === true,
         },
       };
     });
@@ -198,19 +274,54 @@ export function toNodeFeatures(
 
 export function toEdgeFeatures(
   edges: SupplyChainGraphEdge[],
-  nodeIndex: Map<string, GwmdGeoNode>
-): FeatureCollection<LineStringGeometry, { id: string; kind: string; confidence: number; strokeWidth: number; from: string; to: string }> {
-  const features: Array<Feature<LineStringGeometry, { id: string; kind: string; confidence: number; strokeWidth: number; from: string; to: string }>> = [];
+  nodeIndex: Map<string, GwmdGeoNode>,
+): FeatureCollection<
+  LineStringGeometry,
+  {
+    id: string;
+    kind: string;
+    confidence: number;
+    strokeWidth: number;
+    from: string;
+    to: string;
+    /** True when at least one endpoint uses a country-centroid fallback coordinate */
+    partial: boolean;
+  }
+> {
+  const features: Array<
+    Feature<
+      LineStringGeometry,
+      {
+        id: string;
+        kind: string;
+        confidence: number;
+        strokeWidth: number;
+        from: string;
+        to: string;
+        partial: boolean;
+      }
+    >
+  > = [];
   edges.forEach((edge) => {
     const from = nodeIndex.get(edge.from);
     const to = nodeIndex.get(edge.to);
-    if (!from?.hasGeo || !to?.hasGeo || typeof from.lon !== "number" || typeof from.lat !== "number" || typeof to.lon !== "number" || typeof to.lat !== "number") {
+    if (
+      !from ||
+      !to ||
+      !from.hasGeo ||
+      !to.hasGeo ||
+      typeof from.lon !== "number" ||
+      typeof from.lat !== "number" ||
+      typeof to.lon !== "number" ||
+      typeof to.lat !== "number"
+    ) {
       return;
     }
     const weight = edgeWeight(edge);
-    const strokeWidth = Math.max(1, Math.min(6, Math.log1p(weight)));
+    const strokeWidth = Math.max(0.6, Math.min(3.5, Math.log1p(weight) * 0.8));
     const start: Position = [from.lon, from.lat];
     const end: Position = [to.lon, to.lat];
+    const partial = from.isCentroid === true || to.isCentroid === true;
     features.push({
       type: "Feature",
       geometry: {
@@ -224,6 +335,7 @@ export function toEdgeFeatures(
         strokeWidth,
         from: edge.from,
         to: edge.to,
+        partial,
       },
     });
   });
@@ -232,22 +344,40 @@ export function toEdgeFeatures(
 
 export function toArrowFeatures(
   edges: SupplyChainGraphEdge[],
-  nodeIndex: Map<string, GwmdGeoNode>
-): FeatureCollection<PointGeometry, { id: string; kind: string; bearing: number; from: string; to: string }> {
-  const features: Array<Feature<PointGeometry, { id: string; kind: string; bearing: number; from: string; to: string }>> = [];
+  nodeIndex: Map<string, GwmdGeoNode>,
+): FeatureCollection<
+  PointGeometry,
+  { id: string; kind: string; bearing: number; from: string; to: string }
+> {
+  const features: Array<
+    Feature<
+      PointGeometry,
+      { id: string; kind: string; bearing: number; from: string; to: string }
+    >
+  > = [];
   edges.forEach((edge) => {
     const from = nodeIndex.get(edge.from);
     const to = nodeIndex.get(edge.to);
-    if (!from?.hasGeo || !to?.hasGeo || typeof from.lon !== "number" || typeof from.lat !== "number" || typeof to.lon !== "number" || typeof to.lat !== "number") {
+    if (
+      !from ||
+      !to ||
+      !from.hasGeo ||
+      !to.hasGeo ||
+      typeof from.lon !== "number" ||
+      typeof from.lat !== "number" ||
+      typeof to.lon !== "number" ||
+      typeof to.lat !== "number"
+    ) {
       return;
     }
     const start: Position = [from.lon, from.lat];
     const end: Position = [to.lon, to.lat];
     const arc = greatCircleArc(start, end, 32);
     if (arc.length < 2) return;
-    const midIndex = Math.floor(arc.length * 0.6);
-    const anchor = arc[Math.min(arc.length - 2, Math.max(0, midIndex))];
-    const next = arc[Math.min(arc.length - 1, Math.max(1, midIndex + 1))];
+    // Place arrow at 78% of arc so it clearly points toward the destination
+    const tipIndex = Math.floor(arc.length * 0.78);
+    const anchor = arc[Math.min(arc.length - 2, Math.max(0, tipIndex))];
+    const next = arc[Math.min(arc.length - 1, Math.max(1, tipIndex + 1))];
     if (!anchor || !next) return;
     features.push({
       type: "Feature",
