@@ -1,0 +1,25 @@
+<svg width="1400" height="900" viewBox="0 0 1400 900" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <radialGradient id="ocean" cx="50%" cy="45%" r="75%">
+      <stop offset="0%" stop-color="#1e3a8a" stop-opacity="0.65" />
+      <stop offset="100%" stop-color="#0b1022" stop-opacity="1" />
+    </radialGradient>
+    <linearGradient id="land" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#334155" />
+      <stop offset="100%" stop-color="#1f2937" />
+    </linearGradient>
+  </defs>
+  <rect width="1400" height="900" fill="url(#ocean)" />
+  <g fill="url(#land)" opacity="0.7" stroke="#475569" stroke-width="1">
+    <path d="M120 210 L190 170 L300 150 L410 175 L510 225 L560 285 L540 340 L460 360 L400 345 L340 370 L290 420 L210 410 L160 360 L120 300 Z" />
+    <path d="M80 180 L130 150 L170 165 L150 200 L110 215 Z" />
+    <path d="M270 470 L340 500 L380 575 L360 665 L310 740 L260 685 L245 575 Z" />
+    <path d="M540 220 L600 190 L680 185 L740 215 L720 260 L650 275 L590 250 Z" />
+    <path d="M590 275 L680 280 L740 350 L735 460 L670 565 L600 510 L570 400 Z" />
+    <path d="M720 185 L860 160 L1020 185 L1150 250 L1230 330 L1210 410 L1075 415 L980 365 L900 360 L820 315 L760 255 Z" />
+    <path d="M930 355 L990 380 L1005 455 L960 475 L915 430 Z" />
+    <path d="M1080 560 L1185 585 L1260 660 L1215 740 L1105 725 L1045 635 Z" />
+    <path d="M210 785 L1220 785 L1160 845 L260 845 Z" />
+    <path d="M980 600 L1035 620 L1045 670 L1005 700 L960 665 Z" />
+  </g>
+</svg>
