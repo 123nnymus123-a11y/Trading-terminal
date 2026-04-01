@@ -20,6 +20,17 @@ type GwmdAiModelSelection =
   | null
   | undefined;
 
+type GwmdAiModelSelection =
+  | string
+  | {
+      provider?: string;
+      model?: string;
+      temperature?: number;
+      maxTokens?: number;
+    }
+  | null
+  | undefined;
+
 const isGwmdDebugEnabled = () => {
   if (!import.meta.env.DEV || typeof window === "undefined") return false;
   return window.sessionStorage.getItem("gwmd:debug") === "1";
