@@ -9,6 +9,7 @@ import { createHistoricalDataProvider } from "./historicalDataProvider.js";
 import { BacktestingRepo } from "./backtestingRepo.js";
 import { StrategyRepo } from "./strategyRepo.js";
 import { computeAdvancedBacktestMetrics } from "./backtestAnalytics.js";
+import { generateArtifacts } from "./artifactGenerationService.js";
 import { createLogger } from "../../logger.js";
 import { randomUUID } from "node:crypto";
 import type { BacktestExecutionMode } from "./backtestingRepo.js";
@@ -297,6 +298,35 @@ export function createBacktestWorker(
               bundledAt: new Date().toISOString(),
             },
           });
+
+          // Generate and register structured artifacts (manifests, CSV exports, warnings)
+          await generateArtifacts(
+            {
+              runId: payload.runId,
+              tenantId: payload.tenantId,
+              userId: payload.userId,
+              strategyId: payload.strategyId,
+              strategyVersion,
+              snapshotId: payload.snapshotId,
+              executionMode: payload.executionMode ?? "backend",
+              assumptions,
+              metrics,
+              equityCurve: result.equityCurve,
+              exposureCurve: result.exposureCurve,
+              trades: result.trades,
+              fills: result.fills,
+              orders: result.orders,
+              positions: result.positions,
+              advancedMetrics,
+              warnings: result.diagnostics.map((d) => ({
+                code: d.code,
+                message: d.message,
+                severity: "warning" as const,
+              })),
+              diagnostics: result.diagnostics,
+            },
+            repo,
+          );
 
           logger.info("backtest_completed", {
             runId: payload.runId,

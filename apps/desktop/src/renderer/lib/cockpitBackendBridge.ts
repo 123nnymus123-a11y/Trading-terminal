@@ -261,8 +261,21 @@ async function ensureCockpitPublicFlowApi() {
       );
       return response.items;
     },
-    getCandidates: async (themeId: number) => {
-      const query = toQuery({ themeId });
+    getCandidates: async (
+      themeId: number,
+      options?: {
+        minPriority?: "critical" | "high" | "medium" | "low";
+        minConfidence?: number;
+      },
+    ) => {
+      const query = toQuery({
+        themeId,
+        minPriority: options?.minPriority,
+        minConfidence:
+          typeof options?.minConfidence === "number"
+            ? options.minConfidence
+            : undefined,
+      });
       const response = await authGet<{ items: unknown[] }>(
         `/api/publicflow/candidates${query}`,
       );
@@ -304,7 +317,8 @@ async function ensureCockpitEdgarIntelApi() {
     },
     getFlowIntelDigest: async (scopeId?: string, limit?: number) => {
       const query = toQuery({
-        scopeId: typeof scopeId === "string" && scopeId.trim() ? scopeId : "global",
+        scopeId:
+          typeof scopeId === "string" && scopeId.trim() ? scopeId : "global",
         limit: Number.isFinite(limit) ? limit : 8,
       });
       return authGet<unknown>(`/api/sec/edgar/flow-intel/digest${query}`);

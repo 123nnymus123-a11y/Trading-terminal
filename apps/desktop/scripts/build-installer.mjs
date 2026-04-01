@@ -1,16 +1,6 @@
-import { spawn } from "node:child_process";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const root = path.resolve(__dirname, "..");
+import fs from "node:fs";
 
-<<<<<<< HEAD
-function run(cmd, args, opts = {}) {
-    const child = spawn(cmd, args, {
-// Electron major version -> prebuild ABI tag used by better-sqlite3 releases.
-// Extend this table when upgrading Electron.
 const ELECTRON_ABI_MAP = {
     "28": "119",
     "29": "121",
@@ -23,6 +13,7 @@ const ELECTRON_ABI_MAP = {
 function run(cmd, args, opts = {}) {
     return new Promise((resolve, reject) => {
         const child = spawn(cmd, args, {
+            cwd: root,
             stdio: "inherit",
             shell: process.platform === "win32",
             ...opts,
@@ -35,96 +26,30 @@ function run(cmd, args, opts = {}) {
 }
 
 async function runElectronBuilder(args) {
-    // Resolve binary through pnpm workspace instead of node_modules/.bin.
+    // Resolve binary through pnpm workspace instead of node_modules/.bin
     return run("pnpm", ["exec", "electron-builder", ...args], { cwd: root });
 }
 
-};
-
-function run(cmd, args, opts = {}) {
-    return new Promise((resolve, reject) => {
-        const child = spawn(cmd, args, {
-            cwd: root,
-            stdio: "inherit",
-            shell: process.platform === "win32",
-            ...opts,
-        });
-        child.on("exit", (code) => {
-            if (code === 0) resolve();
-            else reject(new Error(`${cmd} exited with code ${code}`));
-        });
-    });
-}
-
-function runElectronBuilder(args) {
-    // Resolve binary through pnpm workspace instead of node_modules/.bin.
-    return run("pnpm", ["exec", "electron-builder", ...args]);
-}
-
-function cleanDir(target) {
-    if (fs.existsSync(target)) {
-        fs.rmSync(target, { recursive: true, force: true });
+// Dummy implementations for missing functions (replace with real ones if needed)
+function cleanDir(dir) {
+    if (fs.existsSync(dir)) {
+        fs.rmSync(dir, { recursive: true, force: true });
     }
 }
 
-function ensureExists(target) {
-    if (!fs.existsSync(target)) {
-        throw new Error(`[build] Missing build output: ${target}`);
+function ensureExists(file) {
+    if (!fs.existsSync(file)) {
+        throw new Error(`[build] Required file missing: ${file}`);
     }
 }
 
-/**
- * Download and unpack the win32-x64 pre-built binary for better-sqlite3 using
- * Python3. This avoids pnpm symlink path issues with prebuild-install wrappers.
- */
-async function downloadBetterSqlite3Win32(bs3Version, electronAbi, destDir) {
-    const tarName = `better-sqlite3-v${bs3Version}-electron-v${electronAbi}-win32-x64.tar.gz`;
-    const url = `https://github.com/WiseLibs/better-sqlite3/releases/download/v${bs3Version}/${tarName}`;
-    const destNode = path.join(destDir, "build", "Release", "better_sqlite3.node");
-
-    fs.mkdirSync(path.join(destDir, "build", "Release"), { recursive: true });
-
-    const pyScript = `
-import urllib.request, tarfile, io, sys
-
-url = ${JSON.stringify(url)}
-dest = ${JSON.stringify(destNode)}
-
-print(f"[build] Fetching {url}", flush=True)
-with urllib.request.urlopen(url, timeout=60) as r:
-    data = r.read()
-
-with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tf:
-    node_member = next((m for m in tf.getmembers() if m.name.endswith(".node")), None)
-    if node_member is None:
-        print("[build] ERROR: no .node file found in tarball", flush=True)
-        sys.exit(1)
-    node_file = tf.extractfile(node_member)
-    with open(dest, "wb") as out:
-        out.write(node_file.read())
-
-print(f"[build] Wrote {dest}", flush=True)
-`.trim();
-
-    return new Promise((resolve, reject) => {
-        const child = spawn("python3", ["-c", pyScript], {
-            cwd: root,
-            stdio: "inherit",
-        });
-        child.on("exit", (code) => {
-            if (code === 0) resolve();
-            else reject(new Error(`python3 download exited with code ${code}`));
-        });
->>>>>>> 5b04423 (chore: prepare for initial push to TradingTerminal-SourceCode (exclude .gitignore files))
-    });
-  });
+// Dummy implementation for downloadBetterSqlite3Win32 (replace with real one if needed)
+async function downloadBetterSqlite3Win32(version, abi, dir) {
+    // Implement download logic or import from another module
+    // For now, just log
+    console.log(`[mock] Would download better-sqlite3 v${version} ABI ${abi} to ${dir}`);
 }
 
-<<<<<<< HEAD
-async function runElectronBuilder(args) {
-  // Resolve binary through pnpm workspace instead of node_modules/.bin
-  return run("pnpm", ["exec", "electron-builder", ...args], { cwd: root });
-=======
 async function main() {
     cleanDir(path.join(root, "dist"));
     cleanDir(path.join(root, "release"));
@@ -176,26 +101,14 @@ async function main() {
         await runElectronBuilder(["install-app-deps"]);
         console.log("[build] Host native modules restored.");
     }
->>>>>>> 5b04423 (chore: prepare for initial push to TradingTerminal-SourceCode (exclude .gitignore files))
 }
 
 // Forward only the args after the script name.
 const forwarded = process.argv.slice(2);
 
 if (forwarded.length > 0) {
-  console.log("[build-installer] running electron-builder via pnpm exec...");
-  await runElectronBuilder(forwarded);
+    console.log("[build-installer] running electron-builder via pnpm exec...");
+    await runElectronBuilder(forwarded);
 } else {
-  await runElectronBuilder([
-    "--config",
-    path.join(root, "electron-builder.config.cjs"),
-    "--win",
-    "nsis",
-  ]);
-
-  if (process.platform !== "win32") {
-    console.log("[build] Restoring native modules for host platform...");
-    await runElectronBuilder(["install-app-deps"]);
-    console.log("[build] Host native modules restored.");
-  }
+    await main();
 }

@@ -39,12 +39,39 @@ function renderValuation(tag?: ValuationTag): JSX.Element | null {
   );
 }
 
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+function computeDisclosureRelevance(evt: DisclosureEvent): number {
+  const amountMid =
+    evt.amount_min != null && evt.amount_max != null
+      ? (evt.amount_min + evt.amount_max) / 2
+      : (evt.amount_max ?? evt.amount_min ?? 0);
+  const amountSignal = clamp(Math.log10(amountMid + 1) / 10, 0, 1);
+  const reportAgeDays =
+    Math.max(0, Date.now() - Date.parse(evt.report_date)) / (24 * 60 * 60 * 1000);
+  const recencySignal = clamp(Math.exp(-reportAgeDays / 20), 0, 1);
+  const actionSignal = evt.action === "BUY" ? 1 : 0.35;
+  const confidenceSignal = clamp(evt.confidence, 0, 1);
+  const score =
+    confidenceSignal * 0.4 +
+    recencySignal * 0.3 +
+    amountSignal * 0.2 +
+    actionSignal * 0.1;
+  return Number((score * 100).toFixed(1));
+}
+
 export function DisclosureList({ events, valuations, loading = false, emptyHint }: Props) {
+  const sortedEvents = events
+    .slice()
+    .sort((a, b) => computeDisclosureRelevance(b) - computeDisclosureRelevance(a));
+
   if (loading) {
     return <div style={{ opacity: 0.8 }}>Loading disclosures…</div>;
   }
 
-  if (!events.length) {
+  if (!sortedEvents.length) {
     return (
       <div style={{
         padding: 12,
@@ -62,7 +89,7 @@ export function DisclosureList({ events, valuations, loading = false, emptyHint 
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      {events.map((evt) => (
+      {sortedEvents.map((evt) => (
         <div
           key={`${evt.id}-${evt.ticker ?? "na"}`}
           style={{
@@ -89,6 +116,9 @@ export function DisclosureList({ events, valuations, loading = false, emptyHint 
             >
               {evt.action}
             </div>
+          </div>
+          <div style={{ fontSize: 11, opacity: 0.72, marginBottom: 6 }}>
+            Relevance score {computeDisclosureRelevance(evt).toFixed(1)}
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 6, fontSize: 12, opacity: 0.9 }}>
             <div>Entity: <b>{evt.entity_name}</b></div>

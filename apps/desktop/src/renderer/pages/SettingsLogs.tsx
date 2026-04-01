@@ -58,7 +58,7 @@ const MODEL_PRESETS = [
 const CUSTOM_MODEL_VALUE = "__custom_model__";
 const AI_SELECTIONS_KEY = "trading_terminal_ai_selections";
 const AI_DRAFT_KEY = "trading_terminal_ai_draft";
-const PRODUCTION_BACKEND_URL = "http://79.76.40.72:8787";
+const DEFAULT_BACKEND_URL = "http://localhost:8787";
 const GWMD_USER_SETTINGS_KEY = "gwmd:user-settings:v1";
 
 type GwmdSourceMode = "cache_only" | "hybrid" | "fresh";
@@ -924,7 +924,7 @@ export default function SettingsLogs() {
   }, [backendUrlDraft, settingsApi]);
 
   const resetBackendUrl = useCallback(async () => {
-    setBackendUrlDraft(PRODUCTION_BACKEND_URL);
+    setBackendUrlDraft(DEFAULT_BACKEND_URL);
     setBackendUrlStatus(null);
     setBackendHealth("unknown");
   }, []);
@@ -1061,6 +1061,24 @@ export default function SettingsLogs() {
     setTedApiTesting(true);
     setTedApiTestResult(null);
     try {
+      // Always push current form config to the backend before testing so a
+      // backend restart (e.g. tsx watch picking up code changes) doesn't leave
+      // the in-memory config stale with TED_LIVE_ENABLED=false from .env.
+      if (settingsApi?.tedConfigSet && tedBaseUrl.trim() && tedApiKey.trim()) {
+        try {
+          await settingsApi.tedConfigSet({
+            enabled: tedLiveEnabled,
+            baseUrl: tedBaseUrl,
+            apiKey: tedApiKey,
+            authHeader: tedAuthHeader,
+            timeoutMs: tedTimeoutMs,
+            windowQueryParam: tedWindowQueryParam,
+          });
+        } catch {
+          // Non-fatal — backend may be starting up; proceed to test anyway.
+        }
+      }
+
       const api = window.cockpit?.tedIntel;
       if (!api?.getSnapshot) {
         setTedApiTestResult({ ok: false, message: "TED Intel IPC not available" });
@@ -1072,9 +1090,18 @@ export default function SettingsLogs() {
       const at = snapshot.generatedAt
         ? new Date(snapshot.generatedAt).toLocaleTimeString()
         : "—";
+
+      if (mode === "mock") {
+        setTedApiTestResult({
+          ok: false,
+          message: `⚠️ Received mock data — backend is using fallback. Check that the backend is running, Base URL and API Key are correct, and click Save TED Config first.`,
+        });
+        return;
+      }
+
       setTedApiTestResult({
         ok: true,
-        message: `✅ OK — mode: ${mode} • ${label} • generated ${at}`,
+        message: `✅ Live — ${label} • generated ${at}`,
       });
     } catch (err) {
       setTedApiTestResult({
@@ -1084,7 +1111,15 @@ export default function SettingsLogs() {
     } finally {
       setTedApiTesting(false);
     }
-  }, []);
+  }, [
+    settingsApi,
+    tedLiveEnabled,
+    tedBaseUrl,
+    tedApiKey,
+    tedAuthHeader,
+    tedTimeoutMs,
+    tedWindowQueryParam,
+  ]);
 
   // Save Ollama API key to localStorage when it changes
   useEffect(() => {
@@ -3105,7 +3140,7 @@ export default function SettingsLogs() {
               <input
                 value={backendUrlDraft}
                 onChange={(e) => setBackendUrlDraft(e.target.value)}
-                placeholder="http://79.76.40.72:8787"
+                placeholder="http://localhost:8787"
                 style={{ padding: "10px 12px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.2)", fontFamily: "var(--mono)" }}
               />
 
@@ -3114,7 +3149,7 @@ export default function SettingsLogs() {
                   {backendUrlSaving ? "Saving..." : "💾 Save URL"}
                 </button>
                 <button onClick={resetBackendUrl} style={{ padding: "8px 14px" }}>
-                  Reset to Production
+                  Reset to Default
                 </button>
                 <button onClick={checkBackendHealth} disabled={backendHealthChecking} style={{ padding: "8px 14px" }}>
                   {backendHealthChecking ? "Checking..." : "🔍 Check Health"}

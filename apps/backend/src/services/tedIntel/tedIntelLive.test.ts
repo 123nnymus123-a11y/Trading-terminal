@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fetchLiveTedSnapshot, type TedLiveConfig } from "./tedIntelLive.js";
+import {
+  fetchLiveTedSnapshot,
+  fetchLiveTedSnapshotStrict,
+  type TedLiveConfig,
+} from "./tedIntelLive.js";
 
 const baseConfig: TedLiveConfig = {
   enabled: true,
@@ -56,5 +60,47 @@ describe("fetchLiveTedSnapshot auth header handling", () => {
 
     expect(snapshot).not.toBeNull();
     expect(capturedAuthorizationHeader).toBe("Bearer my-token");
+  });
+
+  it("uses POST and maps TED v3 search payload to live snapshot", async () => {
+    let capturedMethod = "";
+    let capturedBody = "";
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      capturedMethod = String(init?.method ?? "");
+      capturedBody = String(init?.body ?? "");
+
+      return new Response(
+        JSON.stringify({
+          results: [
+            {
+              "publication-number": "12345-2026",
+              "BT-21-Notice": "Contract award notice for cloud services",
+              "publication-date": "2026-03-30",
+            },
+          ],
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      );
+    });
+
+    const snapshot = await fetchLiveTedSnapshotStrict(
+      {
+        ...baseConfig,
+        baseUrl: "https://api.ted.europa.eu/v3/notices/search",
+        apiKey: "abc123",
+      },
+      "90d",
+    );
+
+    expect(capturedMethod).toBe("POST");
+    expect(capturedBody).toContain("publication-number");
+    expect(snapshot.sourceMode).toBe("live");
+    expect(snapshot.sourceLabel).toContain("TED v3 Search API");
+    expect(snapshot.radar.length).toBeGreaterThan(0);
+    expect(snapshot.radar[0]?.sourceId).toBe("12345-2026");
   });
 });

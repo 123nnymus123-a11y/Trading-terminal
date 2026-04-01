@@ -541,8 +541,13 @@ export class CompanyRelationshipService {
         );
         relationshipsBySource.set(normalizedTicker, primaryRelationships);
       } catch (err) {
+        const cachedCompanyCount = cachedSnapshot?.companies.length ?? 0;
+        const cachedEdgeCount = cachedSnapshot?.edges.length ?? 0;
+        const cacheHasMeaningfulBreadth =
+          cachedCompanyCount >= 6 || cachedEdgeCount >= 6;
         if (
           cachedSnapshot &&
+          cacheHasMeaningfulBreadth &&
           (cachedSnapshot.companies.length > 0 ||
             cachedSnapshot.edges.length > 0)
         ) {
@@ -568,6 +573,12 @@ export class CompanyRelationshipService {
               expandedTickerCount: 0,
             },
           };
+        }
+
+        if (cachedSnapshot && !cacheHasMeaningfulBreadth) {
+          console.warn(
+            `[CompanyRelationshipService] AI call failed and scoped cache is too small (${cachedCompanyCount} companies / ${cachedEdgeCount} edges) for ${normalizedTicker}; refusing degraded cache fallback`,
+          );
         }
         throw err;
       }

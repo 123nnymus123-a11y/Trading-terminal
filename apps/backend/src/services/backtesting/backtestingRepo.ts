@@ -566,6 +566,38 @@ export class BacktestingRepo {
     }));
   }
 
+  async getArtifactByKind(
+    runId: string,
+    artifactKind: string,
+    userId: string,
+    tenantId?: string,
+  ): Promise<StrategyRunArtifactRecord | null> {
+    const tenant = this.resolveTenant(tenantId);
+    const result = await this.pool.query(
+      `SELECT a.artifact_id, a.run_id, a.artifact_kind, a.artifact_uri,
+              a.checksum_sha256, a.size_bytes, a.payload_json, a.created_at
+       FROM strategy_run_artifacts a
+       JOIN strategy_backtest_runs r ON r.run_id = a.run_id
+       WHERE a.run_id = $1 AND a.artifact_kind = $2 AND r.user_id = $3 AND r.tenant_id = $4
+       LIMIT 1`,
+      [runId, artifactKind, userId, tenant],
+    );
+    const row = result.rows[0];
+    if (!row) {
+      return null;
+    }
+    return {
+      artifactId: row.artifact_id,
+      runId: row.run_id,
+      artifactKind: row.artifact_kind,
+      artifactUri: row.artifact_uri,
+      checksumSha256: row.checksum_sha256 ?? undefined,
+      sizeBytes: row.size_bytes ?? undefined,
+      payload: row.payload_json ?? {},
+      createdAt: row.created_at,
+    };
+  }
+
   async upsertExperiment(input: {
     experimentId: string;
     tenantId?: string;

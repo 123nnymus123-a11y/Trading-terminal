@@ -290,6 +290,19 @@ export const publicFlowCandidateItemSchema = z.object({
   rationale: z.string(),
   relation_type: z.enum(["peer", "supplier", "customer", "etf-constituent"]),
   created_at: z.string().datetime(),
+  importance_score: z.number().min(0).max(100).optional(),
+  confidence_score: z.number().min(0).max(1).optional(),
+  priority: z.enum(["critical", "high", "medium", "low"]).optional(),
+  theme_count: z.number().int().min(1).optional(),
+  freshness_days: z.number().min(0).optional(),
+  score_components: z
+    .object({
+      theme_momentum: z.number().min(0).max(1),
+      relation_strength: z.number().min(0).max(1),
+      diversity_bonus: z.number().min(0).max(1),
+      freshness_boost: z.number().min(0).max(1),
+    })
+    .optional(),
 });
 
 export const publicFlowCandidatesResponseSchema = z.object({

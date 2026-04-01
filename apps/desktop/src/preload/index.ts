@@ -477,8 +477,14 @@ const cockpitApi = {
     async getThemes(windowDays: 7 | 30, limit?: number) {
       return ipcRenderer.invoke("publicFlow:getThemes", windowDays, limit);
     },
-    async getCandidates(themeId: number) {
-      return ipcRenderer.invoke("publicFlow:getCandidates", themeId);
+    async getCandidates(
+      themeId: number,
+      options?: {
+        minPriority?: "critical" | "high" | "medium" | "low";
+        minConfidence?: number;
+      },
+    ) {
+      return ipcRenderer.invoke("publicFlow:getCandidates", themeId, options);
     },
     async getValuations(tickers: string[]) {
       return ipcRenderer.invoke("publicFlow:getValuations", tickers);
@@ -1207,8 +1213,8 @@ const cockpitApi = {
     async getCotSummary(symbols: string[]) {
       return ipcRenderer.invoke("externalFeeds:getCftcSummary", symbols);
     },
-    async getJoltsSeries() {
-      return ipcRenderer.invoke("externalFeeds:getJoltsSeries");
+    async getJoltsSeries(opts?: { forceRefresh?: boolean }) {
+      return ipcRenderer.invoke("externalFeeds:getJoltsSeries", opts);
     },
     async getSecEvents(params: { tickers?: string[]; limit?: number }) {
       return ipcRenderer.invoke("externalFeeds:getSecEvents", params);

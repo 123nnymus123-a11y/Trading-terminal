@@ -199,6 +199,7 @@ export type EdgarFlowEventPoint = {
   route_priority: number;
   anomaly_score: number;
   is_anomaly: boolean;
+  filing_url?: string;
 };
 
 export type EdgarFlowEntityNode = {

@@ -17,7 +17,7 @@ import type {
 /**
  * Congress Activity DAO - manages congressional trading disclosures, member metadata,
  * lobbying activity, and federal contracts.
- * 
+ *
  * IMPORTANT: These are PUBLIC, DELAYED disclosures from official sources.
  * They are NOT real-time trading signals.
  */
@@ -26,19 +26,25 @@ export const CongressRepo = {
   getTickerCongressNetBuyAsOf(
     ticker: string,
     asOfIso: string,
-    lookbackDays = 180
+    lookbackDays = 180,
   ): {
     congressNetBuy: number;
     observedAt: string | null;
+    transactionDate: string | null;
+    disclosureDate: string | null;
   } {
     const db = getDb();
 
     const asOfDate = asOfIso.slice(0, 10);
-    const lookbackStart = new Date(Date.parse(asOfIso) - lookbackDays * 24 * 60 * 60 * 1000)
+    const lookbackStart = new Date(
+      Date.parse(asOfIso) - lookbackDays * 24 * 60 * 60 * 1000,
+    )
       .toISOString()
       .slice(0, 10);
 
-    const agg = db.prepare(`
+    const agg = db
+      .prepare(
+        `
       SELECT
         SUM(
           CASE
@@ -54,26 +60,35 @@ export const CongressRepo = {
             ELSE 0
           END
         ) AS sell_notional,
-        MAX(ingestion_timestamp) AS observed_at
+        MAX(ingestion_timestamp) AS observed_at,
+        MAX(transaction_date) AS transaction_date,
+        MAX(disclosure_date) AS disclosure_date
       FROM congressional_trade
       WHERE ticker_normalized = ?
         AND disclosure_date >= ?
         AND disclosure_date <= ?
         AND ingestion_timestamp <= ?
-    `).get(ticker, lookbackStart, asOfDate, asOfIso) as {
+    `,
+      )
+      .get(ticker, lookbackStart, asOfDate, asOfIso) as {
       buy_notional: number | null;
       sell_notional: number | null;
       observed_at: string | null;
+      transaction_date: string | null;
+      disclosure_date: string | null;
     };
 
     const buyNotional = agg?.buy_notional ?? 0;
     const sellNotional = agg?.sell_notional ?? 0;
     const totalNotional = buyNotional + sellNotional;
-    const net = totalNotional > 0 ? (buyNotional - sellNotional) / totalNotional : 0;
+    const net =
+      totalNotional > 0 ? (buyNotional - sellNotional) / totalNotional : 0;
 
     return {
       congressNetBuy: Math.max(0, Math.min(1, 0.5 + 0.5 * net)),
       observedAt: agg?.observed_at ?? null,
+      transactionDate: agg?.transaction_date ?? null,
+      disclosureDate: agg?.disclosure_date ?? null,
     };
   },
 
@@ -118,7 +133,7 @@ export const CongressRepo = {
           t.quality_flag_ticker_match,
           t.quality_flag_amount,
           t.ingestion_timestamp,
-          t.last_updated_timestamp
+          t.last_updated_timestamp,
         );
         ids.push(Number(info.lastInsertRowid));
       }
@@ -266,13 +281,19 @@ export const CongressRepo = {
       params.push(filters.limit);
     }
 
-    return db.prepare(sql).all(...params) as Array<CongressionalTrade & { party?: string | null }>;
+    return db.prepare(sql).all(...params) as Array<
+      CongressionalTrade & { party?: string | null }
+    >;
   },
 
   /**
    * Get aggregated trade statistics by ticker.
    */
-  getTradeStatsByTicker(ticker: string, dateStart?: string, dateEnd?: string): {
+  getTradeStatsByTicker(
+    ticker: string,
+    dateStart?: string,
+    dateEnd?: string,
+  ): {
     ticker: string;
     total_buys: number;
     total_sells: number;
@@ -325,7 +346,11 @@ export const CongressRepo = {
   /**
    * Get most traded tickers by Congress.
    */
-  getMostTradedTickers(dateStart?: string, dateEnd?: string, limit = 20): Array<{
+  getMostTradedTickers(
+    dateStart?: string,
+    dateEnd?: string,
+    limit = 20,
+  ): Array<{
     ticker: string;
     trade_count: number;
     buy_count: number;
@@ -386,7 +411,10 @@ export const CongressRepo = {
       FROM lag_calc
     `;
 
-    const result = db.prepare(sql).get() as { avg_lag_days: number; max_lag_days: number } | null;
+    const result = db.prepare(sql).get() as {
+      avg_lag_days: number;
+      max_lag_days: number;
+    } | null;
 
     if (!result) return null;
 
@@ -407,7 +435,9 @@ export const CongressRepo = {
       WHERE row_num IN ((total_count + 1) / 2, (total_count + 2) / 2)
     `;
 
-    const medianResult = db.prepare(medianSql).get() as { median_lag_days: number } | null;
+    const medianResult = db.prepare(medianSql).get() as {
+      median_lag_days: number;
+    } | null;
 
     return {
       avg_lag_days: result.avg_lag_days,
@@ -426,64 +456,76 @@ export const CongressRepo = {
   upsertCongressionalMembers(members: InsertCongressionalMember[]): number[] {
     const db = getDb();
 
-    const upsertMany = db.transaction((members: InsertCongressionalMember[]) => {
-      const ids: number[] = [];
-      for (const m of members) {
-        const existing = db.prepare(`
+    const upsertMany = db.transaction(
+      (members: InsertCongressionalMember[]) => {
+        const ids: number[] = [];
+        for (const m of members) {
+          const existing = db
+            .prepare(
+              `
           SELECT id FROM congressional_member WHERE member_id = ?
-        `).get(m.member_id) as { id: number } | undefined;
+        `,
+            )
+            .get(m.member_id) as { id: number } | undefined;
 
-        if (existing) {
-          db.prepare(`
+          if (existing) {
+            db.prepare(
+              `
             UPDATE congressional_member
             SET full_name = ?, chamber = ?, party = ?, state = ?, district = ?,
                 committee_memberships = ?, leadership_roles = ?, seniority_indicator = ?,
                 office_term_start = ?, office_term_end = ?, bioguide_id = ?,
                 last_updated_timestamp = ?
             WHERE id = ?
-          `).run(
-            m.full_name,
-            m.chamber,
-            m.party,
-            m.state,
-            m.district,
-            m.committee_memberships,
-            m.leadership_roles,
-            m.seniority_indicator,
-            m.office_term_start,
-            m.office_term_end,
-            m.bioguide_id,
-            m.last_updated_timestamp,
-            existing.id
-          );
-          ids.push(existing.id);
-        } else {
-          const info = db.prepare(`
+          `,
+            ).run(
+              m.full_name,
+              m.chamber,
+              m.party,
+              m.state,
+              m.district,
+              m.committee_memberships,
+              m.leadership_roles,
+              m.seniority_indicator,
+              m.office_term_start,
+              m.office_term_end,
+              m.bioguide_id,
+              m.last_updated_timestamp,
+              existing.id,
+            );
+            ids.push(existing.id);
+          } else {
+            const info = db
+              .prepare(
+                `
             INSERT INTO congressional_member (
               member_id, full_name, chamber, party, state, district,
               committee_memberships, leadership_roles, seniority_indicator,
               office_term_start, office_term_end, bioguide_id, last_updated_timestamp
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          `).run(
-            m.member_id,
-            m.full_name,
-            m.chamber,
-            m.party,
-            m.state,
-            m.district,
-            m.committee_memberships,
-            m.leadership_roles,
-            m.seniority_indicator,
-            m.office_term_start,
-            m.office_term_end,
-            m.bioguide_id,
-            m.last_updated_timestamp
-          );
-          ids.push(Number(info.lastInsertRowid));
+          `,
+              )
+              .run(
+                m.member_id,
+                m.full_name,
+                m.chamber,
+                m.party,
+                m.state,
+                m.district,
+                m.committee_memberships,
+                m.leadership_roles,
+                m.seniority_indicator,
+                m.office_term_start,
+                m.office_term_end,
+                m.bioguide_id,
+                m.last_updated_timestamp,
+              );
+            ids.push(Number(info.lastInsertRowid));
+          }
         }
-      }
-      return ids;
-    });
+        return ids;
+      },
+    );
 
     return upsertMany(members);
   },
@@ -550,28 +592,30 @@ export const CongressRepo = {
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
-    const insertMany = db.transaction((activities: InsertLobbyingActivity[]) => {
-      const ids: number[] = [];
-      for (const a of activities) {
-        const info = stmt.run(
-          a.record_id,
-          a.reporting_entity_name,
-          a.client_name,
-          a.lobbying_amount,
-          a.period_start,
-          a.period_end,
-          a.issues_topics_raw,
-          a.naics_code,
-          a.ticker_normalized,
-          a.filing_reference_id,
-          a.filing_url,
-          a.ingestion_timestamp,
-          a.last_updated_timestamp
-        );
-        ids.push(Number(info.lastInsertRowid));
-      }
-      return ids;
-    });
+    const insertMany = db.transaction(
+      (activities: InsertLobbyingActivity[]) => {
+        const ids: number[] = [];
+        for (const a of activities) {
+          const info = stmt.run(
+            a.record_id,
+            a.reporting_entity_name,
+            a.client_name,
+            a.lobbying_amount,
+            a.period_start,
+            a.period_end,
+            a.issues_topics_raw,
+            a.naics_code,
+            a.ticker_normalized,
+            a.filing_reference_id,
+            a.filing_url,
+            a.ingestion_timestamp,
+            a.last_updated_timestamp,
+          );
+          ids.push(Number(info.lastInsertRowid));
+        }
+        return ids;
+      },
+    );
 
     return insertMany(activities);
   },
@@ -664,7 +708,7 @@ export const CongressRepo = {
           c.contract_reference_id,
           c.source_url,
           c.ingestion_timestamp,
-          c.last_updated_timestamp
+          c.last_updated_timestamp,
         );
         ids.push(Number(info.lastInsertRowid));
       }
@@ -744,55 +788,71 @@ export const CongressRepo = {
   /**
    * Upsert company-to-ticker mappings.
    */
-  upsertCompanyTickerMappings(mappings: InsertCompanyTickerMapping[]): number[] {
+  upsertCompanyTickerMappings(
+    mappings: InsertCompanyTickerMapping[],
+  ): number[] {
     const db = getDb();
 
-    const upsertMany = db.transaction((mappings: InsertCompanyTickerMapping[]) => {
-      const ids: number[] = [];
-      for (const m of mappings) {
-        const existing = db.prepare(`
+    const upsertMany = db.transaction(
+      (mappings: InsertCompanyTickerMapping[]) => {
+        const ids: number[] = [];
+        for (const m of mappings) {
+          const existing = db
+            .prepare(
+              `
           SELECT id FROM company_ticker_mapping
           WHERE company_name_normalized = ? AND ticker = ?
-        `).get(m.company_name_normalized, m.ticker) as { id: number } | undefined;
+        `,
+            )
+            .get(m.company_name_normalized, m.ticker) as
+            | { id: number }
+            | undefined;
 
-        if (existing) {
-          db.prepare(`
+          if (existing) {
+            db.prepare(
+              `
             UPDATE company_ticker_mapping
             SET match_confidence = ?, match_method = ?, valid_from_date = ?,
                 valid_to_date = ?, last_verified_timestamp = ?
             WHERE id = ?
-          `).run(
-            m.match_confidence,
-            m.match_method,
-            m.valid_from_date,
-            m.valid_to_date,
-            m.last_verified_timestamp,
-            existing.id
-          );
-          ids.push(existing.id);
-        } else {
-          const info = db.prepare(`
+          `,
+            ).run(
+              m.match_confidence,
+              m.match_method,
+              m.valid_from_date,
+              m.valid_to_date,
+              m.last_verified_timestamp,
+              existing.id,
+            );
+            ids.push(existing.id);
+          } else {
+            const info = db
+              .prepare(
+                `
             INSERT INTO company_ticker_mapping (
               mapping_id, company_name_raw, company_name_normalized, ticker,
               match_confidence, match_method, valid_from_date, valid_to_date,
               last_verified_timestamp
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-          `).run(
-            m.mapping_id,
-            m.company_name_raw,
-            m.company_name_normalized,
-            m.ticker,
-            m.match_confidence,
-            m.match_method,
-            m.valid_from_date,
-            m.valid_to_date,
-            m.last_verified_timestamp
-          );
-          ids.push(Number(info.lastInsertRowid));
+          `,
+              )
+              .run(
+                m.mapping_id,
+                m.company_name_raw,
+                m.company_name_normalized,
+                m.ticker,
+                m.match_confidence,
+                m.match_method,
+                m.valid_from_date,
+                m.valid_to_date,
+                m.last_verified_timestamp,
+              );
+            ids.push(Number(info.lastInsertRowid));
+          }
         }
-      }
-      return ids;
-    });
+        return ids;
+      },
+    );
 
     return upsertMany(mappings);
   },
@@ -802,7 +862,9 @@ export const CongressRepo = {
    */
   findTickerByCompanyName(companyName: string): CompanyTickerMapping | null {
     const db = getDb();
-    return db.prepare(`
+    return db
+      .prepare(
+        `
       SELECT id, mapping_id, company_name_raw, company_name_normalized, ticker,
              match_confidence, match_method, valid_from_date, valid_to_date,
              last_verified_timestamp
@@ -810,7 +872,9 @@ export const CongressRepo = {
       WHERE company_name_normalized LIKE ?
       ORDER BY match_confidence DESC
       LIMIT 1
-    `).get(`%${companyName}%`) as CompanyTickerMapping | null;
+    `,
+      )
+      .get(`%${companyName}%`) as CompanyTickerMapping | null;
   },
 
   // ============================================
@@ -822,25 +886,29 @@ export const CongressRepo = {
    */
   insertIngestionLog(log: InsertCongressDataIngestionLog): number {
     const db = getDb();
-    const info = db.prepare(`
+    const info = db
+      .prepare(
+        `
       INSERT INTO congress_data_ingestion_log (
         log_id, domain, operation_type, records_processed, records_inserted,
         records_updated, records_skipped_duplicate, timestamp_start,
         timestamp_end, status, error_messages
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      log.log_id,
-      log.domain,
-      log.operation_type,
-      log.records_processed,
-      log.records_inserted,
-      log.records_updated,
-      log.records_skipped_duplicate,
-      log.timestamp_start,
-      log.timestamp_end,
-      log.status,
-      log.error_messages
-    );
+    `,
+      )
+      .run(
+        log.log_id,
+        log.domain,
+        log.operation_type,
+        log.records_processed,
+        log.records_inserted,
+        log.records_updated,
+        log.records_skipped_duplicate,
+        log.timestamp_start,
+        log.timestamp_end,
+        log.status,
+        log.error_messages,
+      );
     return Number(info.lastInsertRowid);
   },
 

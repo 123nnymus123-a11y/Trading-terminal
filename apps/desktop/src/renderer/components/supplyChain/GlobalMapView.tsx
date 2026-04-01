@@ -6,14 +6,12 @@ import {
   MiniMap,
   Node,
   Edge,
-  useNodesState,
-  useEdgesState,
   type NodeProps,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import type { SupplyChainGraph } from '@tc/shared/supplyChain';
-import { SupplyChainNode } from './nodes/SupplyChainNode';
-import { getRelationColor, Backgrounds } from './tokens';
+import { SupplyChainNode, type SupplyChainNodeData } from './nodes/SupplyChainNode';
+import { getRelationColor } from './tokens';
 
 interface Props {
   graph: SupplyChainGraph;
@@ -42,10 +40,21 @@ const RING_RADIUS = {
  */
 function buildRingLayout(
   graph: SupplyChainGraph,
-  focalNodeId: string
+  focalNodeId: string,
+  selectedNodeId: string | null,
+  selectedEdgeId: string | null,
+  simulation: Props['simulation']
 ) {
   const center = graph.nodes.find((n) => n.id === focalNodeId) ?? graph.nodes[0];
   if (!center) return { nodes: [], edges: [] };
+  const nodeById = new Map(graph.nodes.map((node) => [node.id, node]));
+  const failedNodeIds = new Set(simulation.failedNodeIds);
+  const impactedNodeIds = new Set(
+    Object.entries(simulation.impactScores ?? {})
+      .filter(([, score]) => typeof score === 'number' && score > 0)
+      .map(([nodeId]) => nodeId)
+  );
+  const failedEdgeIds = new Set(simulation.failedEdgeIds);
 
   const positions: Record<string, { x: number; y: number }> = {};
   positions[center.id] = { x: 0, y: 0 };
@@ -66,9 +75,10 @@ function buildRingLayout(
   const bfs = (adj: Map<string, Set<string>>) => {
     const dist = new Map<string, number>();
     const queue: string[] = [center.id];
+    let queueIndex = 0;
     dist.set(center.id, 0);
-    while (queue.length) {
-      const current = queue.shift()!;
+    while (queueIndex < queue.length) {
+      const current = queue[queueIndex++];
       const depth = dist.get(current) ?? 0;
       if (depth >= 3) continue;
       adj.get(current)?.forEach((neighbor) => {
@@ -92,7 +102,7 @@ function buildRingLayout(
     };
     dist.forEach((depth, nodeId) => {
       if (nodeId === center.id) return;
-      const node = graph.nodes.find((n) => n.id === nodeId);
+      const node = nodeById.get(nodeId);
       if (!node) return;
       if (depth === 1) byTier.direct.push(node);
       if (depth === 2) byTier.indirect.push(node);
@@ -150,40 +160,52 @@ function buildRingLayout(
       entityType: node.entityType,
       confidence: node.confidence ?? 0.7,
       criticality: node.criticality ?? 1,
+      status: failedNodeIds.has(node.id)
+        ? 'failed'
+        : impactedNodeIds.has(node.id)
+        ? 'impacted'
+        : 'normal',
+      isSelected: node.id === selectedNodeId,
     },
     type: 'supplyChainNode',
   }));
 
-  // Convert to React Flow edges
-  const edges: Edge[] = graph.edges.map((edge) => ({
-    id: edge.id,
-    source: edge.from,
-    target: edge.to,
-    data: {
-      kind: edge.kind,
-      weight: edge.weight,
-      confidence: edge.confidence,
-    },
-  }));
+  const edges: Edge[] = graph.edges.map((edge) => {
+    const isSelected = edge.id === selectedEdgeId;
+    const isRelatedToSelection = edge.from === selectedNodeId || edge.to === selectedNodeId;
+    return {
+      id: edge.id,
+      source: edge.from,
+      target: edge.to,
+      data: {
+        kind: edge.kind,
+        weight: edge.weight,
+        confidence: edge.confidence,
+      },
+      style: {
+        stroke: failedEdgeIds.has(edge.id) ? '#ef4444' : getRelationColor(edge.kind),
+        strokeOpacity: isSelected ? 1 : isRelatedToSelection ? 0.85 : 0.5,
+        strokeWidth: isSelected ? 3 : 1.4,
+      },
+      zIndex: isSelected ? 2 : 1,
+    };
+  });
 
   return { nodes, edges };
 }
 
 export default function GlobalMapView(props: Props) {
-  const { graph, focalNodeId, selectedNodeId, onSelectNode, onSelectEdge } = props;
+  const { graph, focalNodeId, selectedNodeId, selectedEdgeId, simulation, onSelectNode, onSelectEdge } = props;
 
-  const { nodes: initialNodes, edges: initialEdges } = useMemo(
-    () => buildRingLayout(graph, focalNodeId),
-    [graph, focalNodeId]
+  const { nodes, edges } = useMemo(
+    () => buildRingLayout(graph, focalNodeId, selectedNodeId, selectedEdgeId, simulation),
+    [graph, focalNodeId, selectedEdgeId, selectedNodeId, simulation]
   );
-
-  const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
-  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
 
   const nodeTypes = useMemo(
     () => ({
       supplyChainNode: (nodeProps: NodeProps) => (
-        <SupplyChainNode data={nodeProps.data} selected={nodeProps.selected} />
+        <SupplyChainNode data={nodeProps.data as SupplyChainNodeData} selected={nodeProps.selected} />
       ),
     }),
     []
@@ -219,14 +241,18 @@ export default function GlobalMapView(props: Props) {
       <ReactFlow
         nodes={nodes}
         edges={edges}
-        onNodesChange={onNodesChange}
-        onEdgesChange={onEdgesChange}
         onNodeClick={onNodeClick}
         onEdgeClick={onEdgeClick}
         nodeTypes={nodeTypes}
         fitView
+        fitViewOptions={{ padding: 0.18, duration: 0 }}
         minZoom={0.3}
         maxZoom={4}
+        nodesDraggable={false}
+        nodesConnectable={false}
+        onlyRenderVisibleElements
+        elevateEdgesOnSelect={false}
+        proOptions={{ hideAttribution: true }}
       >
         <Background color="#64748b" gap={40} size={1} style={{ opacity: 0.1 }} />
         <Controls position="top-right" showInteractive={true} />

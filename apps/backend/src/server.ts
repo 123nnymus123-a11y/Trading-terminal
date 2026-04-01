@@ -151,6 +151,17 @@ export function createServer(
   infra: BackendInfra,
 ) {
   const app = express();
+  const corsOriginRaw = env.CORS_ORIGIN.trim();
+  if (env.NODE_ENV === "production" && corsOriginRaw === "*") {
+    throw new Error("CORS_ORIGIN cannot be '*' in production");
+  }
+  const corsOrigin =
+    corsOriginRaw === "*"
+      ? true
+      : corsOriginRaw
+          .split(",")
+          .map((value) => value.trim())
+          .filter(Boolean);
   // rate limiter & job queue setup
   const aiQueue = new DurableJobQueue({
     concurrency: env.AI_QUEUE_CONCURRENCY,
@@ -552,7 +563,12 @@ export function createServer(
     }
   }
 
-  app.use(cors({ origin: env.CORS_ORIGIN === "*" ? true : env.CORS_ORIGIN }));
+  app.use(
+    cors({
+      origin: Array.isArray(corsOrigin) ? corsOrigin : corsOrigin,
+      credentials: true,
+    }),
+  );
   app.use(express.json({ limit: "1mb" }));
   app.use(
     attachTenantContext(
@@ -1899,11 +1915,38 @@ export function createServer(
     authGuard,
     (req: Request, res: Response) => {
       const themeId = Number(req.query.themeId);
+      const minPriorityRaw =
+        typeof req.query.minPriority === "string"
+          ? req.query.minPriority.toLowerCase()
+          : undefined;
+      const minPriority: "critical" | "high" | "medium" | "low" | undefined =
+        minPriorityRaw === "critical" ||
+        minPriorityRaw === "high" ||
+        minPriorityRaw === "medium" ||
+        minPriorityRaw === "low"
+          ? minPriorityRaw
+          : undefined;
+      const minConfidenceRaw =
+        typeof req.query.minConfidence === "string"
+          ? Number(req.query.minConfidence)
+          : undefined;
+      const minConfidence =
+        Number.isFinite(minConfidenceRaw) && minConfidenceRaw !== undefined
+          ? Math.max(0, Math.min(1, minConfidenceRaw))
+          : undefined;
+
       if (!Number.isFinite(themeId) || themeId <= 0) {
         res.status(400).json({ error: "invalid_theme_id" });
         return;
       }
-      res.status(200).json({ items: getWatchlistCandidates(themeId) });
+      const candidateFilters = {
+        ...(minPriority ? { minPriority } : {}),
+        ...(typeof minConfidence === "number" ? { minConfidence } : {}),
+      };
+
+      res.status(200).json({
+        items: getWatchlistCandidates(themeId, candidateFilters),
+      });
     },
   );
 
@@ -3632,6 +3675,78 @@ export function createServer(
           error: error instanceof Error ? error.message : "unknown_error",
         });
         res.status(500).json({ error: "strategy_backtest_artifacts_failed" });
+      }
+    },
+  );
+
+  app.get(
+    "/api/strategy/backtest/runs/:runId/artifacts/:artifactKind",
+    authGuard,
+    async (req: Request, res: Response) => {
+      if (!backtestingRepo) {
+        res.status(503).json({ error: "backtesting_unavailable_no_database" });
+        return;
+      }
+
+      if (!req.user) {
+        res.status(401).json({ error: "unauthorized" });
+        return;
+      }
+
+      const runId = req.params.runId;
+      const artifactKind = req.params.artifactKind;
+
+      if (!runId || !artifactKind) {
+        res.status(400).json({ error: "missing_run_id_or_artifact_kind" });
+        return;
+      }
+
+      try {
+        const tenantId = req.tenantContext?.tenantId ?? env.DEFAULT_TENANT_ID;
+        const artifact = await backtestingRepo.getArtifactByKind(
+          runId,
+          artifactKind,
+          req.user.id,
+          tenantId,
+        );
+
+        if (!artifact) {
+          res.status(404).json({ error: "artifact_not_found" });
+          return;
+        }
+
+        // Determine content type from artifact kind
+        let contentType = "application/json";
+        if (artifact.artifactKind.includes("csv")) {
+          contentType = "text/csv";
+        } else if (
+          artifact.artifactKind.includes("markdown") ||
+          artifact.artifactKind.includes("text")
+        ) {
+          contentType = "text/markdown";
+        }
+
+        // If payload has actual content, return it
+        if (artifact.payload && artifact.payload.data) {
+          res.setHeader("Content-Type", contentType);
+          res.setHeader(
+            "Content-Disposition",
+            `attachment; filename="${artifact.artifactKind}.${artifact.artifactKind.includes("csv") ? "csv" : "txt"}"`,
+          );
+          res.status(200).send(artifact.payload.data as string);
+        } else {
+          // Return full artifact object
+          res.status(200).json({
+            artifact,
+          });
+        }
+      } catch (error) {
+        logger.error("strategy_backtest_artifact_content_failed", {
+          error: error instanceof Error ? error.message : "unknown_error",
+        });
+        res
+          .status(500)
+          .json({ error: "strategy_backtest_artifact_content_failed" });
       }
     },
   );

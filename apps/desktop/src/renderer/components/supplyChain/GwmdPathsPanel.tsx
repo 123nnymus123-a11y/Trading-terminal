@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from "react";
 import type { SupplyChainGraph, SupplyChainGraphEdge, SupplyChainGraphNode } from "@tc/shared/supplyChain";
 import { resolveNodeRegion } from "./gwmdUtils";
+import { decodePlaceCode, isValidLatLon, parseCoordinate } from "../../lib/gwmdPlaceCode";
 
 interface Props {
   graph: SupplyChainGraph;
@@ -47,21 +48,16 @@ function edgeWeight(edge: SupplyChainGraphEdge) {
   return edge.criticality ?? 1;
 }
 
-function parseCoordinate(value: unknown) {
-  if (typeof value === "number") return Number.isFinite(value) ? value : null;
-  if (typeof value === "string") {
-    const parsed = Number.parseFloat(value);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  return null;
-}
-
 function hasValidCoordinates(node: SupplyChainGraphNode) {
-  const meta = node.metadata as { hqLat?: number | string; hqLon?: number | string } | undefined;
-  const lat = parseCoordinate(meta?.hqLat);
-  const lon = parseCoordinate(meta?.hqLon);
-  if (lat === null || lon === null) return false;
-  return lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180;
+  const meta = node.metadata as {
+    hqPlaceCode?: string;
+    hqLat?: number | string;
+    hqLon?: number | string;
+  } | undefined;
+  const fromPlaceCode = decodePlaceCode(meta?.hqPlaceCode);
+  const lat = fromPlaceCode?.lat ?? parseCoordinate(meta?.hqLat);
+  const lon = fromPlaceCode?.lon ?? parseCoordinate(meta?.hqLon);
+  return isValidLatLon(lat, lon);
 }
 
 const sectionStyle: React.CSSProperties = {

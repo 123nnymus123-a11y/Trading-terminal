@@ -37,6 +37,7 @@ function buildFallbackPayload(events: SecEvent[], windowDays: number): EdgarFlow
     route_priority: event.type === "8K" ? 62 : 47,
     anomaly_score: event.type === "8K" ? 62 : 44,
     is_anomaly: event.type === "8K",
+    filing_url: event.url,
   }));
   const anomalies = timeline
     .filter((item) => item.is_anomaly)
@@ -136,6 +137,12 @@ function TimelineView(props: { payload: EdgarFlowIntelPayload; filter: string })
     );
   }, [props.filter, props.payload.timeline]);
 
+  const handleFilingClick = (url?: string) => {
+    if (url) {
+      window.open(url, "_blank", "noopener,noreferrer");
+    }
+  };
+
   return (
     <div style={{ ...panelStyle, minHeight: 440 }}>
       <div style={{ fontWeight: 700, marginBottom: 10 }}>Timeline Stream</div>
@@ -146,11 +153,27 @@ function TimelineView(props: { payload: EdgarFlowIntelPayload; filter: string })
         {rows.map((item) => (
           <div
             key={item.filing_id}
+            onClick={() => handleFilingClick(item.filing_url)}
             style={{
               borderRadius: 10,
-              border: "1px solid rgba(255,255,255,0.1)",
+              border: item.filing_url ? "1px solid rgba(96,165,250,0.4)" : "1px solid rgba(255,255,255,0.1)",
               padding: 10,
-              background: "rgba(0,0,0,0.2)",
+              background: item.filing_url ? "rgba(59,130,246,0.08)" : "rgba(0,0,0,0.2)",
+              cursor: item.filing_url ? "pointer" : "default",
+              transition: "all 0.2s ease",
+              "&:hover": item.filing_url ? { borderColor: "rgba(96,165,250,0.8)", background: "rgba(59,130,246,0.14)" } : {},
+            }}
+            onMouseEnter={(e) => {
+              if (item.filing_url) {
+                e.currentTarget.style.borderColor = "rgba(96,165,250,0.8)";
+                e.currentTarget.style.background = "rgba(59,130,246,0.14)";
+              }
+            }}
+            onMouseLeave={(e) => {
+              if (item.filing_url) {
+                e.currentTarget.style.borderColor = "rgba(96,165,250,0.4)";
+                e.currentTarget.style.background = "rgba(59,130,246,0.08)";
+              }
             }}
           >
             <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
@@ -164,6 +187,11 @@ function TimelineView(props: { payload: EdgarFlowIntelPayload; filter: string })
             <div style={{ fontSize: 12, opacity: 0.82, marginTop: 4 }}>
               {item.company_name}
             </div>
+            {item.filing_url && (
+              <div style={{ fontSize: 11, opacity: 0.65, marginTop: 4, textDecoration: "underline", color: "#60a5fa" }}>
+                Click to view on SEC
+              </div>
+            )}
             <div style={{ marginTop: 8 }}>
               <div
                 style={{

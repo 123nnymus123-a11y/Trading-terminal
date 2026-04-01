@@ -186,6 +186,11 @@ export function buildFlowIntelPayload(
       route_priority: toRounded(routePriority, 1),
       anomaly_score: anomalyScore,
       is_anomaly: Boolean(finding),
+      ...((filing.filing_detail_url ?? filing.primary_document_url)
+        ? {
+            filing_url: filing.filing_detail_url ?? filing.primary_document_url,
+          }
+        : {}),
     };
   });
 

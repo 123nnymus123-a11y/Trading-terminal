@@ -5,8 +5,36 @@ import type { SupplyChainGraph } from "@tc/shared/supplyChain";
 import { resolveNodeRegion } from "./gwmdUtils";
 import { edgeWeight, relationColors, spreadOverlappingGeoNodes, toArrowFeatures, toEdgeFeatures, toNodeFeatures, type GwmdGeoNode } from "./gwmdMapUtils";
 import { buildGwmdIconDataUrl, getGwmdIconName, gwmdEntityTypes, gwmdStatusTypes } from "./gwmdIcons";
+import {
+  decodePlaceCode,
+  isValidLatLon,
+  parseCoordinate,
+} from "../../lib/gwmdPlaceCode";
 
 const CARTO_DARK_STYLE = "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json";
+const GWMD_FALLBACK_STYLE = {
+  version: 8,
+  sources: {
+    osm: {
+      type: "raster",
+      tiles: [
+        "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+      ],
+      tileSize: 256,
+      attribution:
+        "&copy; OpenStreetMap contributors",
+    },
+  },
+  layers: [
+    {
+      id: "osm",
+      type: "raster",
+      source: "osm",
+      minzoom: 0,
+      maxzoom: 19,
+    },
+  ],
+} as const;
 const GWMD_MAP_STATE_KEY = "gwmdMapState.v1";
 const GWMD_MAP_STATE_TTL = 1000 * 60 * 60 * 8;
 const GWMD_SAFE_MAX_TEXTURE_FALLBACK = 8192;
@@ -89,21 +117,6 @@ function isGwmdDebugEnabled() {
 function gwmdDebugLog(...args: unknown[]) {
   if (!isGwmdDebugEnabled()) return;
   console.log(...args);
-}
-
-function parseCoordinate(value: unknown) {
-  if (typeof value === "number") return Number.isFinite(value) ? value : null;
-  if (typeof value === "string") {
-    const parsed = Number.parseFloat(value);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  return null;
-}
-
-function isValidCoordinate(lat: number | null, lon: number | null) {
-  if (lat === null || lon === null) return false;
-  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return false;
-  return lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180;
 }
 
 function normalizeLabel(value: unknown): string {
@@ -394,6 +407,7 @@ function GwmdWorldMap({
   const [mapReady, setMapReady] = useState(false);
   const [zoom, setZoom] = useState(1);
   const zoomRafRef = useRef<number | null>(null);
+  const zoomValueRef = useRef(1);
   const [mapError, setMapError] = useState<string | null>(null);
   const [repairingGeo, setRepairingGeo] = useState(false);
   const [regeneratingGraph, setRegeneratingGraph] = useState(false);
@@ -415,6 +429,7 @@ function GwmdWorldMap({
   const isCoordinatedWall = wallMode && (wallDisplayMode === "wall" || wallDisplayMode === "mirror");
   const interactionEnabled = !isCoordinatedWall || wallIsPrimary || wallDisplayMode === "wall" || wallDisplayMode === "mirror";
   const usedCachedStateRef = useRef(false);
+  const styleFallbackAppliedRef = useRef(false);
   const hasFitBoundsRef = useRef(false);
   const lastLayoutModeRef = useRef<string | null>(null);
   const pendingDataRef = useRef<{
@@ -603,10 +618,18 @@ function GwmdWorldMap({
 
   const geoNodes = useMemo<GwmdGeoNode[]>(() => {
     const nodes = graph.nodes.map((node) => {
-      const meta = node.metadata as { hqLat?: number | string; hqLon?: number | string; geoSource?: string } | undefined;
-      const lat = parseCoordinate(meta?.hqLat);
-      const lon = parseCoordinate(meta?.hqLon);
-      const hasGeo = isValidCoordinate(lat, lon);
+      const meta = node.metadata as {
+        hqPlaceCode?: string;
+        hqLat?: number | string;
+        hqLon?: number | string;
+        geoSource?: string;
+      } | undefined;
+      const fromPlaceCode = decodePlaceCode(meta?.hqPlaceCode);
+      const fallbackLat = parseCoordinate(meta?.hqLat);
+      const fallbackLon = parseCoordinate(meta?.hqLon);
+      const lat = fromPlaceCode?.lat ?? fallbackLat;
+      const lon = fromPlaceCode?.lon ?? fallbackLon;
+      const hasGeo = isValidLatLon(lat, lon);
       const isCentroid = hasGeo && meta?.geoSource === "country_centroid";
 
       return {
@@ -1200,8 +1223,8 @@ function GwmdWorldMap({
             "rgba(249,115,22,0.3)",
             "rgba(59,130,246,0.3)",
           ],
-          "circle-radius": ["interpolate", ["linear"], ["zoom"], 0, 14, 2, 18, 4, 22],
-          "circle-blur": 0.6,
+          "circle-radius": ["interpolate", ["linear"], ["zoom"], 0, 9, 2, 12, 4, 15],
+          "circle-blur": 0,
         },
       });
 
@@ -1327,7 +1350,22 @@ function GwmdWorldMap({
         if (zoomRafRef.current !== null) return;
         zoomRafRef.current = window.requestAnimationFrame(() => {
           zoomRafRef.current = null;
-          setZoom(map.getZoom());
+          const nextZoom = map.getZoom();
+          const crossedFlowThreshold =
+            (zoomValueRef.current < 0.8 && nextZoom >= 0.8) ||
+            (zoomValueRef.current >= 0.8 && nextZoom < 0.8);
+          const crossedArrowThreshold =
+            (zoomValueRef.current < 3.2 && nextZoom >= 3.2) ||
+            (zoomValueRef.current >= 3.2 && nextZoom < 3.2);
+
+          if (
+            crossedFlowThreshold ||
+            crossedArrowThreshold ||
+            Math.abs(nextZoom - zoomValueRef.current) >= 0.12
+          ) {
+            zoomValueRef.current = nextZoom;
+            setZoom(nextZoom);
+          }
         });
       });
 
@@ -1401,6 +1439,26 @@ function GwmdWorldMap({
 
       map.on("error", (event) => {
         const message = (event?.error as { message?: string } | undefined)?.message ?? "MapLibre error";
+
+        const lower = message.toLowerCase();
+        const looksLikeStyleLoadFailure =
+          lower.includes("style") ||
+          lower.includes("sprite") ||
+          lower.includes("glyph") ||
+          lower.includes("failed to load") ||
+          lower.includes("http");
+
+        if (!styleFallbackAppliedRef.current && looksLikeStyleLoadFailure) {
+          styleFallbackAppliedRef.current = true;
+          try {
+            map.setStyle(GWMD_FALLBACK_STYLE as unknown as string);
+            setMapError("Primary basemap unavailable, switched to fallback map style.");
+            return;
+          } catch {
+            // Fall through and surface the original error.
+          }
+        }
+
         setMapError(message);
       });
 

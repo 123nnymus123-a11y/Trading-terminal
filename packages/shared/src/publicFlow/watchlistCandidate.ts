@@ -12,9 +12,27 @@ export const watchlistCandidateSchema = z.object({
   rationale: z.string().max(500), // Why this candidate is relevant
   relation_type: z.enum(["peer", "supplier", "customer", "etf-constituent"]),
   created_at: z.string().datetime(), // ISO 8601
+  importance_score: z.number().min(0).max(100).optional(),
+  confidence_score: z.number().min(0).max(1).optional(),
+  priority: z.enum(["critical", "high", "medium", "low"]).optional(),
+  theme_count: z.number().int().min(1).optional(),
+  freshness_days: z.number().min(0).optional(),
+  score_components: z
+    .object({
+      theme_momentum: z.number().min(0).max(1),
+      relation_strength: z.number().min(0).max(1),
+      diversity_bonus: z.number().min(0).max(1),
+      freshness_boost: z.number().min(0).max(1),
+    })
+    .optional(),
 });
 
 export type WatchlistCandidate = z.infer<typeof watchlistCandidateSchema>;
 
-export const insertWatchlistCandidateSchema = watchlistCandidateSchema.omit({ id: true, created_at: true });
-export type InsertWatchlistCandidate = z.infer<typeof insertWatchlistCandidateSchema> & { created_at: string };
+export const insertWatchlistCandidateSchema = watchlistCandidateSchema.omit({
+  id: true,
+  created_at: true,
+});
+export type InsertWatchlistCandidate = z.infer<
+  typeof insertWatchlistCandidateSchema
+> & { created_at: string };

@@ -7,6 +7,7 @@
 import { create } from "zustand";
 import type { DependencyKind, SupplyChainGraph } from "@tc/shared/supplyChain";
 import { authRequest } from "../lib/apiClient";
+import { encodeGeoPlaceCode, makeAddressPlaceCode } from "../lib/gwmdPlaceCode";
 
 type GwmdAiModelSelection =
   | string
@@ -37,6 +38,8 @@ export interface GwmdCompany {
   name: string;
   hqLat?: number;
   hqLon?: number;
+  hqPlaceCode?: string;
+  hqAddress?: string;
   hqCity?: string;
   hqCountry?: string;
   industry?: string;
@@ -57,8 +60,12 @@ type GwmdRawCompany = {
   hq_lon?: number;
   hq_city?: string;
   hq_country?: string;
+  hq_place_code?: string;
+  hq_address?: string;
   hqLat?: number;
   hqLon?: number;
+  hqPlaceCode?: string;
+  hqAddress?: string;
   hqCity?: string;
   hqCountry?: string;
   industry?: string;
@@ -181,6 +188,20 @@ const toString = (value: unknown): string | undefined =>
 const normalizeTicker = (value: string) => value.trim().toUpperCase();
 const semanticEdgeKey = (edge: { from: string; to: string; kind: string }) =>
   `${normalizeTicker(edge.from)}|${normalizeTicker(edge.to)}|${edge.kind.toLowerCase()}`;
+
+const buildAddressLabel = (
+  city?: string,
+  country?: string,
+): string | undefined => {
+  const parts = [city, country]
+    .filter(
+      (part): part is string =>
+        typeof part === "string" && part.trim().length > 0,
+    )
+    .map((part) => part.trim());
+  if (parts.length === 0) return undefined;
+  return parts.join(", ");
+};
 
 const normalizeEdgeKind = (value: unknown): DependencyKind | null => {
   if (typeof value !== "string") return null;
@@ -472,6 +493,9 @@ const normalizeGwmdCompany = (
 
   const hqLat = toNumber(value.hqLat) ?? toNumber(value.hq_lat);
   const hqLon = toNumber(value.hqLon) ?? toNumber(value.hq_lon);
+  const hqPlaceCode =
+    toString(value.hqPlaceCode) ?? toString(value.hq_place_code);
+  const hqAddress = toString(value.hqAddress) ?? toString(value.hq_address);
   const hqCity = toString(value.hqCity) ?? toString(value.hq_city);
   const hqCountry = toString(value.hqCountry) ?? toString(value.hq_country);
   const industry = toString(value.industry);
@@ -487,6 +511,8 @@ const normalizeGwmdCompany = (
     name,
     ...(hqLat !== undefined ? { hqLat } : {}),
     ...(hqLon !== undefined ? { hqLon } : {}),
+    ...(hqPlaceCode ? { hqPlaceCode } : {}),
+    ...(hqAddress ? { hqAddress } : {}),
     ...(hqCity ? { hqCity } : {}),
     ...(hqCountry ? { hqCountry } : {}),
     ...(industry ? { industry } : {}),
@@ -626,23 +652,42 @@ const buildGraphNodesFromCompanies = (
   companies.map((company) => {
     const ticker = normalizeTicker(company.ticker);
 
-    // Resolve effective lat/lon — use storage coords when available, otherwise
-    // fall back to country centroid so the node at least appears on the map.
-    let effectiveLat = company.hqLat;
-    let effectiveLon = company.hqLon;
+    // Resolve an effective place code for map rendering (instead of raw lat/lon fields).
+    let effectivePlaceCode = company.hqPlaceCode;
+    let effectiveAddress = company.hqAddress;
     let effectiveGeoSource = company.geoSource;
     let effectiveGeoConfidence = company.geoConfidence;
 
     const hasStoredCoords =
       Number.isFinite(company.hqLat) && Number.isFinite(company.hqLon);
+    if (!effectivePlaceCode && hasStoredCoords) {
+      effectivePlaceCode = encodeGeoPlaceCode(
+        company.hqLat as number,
+        company.hqLon as number,
+      );
+    }
+
+    if (!effectiveAddress) {
+      effectiveAddress = buildAddressLabel(company.hqCity, company.hqCountry);
+    }
+
     if (!hasStoredCoords && company.hqCountry) {
       const centroid = getCountryCentroid(company.hqCountry);
       if (centroid) {
-        effectiveLat = centroid[0];
-        effectiveLon = centroid[1];
+        if (!effectivePlaceCode) {
+          effectivePlaceCode = encodeGeoPlaceCode(centroid[0], centroid[1]);
+        }
         effectiveGeoSource = "country_centroid";
         effectiveGeoConfidence = 0.2;
       }
+    }
+
+    if (!effectivePlaceCode) {
+      effectivePlaceCode = makeAddressPlaceCode([
+        company.hqCity,
+        company.hqCountry,
+        company.name,
+      ]);
     }
 
     const entityType =
@@ -660,8 +705,12 @@ const buildGraphNodesFromCompanies = (
       tier: "direct" as const,
       confidence: company.healthScore ?? 1,
       metadata: {
-        ...(effectiveLat !== undefined ? { hqLat: effectiveLat } : {}),
-        ...(effectiveLon !== undefined ? { hqLon: effectiveLon } : {}),
+        ...(effectivePlaceCode !== undefined
+          ? { hqPlaceCode: effectivePlaceCode }
+          : {}),
+        ...(effectiveAddress !== undefined
+          ? { hqAddress: effectiveAddress }
+          : {}),
         ...(company.hqCity !== undefined ? { hqCity: company.hqCity } : {}),
         ...(company.hqCountry !== undefined
           ? { hqCountry: company.hqCountry }
@@ -1468,6 +1517,63 @@ export const useGwmdMapStore = create<GwmdMapState>((set, get) => ({
             refresh,
             sourceMode,
           })) as GwmdSearchResult;
+
+          const initialCompanyCount = result.companies?.length ?? 0;
+          const initialEdgeCount = result.edges?.length ?? 0;
+          const looksSuspiciouslySmall =
+            result.success &&
+            initialCompanyCount > 0 &&
+            (initialCompanyCount <= 4 || initialEdgeCount <= 3);
+
+          if (
+            looksSuspiciouslySmall &&
+            sourceMode !== "fresh" &&
+            sourceMode !== "cache_only"
+          ) {
+            const retryHops = Math.max(3, requestedHops);
+            gwmdDebugLog(
+              `[gwmdMapStore] Thin GWMD graph detected (${initialCompanyCount} companies, ${initialEdgeCount} edges) for ${normalizedTicker}; retrying with fresh mode at ${retryHops} hops`,
+            );
+
+            set({
+              searchTrace: {
+                ticker: normalizedTicker,
+                phase: "ipc_pending",
+                source: "ipc",
+                message: `Thin graph detected (${initialCompanyCount} nodes). Retrying fresh at ${retryHops} hops...`,
+                updatedAt: Date.now(),
+              },
+            });
+
+            try {
+              const freshResult = (await gwmdSearch(normalizedTicker, {
+                model: options.model,
+                hops: retryHops,
+                refresh: true,
+                sourceMode: "fresh",
+              })) as GwmdSearchResult;
+
+              const freshCompanyCount = freshResult.companies?.length ?? 0;
+              const freshEdgeCount = freshResult.edges?.length ?? 0;
+              const improvedBreadth =
+                freshResult.success &&
+                (freshCompanyCount > initialCompanyCount ||
+                  freshEdgeCount > initialEdgeCount);
+
+              if (improvedBreadth) {
+                result = freshResult;
+                gwmdDebugLog(
+                  `[gwmdMapStore] Fresh retry improved graph breadth for ${normalizedTicker}: ${initialCompanyCount}/${initialEdgeCount} -> ${freshCompanyCount}/${freshEdgeCount}`,
+                );
+              }
+            } catch (freshErr) {
+              gwmdDebugLog(
+                `[gwmdMapStore] Fresh retry failed for ${normalizedTicker}:`,
+                freshErr,
+              );
+            }
+          }
+
           set({
             searchTrace: {
               ticker: normalizedTicker,
@@ -1739,24 +1845,7 @@ export const useGwmdMapStore = create<GwmdMapState>((set, get) => ({
       if (!currentGraph) {
         set({
           graph: {
-            nodes: (result.companies || []).map((c: GwmdRawCompany) => ({
-              id: normalizeTicker(c.ticker),
-              label: c.name,
-              tickers: [normalizeTicker(c.ticker)],
-              entityType: "company" as const,
-              tier: "direct" as const,
-              confidence: c.confidence || 1.0,
-              metadata: {
-                hqLat: c.hq_lat ?? c.hqLat,
-                hqLon: c.hq_lon ?? c.hqLon,
-                hqCity: c.hq_city || c.hqCity,
-                hqCountry: c.hq_country || c.hqCountry,
-                industry: c.industry,
-                geoSource: c.geo_source || c.geoSource,
-                geoConfidence: c.geo_confidence ?? c.geoConfidence,
-                dataStatus: c.data_status || c.dataStatus,
-              },
-            })),
+            nodes: buildGraphNodesFromCompanies(normalizedCompanies),
             edges: normalizedEdges,
           },
         });
@@ -1788,8 +1877,13 @@ export const useGwmdMapStore = create<GwmdMapState>((set, get) => ({
               tier: "direct" as const,
               confidence: 1.0,
               metadata: {
-                hqLat: c.hqLat,
-                hqLon: c.hqLon,
+                hqPlaceCode:
+                  c.hqPlaceCode ??
+                  (Number.isFinite(c.hqLat) && Number.isFinite(c.hqLon)
+                    ? encodeGeoPlaceCode(c.hqLat as number, c.hqLon as number)
+                    : undefined),
+                hqAddress:
+                  c.hqAddress ?? buildAddressLabel(c.hqCity, c.hqCountry),
                 hqCity: c.hqCity,
                 hqCountry: c.hqCountry,
                 industry: c.industry,
@@ -1806,12 +1900,18 @@ export const useGwmdMapStore = create<GwmdMapState>((set, get) => ({
               label: existing.label || c.name,
               metadata: {
                 ...(existing.metadata || {}),
-                hqLat:
-                  (existing.metadata as { hqLat?: number } | undefined)
-                    ?.hqLat ?? c.hqLat,
-                hqLon:
-                  (existing.metadata as { hqLon?: number } | undefined)
-                    ?.hqLon ?? c.hqLon,
+                hqPlaceCode:
+                  (existing.metadata as { hqPlaceCode?: string } | undefined)
+                    ?.hqPlaceCode ??
+                  c.hqPlaceCode ??
+                  (Number.isFinite(c.hqLat) && Number.isFinite(c.hqLon)
+                    ? encodeGeoPlaceCode(c.hqLat as number, c.hqLon as number)
+                    : undefined),
+                hqAddress:
+                  (existing.metadata as { hqAddress?: string } | undefined)
+                    ?.hqAddress ??
+                  c.hqAddress ??
+                  buildAddressLabel(c.hqCity, c.hqCountry),
                 hqCity:
                   (existing.metadata as { hqCity?: string } | undefined)
                     ?.hqCity ?? c.hqCity,

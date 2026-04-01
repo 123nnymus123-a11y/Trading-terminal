@@ -1,0 +1,35 @@
+groups:
+  - name: trading-terminal-backend
+    rules:
+      - alert: TradingTerminalBackendDown
+        expr: up{job="trading_terminal_backend"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Trading Terminal backend is unreachable
+          description: Prometheus has failed to scrape the backend for more than 2 minutes.
+
+      - alert: TradingTerminalHigh5xxRate
+        expr: |
+          sum(rate(tc_http_requests_total{status=~"5.."}[5m]))
+          /
+          clamp_min(sum(rate(tc_http_requests_total[5m])), 0.001) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Elevated 5xx error rate
+          description: More than 5% of backend requests are returning 5xx for 5 minutes.
+
+      - alert: TradingTerminalP95LatencyHigh
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le) (rate(tc_http_request_duration_ms_bucket[5m]))
+          ) > 1000
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: High P95 request latency
+          description: Backend p95 latency has been over 1 second for 10 minutes.

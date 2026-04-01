@@ -11,6 +11,24 @@ import RiskHeatmapLens from "./RiskHeatmapLens";
 import GwmdWorldMap from "./GwmdWorldMap";
 import GlobalMapView from "./GlobalMapView";
 
+const SUPPLIER_KINDS = new Set<SupplyChainGraphEdge["kind"]>([
+  "supplies",
+  "manufactures",
+  "assembles",
+  "transports",
+  "supplier",
+]);
+
+const CUSTOMER_KINDS = new Set<SupplyChainGraphEdge["kind"]>([
+  "customer",
+  "distributes",
+]);
+
+const ROUTE_KINDS = new Set<SupplyChainGraphEdge["kind"]>([
+  "transports",
+  "distributes",
+]);
+
 export interface VisualizationSurfaceProps {
   data: MindMapData;
   viewMode: SupplyChainViewMode;
@@ -184,71 +202,90 @@ function filterByDirectionalDepth(
 
 export default function VisualizationSurface(props: VisualizationSurfaceProps) {
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const canonical = ensureCanonicalStructures(props.data);
-  const baseGraph: SupplyChainGraph = canonical.graph!;
-  const riskLens = canonical.riskLens ?? [];
-  const nodeById = new Map(baseGraph.nodes.map((node) => [node.id, node]));
-  const supplierKinds = new Set<SupplyChainGraphEdge["kind"]>([
-    "supplies",
-    "manufactures",
-    "assembles",
-    "transports",
-    "supplier",
-  ]);
-  const customerKinds = new Set<SupplyChainGraphEdge["kind"]>([
-    "customer",
-    "distributes",
-  ]);
-  const routeKinds = new Set<SupplyChainGraphEdge["kind"]>(["transports", "distributes"]);
-  const filteredEdges = baseGraph.edges.filter((edge) => {
-    const isHypothesis = edge.evidenceStatus === "hypothesis";
-    if (props.strictMode) {
-      if (edge.evidenceStatus !== "verified_official" && !(props.includeHypothesis && isHypothesis)) {
+  const {
+    canonical,
+    baseGraph,
+    riskLens,
+    graph,
+    selectedNode,
+    selectedEdge,
+    focalNodeId,
+    isEmpty,
+  } = useMemo(() => {
+    const canonicalData = ensureCanonicalStructures(props.data);
+    const graphData: SupplyChainGraph = canonicalData.graph!;
+    const nodeById = new Map(graphData.nodes.map((node) => [node.id, node]));
+    const filteredEdges = graphData.edges.filter((edge) => {
+      const isHypothesis = edge.evidenceStatus === "hypothesis";
+      if (props.strictMode) {
+        if (edge.evidenceStatus !== "verified_official" && !(props.includeHypothesis && isHypothesis)) {
+          return false;
+        }
+      } else if (!props.includeHypothesis && isHypothesis) {
         return false;
       }
-    } else if (!props.includeHypothesis && isHypothesis) {
-      return false;
-    }
-    if ((edge.confidence ?? 0) < props.intelligenceSettings.confidenceThreshold) {
-      return false;
-    }
-    if (props.intelligenceSettings.relationScope === "suppliers" && !supplierKinds.has(edge.kind)) {
-      return false;
-    }
-    if (props.intelligenceSettings.relationScope === "customers" && !customerKinds.has(edge.kind)) {
-      return false;
-    }
-    if (!props.intelligenceSettings.showRoutes && routeKinds.has(edge.kind)) {
-      return false;
-    }
-    if (!props.intelligenceSettings.showFacilities) {
-      const fromNode = nodeById.get(edge.from);
-      const toNode = nodeById.get(edge.to);
-      const fromFacility = fromNode?.entityType === "facility" || fromNode?.entityType === "infrastructure";
-      const toFacility = toNode?.entityType === "facility" || toNode?.entityType === "infrastructure";
-      if (fromFacility || toFacility) return false;
-    }
-    const weight = normalizedEdgeWeight(edge);
-    return weight >= props.minEdgeWeight;
-  });
-  const nodeIds = new Set<string>();
-  filteredEdges.forEach((edge) => {
-    nodeIds.add(edge.from);
-    nodeIds.add(edge.to);
-  });
-  const focalNodeIds = resolveFocalNodeIds(baseGraph, props.globalTickers, canonical.centerNodeId ?? canonical.centerTicker);
-  focalNodeIds.forEach((id) => nodeIds.add(id));
-  const scopedGraph = {
-    nodes: baseGraph.nodes.filter((node) => nodeIds.has(node.id)),
-    edges: filteredEdges,
-  };
-  const directionalGraph = filterByDirectionalDepth(scopedGraph, focalNodeIds, props.intelligenceSettings);
-  const graph = filterByHops(directionalGraph, focalNodeIds, props.hops);
+      if ((edge.confidence ?? 0) < props.intelligenceSettings.confidenceThreshold) {
+        return false;
+      }
+      if (props.intelligenceSettings.relationScope === "suppliers" && !SUPPLIER_KINDS.has(edge.kind)) {
+        return false;
+      }
+      if (props.intelligenceSettings.relationScope === "customers" && !CUSTOMER_KINDS.has(edge.kind)) {
+        return false;
+      }
+      if (!props.intelligenceSettings.showRoutes && ROUTE_KINDS.has(edge.kind)) {
+        return false;
+      }
+      if (!props.intelligenceSettings.showFacilities) {
+        const fromNode = nodeById.get(edge.from);
+        const toNode = nodeById.get(edge.to);
+        const fromFacility = fromNode?.entityType === "facility" || fromNode?.entityType === "infrastructure";
+        const toFacility = toNode?.entityType === "facility" || toNode?.entityType === "infrastructure";
+        if (fromFacility || toFacility) return false;
+      }
+      return normalizedEdgeWeight(edge) >= props.minEdgeWeight;
+    });
 
-  const selectedNode: SupplyChainGraphNode | null = graph.nodes.find((n) => n.id === props.selectedNodeId) ?? null;
-  const selectedEdge: SupplyChainGraphEdge | null = graph.edges.find((e) => e.id === props.selectedEdgeId) ?? null;
-  const focalNodeId = focalNodeIds[0] ?? canonical.centerNodeId ?? canonical.centerTicker;
-  const isEmpty = props.viewMode !== "global" && graph.edges.length === 0;
+    const focalNodeIds = resolveFocalNodeIds(
+      graphData,
+      props.globalTickers,
+      canonicalData.centerNodeId ?? canonicalData.centerTicker,
+    );
+    const visibleNodeIds = new Set<string>(focalNodeIds);
+    filteredEdges.forEach((edge) => {
+      visibleNodeIds.add(edge.from);
+      visibleNodeIds.add(edge.to);
+    });
+
+    const scopedGraph = {
+      nodes: graphData.nodes.filter((node) => visibleNodeIds.has(node.id)),
+      edges: filteredEdges,
+    };
+    const directionalGraph = filterByDirectionalDepth(scopedGraph, focalNodeIds, props.intelligenceSettings);
+    const filteredGraph = filterByHops(directionalGraph, focalNodeIds, props.hops);
+
+    return {
+      canonical: canonicalData,
+      baseGraph: graphData,
+      riskLens: canonicalData.riskLens ?? [],
+      graph: filteredGraph,
+      selectedNode: filteredGraph.nodes.find((node) => node.id === props.selectedNodeId) ?? null,
+      selectedEdge: filteredGraph.edges.find((edge) => edge.id === props.selectedEdgeId) ?? null,
+      focalNodeId: focalNodeIds[0] ?? canonicalData.centerNodeId ?? canonicalData.centerTicker,
+      isEmpty: props.viewMode !== "global" && filteredGraph.edges.length === 0,
+    };
+  }, [
+    props.data,
+    props.globalTickers,
+    props.hops,
+    props.includeHypothesis,
+    props.intelligenceSettings,
+    props.minEdgeWeight,
+    props.selectedEdgeId,
+    props.selectedNodeId,
+    props.strictMode,
+    props.viewMode,
+  ]);
   const emptyMessage = props.strictMode
     ? "Official sources do not disclose more links yet"
     : "No relationships available for this view";

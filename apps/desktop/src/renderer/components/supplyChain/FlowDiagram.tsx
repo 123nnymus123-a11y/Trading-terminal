@@ -6,16 +6,12 @@ import {
   MiniMap,
   Node,
   Edge,
-  Connection,
-  addEdge,
-  useNodesState,
-  useEdgesState,
   type NodeProps,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import type { SupplyChainGraph, SupplyChainGraphEdge } from '@tc/shared/supplyChain';
-import { SupplyChainNode } from './nodes/SupplyChainNode';
-import { getRelationColor, Backgrounds } from './tokens';
+import { SupplyChainNode, type SupplyChainNodeData } from './nodes/SupplyChainNode';
+import { getRelationColor } from './tokens';
 
 interface Props {
   graph: SupplyChainGraph;
@@ -31,9 +27,6 @@ interface Props {
   onSelectEdge: (edgeId: string) => void;
   onSelectNode: (nodeId: string) => void;
 }
-
-const BASE_WIDTH = 1400;
-const BASE_HEIGHT = 900;
 
 function normalizedWeight(edge: SupplyChainGraphEdge) {
   const base = edge.weightRange
@@ -51,10 +44,19 @@ function normalizedWeight(edge: SupplyChainGraphEdge) {
 function buildFlowData(
   graph: SupplyChainGraph,
   focalNodeId: string,
-  selectedNodeId?: string | null
+  selectedNodeId: string | null,
+  selectedEdgeId: string | null,
+  simulation: Props['simulation']
 ) {
   const center = graph.nodes.find((n) => n.id === focalNodeId) ?? graph.nodes[0];
   if (!center) return { nodes: [], edges: [] };
+  const failedNodeIds = new Set(simulation.failedNodeIds);
+  const impactedNodeIds = new Set(
+    Object.entries(simulation.impactScores ?? {})
+      .filter(([, score]) => typeof score === 'number' && score > 0)
+      .map(([nodeId]) => nodeId)
+  );
+  const failedEdgeIds = new Set(simulation.failedEdgeIds);
 
   // Build adjacency
   const adjacency = new Map<string, Set<string>>();
@@ -67,9 +69,10 @@ function buildFlowData(
   // BFS to compute distances
   const distances = new Map<string, number>();
   const queue: string[] = [center.id];
+  let queueIndex = 0;
   distances.set(center.id, 0);
-  while (queue.length) {
-    const current = queue.shift()!;
+  while (queueIndex < queue.length) {
+    const current = queue[queueIndex++];
     const depth = distances.get(current) ?? 0;
     adjacency.get(current)?.forEach((neighbor) => {
       if (!distances.has(neighbor)) {
@@ -128,6 +131,11 @@ function buildFlowData(
   const nodes: Node[] = graph.nodes.map((node) => {
     const pos = positions.get(node.id) ?? { x: 0, y: 0 };
     const tier = Math.min(3, distances.get(node.id) ?? 3);
+    const status = failedNodeIds.has(node.id)
+      ? 'failed'
+      : impactedNodeIds.has(node.id)
+      ? 'impacted'
+      : 'normal';
 
     return {
       id: node.id,
@@ -139,6 +147,7 @@ function buildFlowData(
         tier: ['focal', 'direct', 'indirect', 'systemic'][tier] as any,
         confidence: node.confidence ?? 0.7,
         criticality: node.criticality ?? 1,
+        status,
         isSelected: node.id === selectedNodeId,
       },
       type: 'supplyChainNode',
@@ -146,40 +155,44 @@ function buildFlowData(
   });
 
   // Build React Flow edges
-  const rfEdges: Edge[] = graph.edges.map((edge) => ({
-    id: edge.id,
-    source: edge.from,
-    target: edge.to,
-    animated: false,
-    data: {
-      kind: edge.kind,
-      weight: edge.weight,
-      criticality: edge.criticality,
-      confidence: edge.confidence,
-    },
-  }));
+  const rfEdges: Edge[] = graph.edges.map((edge) => {
+    const isSelected = edge.id === selectedEdgeId;
+    const isRelatedToSelection = edge.from === selectedNodeId || edge.to === selectedNodeId;
+    return {
+      id: edge.id,
+      source: edge.from,
+      target: edge.to,
+      animated: false,
+      data: {
+        kind: edge.kind,
+        weight: edge.weight,
+        criticality: edge.criticality,
+        confidence: edge.confidence,
+      },
+      style: {
+        stroke: failedEdgeIds.has(edge.id) ? '#ef4444' : getRelationColor(edge.kind),
+        strokeOpacity: isSelected ? 1 : isRelatedToSelection ? 0.9 : 0.55,
+        strokeWidth: 1.2 + normalizedWeight(edge) * 2.2,
+      },
+      zIndex: isSelected ? 2 : 1,
+    };
+  });
 
   return { nodes, edges: rfEdges };
 }
 
 export default function FlowDiagram(props: Props) {
-  const { graph, focalNodeId, selectedNodeId, simulation, onSelectNode, onSelectEdge } = props;
+  const { graph, focalNodeId, selectedNodeId, selectedEdgeId, simulation, onSelectNode, onSelectEdge } = props;
 
-  // Build flow data
-  const { nodes: initialNodes, edges: initialEdges } = useMemo(
-    () => buildFlowData(graph, focalNodeId, selectedNodeId),
-    [graph, focalNodeId, selectedNodeId]
+  const { nodes, edges } = useMemo(
+    () => buildFlowData(graph, focalNodeId, selectedNodeId, selectedEdgeId, simulation),
+    [graph, focalNodeId, selectedEdgeId, selectedNodeId, simulation]
   );
 
-  // React Flow hooks
-  const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
-  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
-
-  // Custom node types
   const nodeTypes = useMemo(
     () => ({
-      supplyChainNode: (props: NodeProps) => (
-        <SupplyChainNode data={props.data} selected={props.selected} />
+      supplyChainNode: (nodeProps: NodeProps) => (
+        <SupplyChainNode data={nodeProps.data as SupplyChainNodeData} selected={nodeProps.selected} />
       ),
     }),
     []
@@ -222,14 +235,18 @@ export default function FlowDiagram(props: Props) {
       <ReactFlow
         nodes={nodes}
         edges={edges}
-        onNodesChange={onNodesChange}
-        onEdgesChange={onEdgesChange}
         onNodeClick={onNodeClick}
         onEdgeClick={onEdgeClick}
         nodeTypes={nodeTypes}
         fitView
+        fitViewOptions={{ padding: 0.18, duration: 0 }}
         minZoom={0.5}
         maxZoom={3}
+        nodesDraggable={false}
+        nodesConnectable={false}
+        onlyRenderVisibleElements
+        elevateEdgesOnSelect={false}
+        proOptions={{ hideAttribution: true }}
       >
         <Background color="#64748b" gap={40} size={1} style={{ opacity: 0.1 }} />
         <Controls position="top-right" showInteractive={true} />

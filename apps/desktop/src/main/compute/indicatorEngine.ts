@@ -87,7 +87,7 @@ export class IndicatorEngine {
         const tr = Math.max(
           bar.high - bar.low,
           Math.abs(bar.high - prev.close),
-          Math.abs(bar.low - prev.close)
+          Math.abs(bar.low - prev.close),
         );
         state.trHistory.push(tr);
 
@@ -98,8 +98,16 @@ export class IndicatorEngine {
     }
 
     // Update EMAs for trend detection
-    state.emaFast = this.updateEma(state.emaFast, bar.close, this.EMA_FAST_PERIOD);
-    state.emaSlow = this.updateEma(state.emaSlow, bar.close, this.EMA_SLOW_PERIOD);
+    state.emaFast = this.updateEma(
+      state.emaFast,
+      bar.close,
+      this.EMA_FAST_PERIOD,
+    );
+    state.emaSlow = this.updateEma(
+      state.emaSlow,
+      bar.close,
+      this.EMA_SLOW_PERIOD,
+    );
 
     const update = this.computeUpdate(bar.symbol, bar.ts, state);
 
@@ -131,7 +139,7 @@ export class IndicatorEngine {
   private computeUpdate(
     symbol: string,
     ts: number,
-    state: SymbolState
+    state: SymbolState,
   ): IndicatorUpdate {
     const vwap = this.computeVWAP(state);
     const orUpdate = this.computeOpeningRange(state);
@@ -150,9 +158,7 @@ export class IndicatorEngine {
     };
   }
 
-  private computeVWAP(
-    state: SymbolState
-  ): IndicatorUpdate["vwap"] {
+  private computeVWAP(state: SymbolState): IndicatorUpdate["vwap"] {
     if (state.vwapVolume === 0) return null;
 
     const value = state.vwapSum / state.vwapVolume;
@@ -160,8 +166,7 @@ export class IndicatorEngine {
     const lastBar = state.bars[state.bars.length - 1];
     if (!lastBar) return null;
 
-    const deviation =
-      ((lastBar.close - value) / value) * 10000; // basis points
+    const deviation = ((lastBar.close - value) / value) * 10000; // basis points
 
     return {
       value,
@@ -208,7 +213,7 @@ export class IndicatorEngine {
   }
 
   private computeOpeningRange(
-    state: SymbolState
+    state: SymbolState,
   ): IndicatorUpdate["openingRange"] {
     if (!state.orStartTs || state.orHigh === null || state.orLow === null) {
       return null;
@@ -234,7 +239,8 @@ export class IndicatorEngine {
     if (state.trHistory.length < this.ATR_PERIOD) {
       if (state.trHistory.length === 0) return null;
       // Use SMA of available data
-      const avg = state.trHistory.reduce((a, b) => a + b) / state.trHistory.length;
+      const avg =
+        state.trHistory.reduce((a, b) => a + b) / state.trHistory.length;
       return {
         value: avg,
         period: state.trHistory.length,
@@ -252,12 +258,15 @@ export class IndicatorEngine {
     };
   }
 
-  private computeRealizedVol(state: SymbolState): IndicatorUpdate["realizedVol"] {
+  private computeRealizedVol(
+    state: SymbolState,
+  ): IndicatorUpdate["realizedVol"] {
     if (state.returnHistory.length < this.VOL_PERIOD) {
       if (state.returnHistory.length === 0) return null;
 
       const mean =
-        state.returnHistory.reduce((a, b) => a + b) / state.returnHistory.length;
+        state.returnHistory.reduce((a, b) => a + b) /
+        state.returnHistory.length;
       const variance =
         state.returnHistory.reduce((a, r) => a + Math.pow(r - mean, 2), 0) /
         state.returnHistory.length;
@@ -274,7 +283,8 @@ export class IndicatorEngine {
 
     const recent = state.returnHistory.slice(-this.VOL_PERIOD);
     const mean = recent.reduce((a, b) => a + b) / this.VOL_PERIOD;
-    const variance = recent.reduce((a, r) => a + Math.pow(r - mean, 2), 0) / this.VOL_PERIOD;
+    const variance =
+      recent.reduce((a, r) => a + Math.pow(r - mean, 2), 0) / this.VOL_PERIOD;
     const stdev = Math.sqrt(variance);
     const annualized = stdev * Math.sqrt(252);
 
@@ -286,7 +296,11 @@ export class IndicatorEngine {
     };
   }
 
-  private updateEma(current: number | null, value: number, period: number): number {
+  private updateEma(
+    current: number | null,
+    value: number,
+    period: number,
+  ): number {
     const k = 2 / (period + 1);
     if (current === null || Number.isNaN(current)) return value;
     return current + k * (value - current);
@@ -302,7 +316,7 @@ export class IndicatorEngine {
     symbol: string,
     ts: number,
     state: SymbolState,
-    update: IndicatorUpdate
+    update: IndicatorUpdate,
   ) {
     if (symbol !== this.REGIME_SYMBOL) return;
     if (ts - this.lastRegimeTs < this.REGIME_EMIT_INTERVAL) return;
@@ -318,7 +332,7 @@ export class IndicatorEngine {
   private classifyRegime(
     ts: number,
     state: SymbolState,
-    update: IndicatorUpdate
+    update: IndicatorUpdate,
   ): RegimeUpdate | null {
     const lastBar = state.bars[state.bars.length - 1];
     if (!lastBar || !update.vwap) return null;
@@ -345,7 +359,11 @@ export class IndicatorEngine {
 
     const slopeStrength = this.clamp(Math.abs(slope) / 12, 0, 1);
     const volPenalty = mode === "high-vol-risk-off" ? 0.4 : 0;
-    const confidence = this.clamp(0.35 + slopeStrength * 0.4 - volPenalty, 0.2, 0.95);
+    const confidence = this.clamp(
+      0.35 + slopeStrength * 0.4 - volPenalty,
+      0.2,
+      0.95,
+    );
 
     const notes: string[] = [];
     notes.push(`EMA slope ${slope.toFixed(1)}bps`);
@@ -360,7 +378,14 @@ export class IndicatorEngine {
       source: "compute",
       mode,
       trendDirection,
-      volState: volZ !== null ? (volZ > 1.5 ? "high" : volZ < 0.7 ? "low" : "normal") : "normal",
+      volState:
+        volZ !== null
+          ? volZ > 1.5
+            ? "high"
+            : volZ < 0.7
+              ? "low"
+              : "normal"
+          : "normal",
       confidence,
       indexSymbol: this.REGIME_SYMBOL,
       features: {
@@ -380,7 +405,7 @@ export class IndicatorEngine {
     symbol: string,
     ts: number,
     state: SymbolState,
-    update: IndicatorUpdate
+    update: IndicatorUpdate,
   ) {
     const lastTs = this.lastSignalTs.get(symbol) ?? 0;
     if (ts - lastTs < this.SIGNAL_EMIT_INTERVAL) return;
@@ -399,31 +424,59 @@ export class IndicatorEngine {
     symbol: string,
     ts: number,
     state: SymbolState,
-    update: IndicatorUpdate
+    update: IndicatorUpdate,
   ): CapitalMomentumSignal | null {
     const lastBar = state.bars[state.bars.length - 1];
     if (!lastBar) return null;
 
     const bars20 = state.bars.slice(-20);
-    const highest20 = bars20.length > 0 ? Math.max(...bars20.map((b) => b.high)) : lastBar.high;
-    const close20HighDistancePct = highest20 > 0 ? (highest20 - lastBar.close) / highest20 : 0;
+    const highest20 =
+      bars20.length > 0 ? Math.max(...bars20.map((b) => b.high)) : lastBar.high;
+    const close20HighDistancePct =
+      highest20 > 0 ? (highest20 - lastBar.close) / highest20 : 0;
 
     const volBars = state.bars.slice(-20);
-    const avgVol20 = volBars.length > 0 ? volBars.reduce((sum, b) => sum + b.volume, 0) / volBars.length : lastBar.volume;
+    const avgVol20 =
+      volBars.length > 0
+        ? volBars.reduce((sum, b) => sum + b.volume, 0) / volBars.length
+        : lastBar.volume;
     const volumeRatio = avgVol20 > 0 ? lastBar.volume / avgVol20 : 1;
 
-    const breakoutStrength = close20HighDistancePct <= 0.001 ? this.clamp(0.5 + (volumeRatio - 1) * 0.25, 0, 1) : 0;
-    const relativeStrength = (state.emaSlow ?? lastBar.close) > 0 ? ((state.emaFast ?? lastBar.close) - (state.emaSlow ?? lastBar.close)) / (state.emaSlow ?? lastBar.close) : 0;
+    const breakoutStrength =
+      close20HighDistancePct <= 0.001
+        ? this.clamp(0.5 + (volumeRatio - 1) * 0.25, 0, 1)
+        : 0;
+    const relativeStrength =
+      (state.emaSlow ?? lastBar.close) > 0
+        ? ((state.emaFast ?? lastBar.close) -
+            (state.emaSlow ?? lastBar.close)) /
+          (state.emaSlow ?? lastBar.close)
+        : 0;
 
     const asOfIso = new Date(ts).toISOString();
-    const flowSnapshot = PublicFlowRepo.getTickerFlowSnapshotAsOf(symbol, asOfIso);
-    const congressSnapshot = CongressRepo.getTickerCongressNetBuyAsOf(symbol, asOfIso);
+    const flowSnapshot = PublicFlowRepo.getTickerFlowSnapshotAsOf(
+      symbol,
+      asOfIso,
+    );
+    const congressSnapshot = CongressRepo.getTickerCongressNetBuyAsOf(
+      symbol,
+      asOfIso,
+    );
 
     const fallbackObservedAt = asOfIso;
-    const publicFlowObservedAt = flowSnapshot.observedAt.publicFlow ?? fallbackObservedAt;
+    const publicFlowObservedAt =
+      flowSnapshot.observedAt.publicFlow ?? fallbackObservedAt;
     const themeObservedAt = flowSnapshot.observedAt.theme ?? fallbackObservedAt;
-    const congressObservedAt = congressSnapshot.observedAt ?? fallbackObservedAt;
-    const secondOrderObservedAt = flowSnapshot.observedAt.secondOrder ?? fallbackObservedAt;
+    const congressObservedAt =
+      congressSnapshot.observedAt ?? fallbackObservedAt;
+    const secondOrderObservedAt =
+      flowSnapshot.observedAt.secondOrder ?? fallbackObservedAt;
+    const congressTransactionDate = congressSnapshot.transactionDate
+      ? this.parseIsoToMs(congressSnapshot.transactionDate, ts)
+      : null;
+    const congressDisclosureDate = congressSnapshot.disclosureDate
+      ? this.parseIsoToMs(congressSnapshot.disclosureDate, ts)
+      : null;
 
     return capitalMomentumService.evaluate({
       symbol,
@@ -452,6 +505,10 @@ export class IndicatorEngine {
           secondOrder: this.parseIsoToMs(secondOrderObservedAt, ts),
         },
       },
+      congressTradeTiming: {
+        transactionDate: congressTransactionDate,
+        disclosureDate: congressDisclosureDate,
+      },
     });
   }
 
@@ -465,7 +522,7 @@ export class IndicatorEngine {
     symbol: string,
     ts: number,
     state: SymbolState,
-    update: IndicatorUpdate
+    update: IndicatorUpdate,
   ): AlphaSignal | null {
     const lastBar = state.bars[state.bars.length - 1];
     if (!lastBar || !update.vwap) return null;
@@ -481,12 +538,16 @@ export class IndicatorEngine {
 
     const emaSlow = state.emaSlow ?? price;
     const emaFast = state.emaFast ?? price;
-    const slopeBps = emaSlow !== 0 ? ((emaFast - emaSlow) / emaSlow) * 10000 : 0;
+    const slopeBps =
+      emaSlow !== 0 ? ((emaFast - emaSlow) / emaSlow) * 10000 : 0;
     const pullbackBps = ((price - emaFast) / price) * 10000;
-    const s2 = this.clamp((slopeBps / 10) - (pullbackBps / 15), -1, 1);
+    const s2 = this.clamp(slopeBps / 10 - pullbackBps / 15, -1, 1);
 
-    const rangeExpansion = atr && state.sessionStartPrice ? atr / state.sessionStartPrice : null;
-    const s3 = rangeExpansion ? this.clamp((rangeExpansion - 0.005) * 20, -1, 1) : 0;
+    const rangeExpansion =
+      atr && state.sessionStartPrice ? atr / state.sessionStartPrice : null;
+    const s3 = rangeExpansion
+      ? this.clamp((rangeExpansion - 0.005) * 20, -1, 1)
+      : 0;
 
     let composite = 0;
     if (this.currentRegimeMode === "trend-day") {
@@ -497,16 +558,27 @@ export class IndicatorEngine {
       composite = 0.3 * ((s1 + s2) / 2);
     }
 
-    const featureCount = [update.vwap, update.atr, update.realizedVol].filter(Boolean).length;
-    const compositeConfidence = this.clamp(0.3 + featureCount * 0.15 + Math.min(0.3, Math.abs(composite) * 0.3), 0.3, 0.95);
+    const featureCount = [update.vwap, update.atr, update.realizedVol].filter(
+      Boolean,
+    ).length;
+    const compositeConfidence = this.clamp(
+      0.3 + featureCount * 0.15 + Math.min(0.3, Math.abs(composite) * 0.3),
+      0.3,
+      0.95,
+    );
 
     const riskBudgetPerSymbol = 5_000;
     const targetVol = 0.02;
-    const volScale = realizedVol ? this.clamp(targetVol / Math.max(realizedVol, 1e-4), 0.5, 2.5) : 1;
+    const volScale = realizedVol
+      ? this.clamp(targetVol / Math.max(realizedVol, 1e-4), 0.5, 2.5)
+      : 1;
     const targetDollars = composite * riskBudgetPerSymbol * volScale;
 
     const spreadBps = 5;
-    const targetShares = Math.max(0, Math.abs(targetDollars) / Math.max(price, 1e-6));
+    const targetShares = Math.max(
+      0,
+      Math.abs(targetDollars) / Math.max(price, 1e-6),
+    );
     const expectedMove = Math.abs(composite) * price * 0.002; // 20bps move proxy
     const expectedEdge = expectedMove * targetShares;
     const expectedCost = (spreadBps / 10000) * price * targetShares + 0.5; // +fees buffer
@@ -515,7 +587,8 @@ export class IndicatorEngine {
     const reasons: string[] = [];
     reasons.push(`VWAP dev ${vwapDevBps.toFixed(1)}bps`);
     reasons.push(`EMA slope ${slopeBps.toFixed(1)}bps`);
-    if (rangeExpansion !== null) reasons.push(`Range ${(rangeExpansion * 100).toFixed(2)}%`);
+    if (rangeExpansion !== null)
+      reasons.push(`Range ${(rangeExpansion * 100).toFixed(2)}%`);
     reasons.push(allowed ? "Edge > cost" : "Edge <= cost");
 
     return {
@@ -526,9 +599,24 @@ export class IndicatorEngine {
       compositeScore: composite,
       compositeConfidence,
       signals: [
-        { id: "vwap-mean-revert", score: s1, confidence: compositeConfidence, detail: "VWAP deviation" },
-        { id: "trend-pullback", score: s2, confidence: compositeConfidence, detail: "EMA slope & pullback" },
-        { id: "vol-breakout-filter", score: s3, confidence: compositeConfidence, detail: "Range expansion filter" },
+        {
+          id: "vwap-mean-revert",
+          score: s1,
+          confidence: compositeConfidence,
+          detail: "VWAP deviation",
+        },
+        {
+          id: "trend-pullback",
+          score: s2,
+          confidence: compositeConfidence,
+          detail: "EMA slope & pullback",
+        },
+        {
+          id: "vol-breakout-filter",
+          score: s3,
+          confidence: compositeConfidence,
+          detail: "Range expansion filter",
+        },
       ],
       sizing: {
         targetDollars,
@@ -546,7 +634,10 @@ export class IndicatorEngine {
         reasons,
       },
       features: {
-        vwapZ: vwap !== 0 && realizedVol ? (price - vwap) / (vwap * Math.max(realizedVol, 1e-4)) : null,
+        vwapZ:
+          vwap !== 0 && realizedVol
+            ? (price - vwap) / (vwap * Math.max(realizedVol, 1e-4))
+            : null,
         realizedVol,
         atr,
         spreadPct: spreadBps / 10000,
@@ -559,15 +650,14 @@ export class IndicatorEngine {
   /**
    * Mock prior day data (in production, load from persistent store/db)
    */
-  private getMockPriorDayHLC(
-    symbol: string
-  ): IndicatorUpdate["priorDayHLC"] {
+  private getMockPriorDayHLC(symbol: string): IndicatorUpdate["priorDayHLC"] {
     // Mock data for common symbols
-    const mocks: Record<string, { high: number; low: number; close: number }> = {
-      AAPL: { high: 235.5, low: 230.2, close: 232.8 },
-      MSFT: { high: 420.3, low: 405.1, close: 418.5 },
-      TSLA: { high: 280.9, low: 265.4, close: 275.2 },
-    };
+    const mocks: Record<string, { high: number; low: number; close: number }> =
+      {
+        AAPL: { high: 235.5, low: 230.2, close: 232.8 },
+        MSFT: { high: 420.3, low: 405.1, close: 418.5 },
+        TSLA: { high: 280.9, low: 265.4, close: 275.2 },
+      };
 
     const base = mocks[symbol];
     if (!base) return null;

@@ -147,6 +147,17 @@ type WatchlistCandidateRow = {
   rationale: string;
   relation_type: "peer" | "supplier" | "customer" | "etf-constituent";
   created_at: string;
+  importance_score?: number;
+  confidence_score?: number;
+  priority?: "critical" | "high" | "medium" | "low";
+  theme_count?: number;
+  freshness_days?: number;
+  score_components?: {
+    theme_momentum: number;
+    relation_strength: number;
+    diversity_bonus: number;
+    freshness_boost: number;
+  };
 };
 
 type ValuationTagRow = {
@@ -371,7 +382,8 @@ const sectorThemes: SectorThemeRow[] = [
     window_end: nowIso(),
     sector: "Technology",
     score: 84,
-    summary: "Technology disclosures remain buy-skewed with AI-heavy concentration.",
+    summary:
+      "Technology disclosures remain buy-skewed with AI-heavy concentration.",
     created_at: nowIso(),
   },
   {
@@ -460,9 +472,14 @@ function ensureUserCollections(userId: string) {
   }
 }
 
-export function listCongressTrades(symbol?: string, limit?: number): CongressTrade[] {
+export function listCongressTrades(
+  symbol?: string,
+  limit?: number,
+): CongressTrade[] {
   const normalized = symbol?.trim().toUpperCase();
-  const filtered = normalized ? congressSeed.filter((item) => item.symbol === normalized) : congressSeed;
+  const filtered = normalized
+    ? congressSeed.filter((item) => item.symbol === normalized)
+    : congressSeed;
   const capped = Math.max(1, Math.min(limit ?? 50, 200));
   return filtered.slice(0, capped);
 }
@@ -476,11 +493,27 @@ export function queryCongressionalTrades(filters: {
   limit?: number;
 }) {
   const filtered = congressionalTrades.filter((row) => {
-    if (filters.person_name && !row.person_name.toLowerCase().includes(filters.person_name.toLowerCase())) return false;
+    if (
+      filters.person_name &&
+      !row.person_name.toLowerCase().includes(filters.person_name.toLowerCase())
+    )
+      return false;
     if (filters.chamber && row.chamber !== filters.chamber) return false;
-    if (filters.ticker && row.ticker_normalized !== filters.ticker.toUpperCase()) return false;
-    if (filters.transaction_date_start && row.transaction_date < filters.transaction_date_start) return false;
-    if (filters.transaction_date_end && row.transaction_date > filters.transaction_date_end) return false;
+    if (
+      filters.ticker &&
+      row.ticker_normalized !== filters.ticker.toUpperCase()
+    )
+      return false;
+    if (
+      filters.transaction_date_start &&
+      row.transaction_date < filters.transaction_date_start
+    )
+      return false;
+    if (
+      filters.transaction_date_end &&
+      row.transaction_date > filters.transaction_date_end
+    )
+      return false;
     return true;
   });
   const capped = Math.max(1, Math.min(filters.limit ?? 100, 500));
@@ -500,7 +533,15 @@ export function queryFederalContracts(limit = 100) {
 }
 
 export function getMostTradedTickers(limit = 10) {
-  const map = new Map<string, { ticker: string; trade_count: number; buy_count: number; sell_count: number }>();
+  const map = new Map<
+    string,
+    {
+      ticker: string;
+      trade_count: number;
+      buy_count: number;
+      sell_count: number;
+    }
+  >();
   for (const row of congressionalTrades) {
     const ticker = row.ticker_normalized ?? "UNKNOWN";
     if (!map.has(ticker)) {
@@ -508,10 +549,14 @@ export function getMostTradedTickers(limit = 10) {
     }
     const current = map.get(ticker)!;
     current.trade_count += 1;
-    if (row.transaction_type.toLowerCase().includes("buy")) current.buy_count += 1;
-    if (row.transaction_type.toLowerCase().includes("sell")) current.sell_count += 1;
+    if (row.transaction_type.toLowerCase().includes("buy"))
+      current.buy_count += 1;
+    if (row.transaction_type.toLowerCase().includes("sell"))
+      current.sell_count += 1;
   }
-  return [...map.values()].sort((a, b) => b.trade_count - a.trade_count).slice(0, limit);
+  return [...map.values()]
+    .sort((a, b) => b.trade_count - a.trade_count)
+    .slice(0, limit);
 }
 
 export function getDisclosureLagStats() {
@@ -523,7 +568,10 @@ export function getDisclosureLagStats() {
   });
   const sorted = [...lags].sort((a, b) => a - b);
   const mid = Math.floor(sorted.length / 2);
-  const median = sorted.length % 2 === 0 ? (sorted[mid - 1]! + sorted[mid]!) / 2 : sorted[mid]!;
+  const median =
+    sorted.length % 2 === 0
+      ? (sorted[mid - 1]! + sorted[mid]!) / 2
+      : sorted[mid]!;
   const avg = lags.reduce((a, b) => a + b, 0) / lags.length;
   const max = Math.max(...lags);
   return {
@@ -533,9 +581,14 @@ export function getDisclosureLagStats() {
   };
 }
 
-export function listPublicFlowEvents(ticker?: string, limit?: number): PublicFlowEvent[] {
+export function listPublicFlowEvents(
+  ticker?: string,
+  limit?: number,
+): PublicFlowEvent[] {
   const normalized = ticker?.trim().toUpperCase();
-  const filtered = normalized ? publicFlowSeed.filter((item) => item.ticker === normalized) : publicFlowSeed;
+  const filtered = normalized
+    ? publicFlowSeed.filter((item) => item.ticker === normalized)
+    : publicFlowSeed;
   const capped = Math.max(1, Math.min(limit ?? 50, 200));
   return filtered.slice(0, capped);
 }
@@ -551,8 +604,136 @@ export function getSectorThemes(windowDays: 7 | 30, limit = 10) {
     .slice(0, Math.max(1, Math.min(limit, 100)));
 }
 
-export function getWatchlistCandidates(themeId: number) {
-  return watchlistCandidates.filter((item) => item.theme_id === themeId);
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+function toCandidatePriority(
+  score: number,
+): "critical" | "high" | "medium" | "low" {
+  if (score >= 80) return "critical";
+  if (score >= 65) return "high";
+  if (score >= 45) return "medium";
+  return "low";
+}
+
+function rankCandidate(
+  candidate: WatchlistCandidateRow,
+  themeScore: number,
+  themeCount: number,
+): WatchlistCandidateRow {
+  const relationStrengthMap: Record<
+    WatchlistCandidateRow["relation_type"],
+    number
+  > = {
+    peer: 1,
+    supplier: 0.8,
+    customer: 0.65,
+    "etf-constituent": 0.5,
+  };
+  const relationStrength = relationStrengthMap[candidate.relation_type] ?? 0.5;
+  const themeMomentum = clamp(themeScore / 100, 0, 1);
+  const diversityBonus = clamp(themeCount / 4, 0, 1);
+
+  const ageMs = Math.max(0, Date.now() - Date.parse(candidate.created_at));
+  const freshnessDays = ageMs / (24 * 60 * 60 * 1000);
+  const freshnessBoost = clamp(Math.exp(-freshnessDays / 30), 0, 1);
+
+  const score0to1 = clamp(
+    themeMomentum * 0.45 +
+      relationStrength * 0.3 +
+      diversityBonus * 0.15 +
+      freshnessBoost * 0.1,
+    0,
+    1,
+  );
+  const importanceScore = Number((score0to1 * 100).toFixed(1));
+  const confidenceScore = Number(
+    clamp(
+      themeMomentum * 0.45 + relationStrength * 0.4 + freshnessBoost * 0.15,
+      0,
+      1,
+    ).toFixed(3),
+  );
+
+  return {
+    ...candidate,
+    importance_score: importanceScore,
+    confidence_score: confidenceScore,
+    priority: toCandidatePriority(importanceScore),
+    theme_count: themeCount,
+    freshness_days: Number(freshnessDays.toFixed(1)),
+    score_components: {
+      theme_momentum: Number(themeMomentum.toFixed(3)),
+      relation_strength: Number(relationStrength.toFixed(3)),
+      diversity_bonus: Number(diversityBonus.toFixed(3)),
+      freshness_boost: Number(freshnessBoost.toFixed(3)),
+    },
+  };
+}
+
+export function getWatchlistCandidates(
+  themeId: number,
+  options?: {
+    minPriority?: "critical" | "high" | "medium" | "low";
+    minConfidence?: number;
+  },
+) {
+  const priorityRank = {
+    critical: 4,
+    high: 3,
+    medium: 2,
+    low: 1,
+  } as const;
+
+  const themeScore =
+    sectorThemes.find((theme) => theme.id === themeId)?.score ?? 50;
+  const themeCountByTicker = watchlistCandidates.reduce<Record<string, number>>(
+    (acc, item) => {
+      const key = item.ticker.toUpperCase();
+      acc[key] = (acc[key] ?? 0) + 1;
+      return acc;
+    },
+    {},
+  );
+
+  const minPriorityRank = options?.minPriority
+    ? priorityRank[options.minPriority]
+    : 0;
+  const minConfidence =
+    typeof options?.minConfidence === "number"
+      ? clamp(options.minConfidence, 0, 1)
+      : undefined;
+
+  return watchlistCandidates
+    .filter((item) => item.theme_id === themeId)
+    .map((item) =>
+      rankCandidate(
+        item,
+        themeScore,
+        themeCountByTicker[item.ticker.toUpperCase()] ?? 1,
+      ),
+    )
+    .filter((item) => {
+      const rankedPriority = item.priority ? priorityRank[item.priority] : 0;
+      if (rankedPriority < minPriorityRank) return false;
+      if (
+        typeof minConfidence === "number" &&
+        typeof item.confidence_score === "number" &&
+        item.confidence_score < minConfidence
+      ) {
+        return false;
+      }
+      return true;
+    })
+    .sort((a, b) => {
+      const scoreDelta = (b.importance_score ?? 0) - (a.importance_score ?? 0);
+      if (scoreDelta !== 0) return scoreDelta;
+      const confidenceDelta =
+        (b.confidence_score ?? 0) - (a.confidence_score ?? 0);
+      if (confidenceDelta !== 0) return confidenceDelta;
+      return Date.parse(b.created_at) - Date.parse(a.created_at);
+    });
 }
 
 export function getValuationTags(tickers: string[]) {
@@ -570,7 +751,10 @@ export function getUserSettings(userId: string) {
   return userSettings.get(userId) ?? {};
 }
 
-export function updateUserSettings(userId: string, next: Record<string, unknown>) {
+export function updateUserSettings(
+  userId: string,
+  next: Record<string, unknown>,
+) {
   const previous = getUserSettings(userId);
   const merged = { ...previous, ...next };
   userSettings.set(userId, merged);
@@ -585,13 +769,23 @@ export function listUserWatchlists(userId: string) {
 export function addUserWatchlist(userId: string, symbol: string, note = "") {
   ensureUserCollections(userId);
   const current = userWatchlists.get(userId)!;
-  const nextId = current.length ? Math.max(...current.map((item) => item.id)) + 1 : 1;
-  const item: WatchlistItem = { id: nextId, symbol: symbol.toUpperCase(), note };
+  const nextId = current.length
+    ? Math.max(...current.map((item) => item.id)) + 1
+    : 1;
+  const item: WatchlistItem = {
+    id: nextId,
+    symbol: symbol.toUpperCase(),
+    note,
+  };
   current.push(item);
   return item;
 }
 
-export function updateUserWatchlist(userId: string, id: number, fields: { symbol?: string; note?: string }) {
+export function updateUserWatchlist(
+  userId: string,
+  id: number,
+  fields: { symbol?: string; note?: string },
+) {
   ensureUserCollections(userId);
   const current = userWatchlists.get(userId)!;
   const index = current.findIndex((item) => item.id === id);
@@ -634,7 +828,14 @@ export function getAccount(userId: string) {
 
 export function placeOrder(
   userId: string,
-  req: { symbol: string; side: "BUY" | "SELL"; qty: number; type: string; limitPrice?: number; stopPrice?: number },
+  req: {
+    symbol: string;
+    side: "BUY" | "SELL";
+    qty: number;
+    type: string;
+    limitPrice?: number;
+    stopPrice?: number;
+  },
 ) {
   ensureUserCollections(userId);
   const now = Date.now();
@@ -648,7 +849,8 @@ export function placeOrder(
     ...(req.stopPrice !== undefined ? { stopPrice: req.stopPrice } : {}),
     status: "FILLED",
     filledQty: req.qty,
-    avgFillPrice: req.limitPrice ?? Number((100 + Math.random() * 100).toFixed(2)),
+    avgFillPrice:
+      req.limitPrice ?? Number((100 + Math.random() * 100).toFixed(2)),
     createdAt: now,
     updatedAt: now,
   };
@@ -657,7 +859,9 @@ export function placeOrder(
   orders.unshift(order);
 
   const positions = userPositions.get(userId)!;
-  const positionIndex = positions.findIndex((position) => position.symbol === order.symbol);
+  const positionIndex = positions.findIndex(
+    (position) => position.symbol === order.symbol,
+  );
   const signedQty = order.side === "BUY" ? order.qty : -order.qty;
   if (positionIndex < 0) {
     positions.push({
@@ -686,7 +890,9 @@ export function placeOrder(
     balance: Number((account.balance + cashDelta).toFixed(2)),
     equity: Number((account.equity + Math.random() * 100 - 50).toFixed(2)),
     dailyPnl: Number((account.dailyPnl + Math.random() * 50 - 25).toFixed(2)),
-    dailyPnlPercent: Number((account.dailyPnlPercent + (Math.random() - 0.5) * 0.5).toFixed(2)),
+    dailyPnlPercent: Number(
+      (account.dailyPnlPercent + (Math.random() - 0.5) * 0.5).toFixed(2),
+    ),
   });
 
   return order;
@@ -731,8 +937,22 @@ export function createSupplyChainMap(options: {
         icon: "🏭",
         color: "#3b82f6",
         companies: [
-          { id: `${center}-SUP1`, name: `${center} Supplier 1`, role: "Component supplier", criticality: 4, confidence: 0.71, verified: true },
-          { id: `${center}-SUP2`, name: `${center} Supplier 2`, role: "Logistics", criticality: 3, confidence: 0.68, verified: false },
+          {
+            id: `${center}-SUP1`,
+            name: `${center} Supplier 1`,
+            role: "Component supplier",
+            criticality: 4,
+            confidence: 0.71,
+            verified: true,
+          },
+          {
+            id: `${center}-SUP2`,
+            name: `${center} Supplier 2`,
+            role: "Logistics",
+            criticality: 3,
+            confidence: 0.68,
+            verified: false,
+          },
         ],
       },
       {
@@ -741,21 +961,78 @@ export function createSupplyChainMap(options: {
         icon: "🛒",
         color: "#10b981",
         companies: [
-          { id: `${center}-CUS1`, name: `${center} Customer 1`, role: "Enterprise client", criticality: 5, confidence: 0.8, verified: true },
+          {
+            id: `${center}-CUS1`,
+            name: `${center} Customer 1`,
+            role: "Enterprise client",
+            criticality: 5,
+            confidence: 0.8,
+            verified: true,
+          },
         ],
       },
     ],
     graph: {
       nodes: [
-        { id: center, label: center, entityType: "company", tier: "direct", role: "Anchor", confidence: 1, criticality: 5 },
-        { id: `${center}-SUP1`, label: `${center} Supplier 1`, entityType: "company", tier: "direct", confidence: 0.71, criticality: 4 },
-        { id: `${center}-SUP2`, label: `${center} Supplier 2`, entityType: "company", tier: "direct", confidence: 0.68, criticality: 3 },
-        { id: `${center}-CUS1`, label: `${center} Customer 1`, entityType: "company", tier: "direct", confidence: 0.8, criticality: 5 },
+        {
+          id: center,
+          label: center,
+          entityType: "company",
+          tier: "direct",
+          role: "Anchor",
+          confidence: 1,
+          criticality: 5,
+        },
+        {
+          id: `${center}-SUP1`,
+          label: `${center} Supplier 1`,
+          entityType: "company",
+          tier: "direct",
+          confidence: 0.71,
+          criticality: 4,
+        },
+        {
+          id: `${center}-SUP2`,
+          label: `${center} Supplier 2`,
+          entityType: "company",
+          tier: "direct",
+          confidence: 0.68,
+          criticality: 3,
+        },
+        {
+          id: `${center}-CUS1`,
+          label: `${center} Customer 1`,
+          entityType: "company",
+          tier: "direct",
+          confidence: 0.8,
+          criticality: 5,
+        },
       ],
       edges: [
-        { id: `e-${center}-1`, from: `${center}-SUP1`, to: center, kind: "supplies", confidence: 0.71, criticality: 4 },
-        { id: `e-${center}-2`, from: `${center}-SUP2`, to: center, kind: "transports", confidence: 0.68, criticality: 3 },
-        { id: `e-${center}-3`, from: center, to: `${center}-CUS1`, kind: "customer", confidence: 0.8, criticality: 5 },
+        {
+          id: `e-${center}-1`,
+          from: `${center}-SUP1`,
+          to: center,
+          kind: "supplies",
+          confidence: 0.71,
+          criticality: 4,
+        },
+        {
+          id: `e-${center}-2`,
+          from: `${center}-SUP2`,
+          to: center,
+          kind: "transports",
+          confidence: 0.68,
+          criticality: 3,
+        },
+        {
+          id: `e-${center}-3`,
+          from: center,
+          to: `${center}-CUS1`,
+          kind: "customer",
+          confidence: 0.8,
+          criticality: 5,
+        },
       ],
     },
     insights: [`${center} has concentrated supplier risk in top-tier nodes.`],

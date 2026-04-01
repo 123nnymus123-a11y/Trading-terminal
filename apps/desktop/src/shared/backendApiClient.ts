@@ -51,6 +51,11 @@ export type TedLiveConfigUpdate = {
   windowQueryParam?: string;
 };
 
+type PublicFlowCandidateQuery = {
+  minPriority?: "critical" | "high" | "medium" | "low";
+  minConfidence?: number;
+};
+
 export class BackendApiClient {
   private baseUrl: string;
   private getAuthToken: () => Promise<string | null>;
@@ -510,9 +515,19 @@ export class BackendApiClient {
     );
   }
 
-  async publicFlowGetCandidates(themeId: number) {
+  async publicFlowGetCandidates(
+    themeId: number,
+    options?: PublicFlowCandidateQuery,
+  ) {
+    const search = new URLSearchParams({ themeId: String(themeId) });
+    if (options?.minPriority) {
+      search.set("minPriority", options.minPriority);
+    }
+    if (typeof options?.minConfidence === "number") {
+      search.set("minConfidence", String(options.minConfidence));
+    }
     return this.fetch<PublicFlowCandidatesResponse>(
-      `/api/publicflow/candidates?themeId=${themeId}`,
+      `/api/publicflow/candidates?${search.toString()}`,
       { method: "GET" },
     );
   }

@@ -1,0 +1,23 @@
+[Unit]
+Description=Trading Terminal Backend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/.openclaw/workspace/trading-terminal
+EnvironmentFile=/home/ubuntu/.openclaw/workspace/trading-terminal/apps/backend/.env
+ExecStart=/usr/bin/env pnpm -C apps/backend start
+Restart=always
+RestartSec=5
+TimeoutStartSec=30
+TimeoutStopSec=20
+LimitNOFILE=65535
+
+StandardOutput=append:/var/log/trading-terminal/backend.log
+StandardError=append:/var/log/trading-terminal/backend.err.log
+
+[Install]
+WantedBy=multi-user.target

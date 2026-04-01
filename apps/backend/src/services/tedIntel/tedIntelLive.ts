@@ -1,4 +1,9 @@
-import type { TedIntelSnapshot, TedIntelTimeWindow } from "./tedIntel.js";
+import {
+  buildTedIntelSnapshot,
+  type TedIntelNotice,
+  type TedIntelSnapshot,
+  type TedIntelTimeWindow,
+} from "./tedIntel.js";
 
 export type TedLiveErrorCode =
   | "ted_live_disabled"
@@ -121,6 +126,211 @@ function resolveApiKeyHeaderValue(authHeader: string, apiKey: string): string {
   return `Bearer ${trimmed}`;
 }
 
+function isTedV3SearchUrl(baseUrl: string): boolean {
+  try {
+    const parsed = new URL(baseUrl);
+    return /\/v3\/notices\/search\/?$/i.test(parsed.pathname);
+  } catch {
+    return false;
+  }
+}
+
+function pickString(
+  value: Record<string, unknown>,
+  keys: string[],
+): string | null {
+  for (const key of keys) {
+    const candidate = value[key];
+    if (typeof candidate === "string" && candidate.trim().length > 0) {
+      return candidate.trim();
+    }
+  }
+  return null;
+}
+
+function extractTedV3Rows(payload: unknown): Record<string, unknown>[] {
+  if (!isObject(payload)) {
+    return [];
+  }
+
+  const candidates: unknown[] = [
+    payload.results,
+    payload.items,
+    payload.notices,
+    payload.content,
+    payload.data,
+  ];
+
+  for (const candidate of candidates) {
+    if (Array.isArray(candidate)) {
+      return candidate.filter(isObject);
+    }
+  }
+
+  return [];
+}
+
+function noticeTypeFromTitle(title: string): TedIntelNotice["noticeType"] {
+  const normalized = title.toLowerCase();
+  if (normalized.includes("award")) {
+    return "award_notice";
+  }
+  if (normalized.includes("modification")) {
+    return "contract_modification";
+  }
+  if (normalized.includes("competition")) {
+    return "competition_notice";
+  }
+  if (normalized.includes("prior information") || normalized.includes("pin")) {
+    return "pin";
+  }
+  return "contract_notice";
+}
+
+function stageFromNoticeType(
+  noticeType: TedIntelNotice["noticeType"],
+): TedIntelNotice["stage"] {
+  if (noticeType === "award_notice" || noticeType === "contract_modification") {
+    return "award";
+  }
+  if (noticeType === "competition_notice") {
+    return "competition";
+  }
+  if (noticeType === "pin") {
+    return "planning";
+  }
+  return "tendering";
+}
+
+function toIsoDateOrNow(value: string | null): string {
+  if (!value) {
+    return new Date().toISOString();
+  }
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime())
+    ? new Date().toISOString()
+    : parsed.toISOString();
+}
+
+function mapTedV3RowsToRadar(
+  rows: Record<string, unknown>[],
+): TedIntelNotice[] {
+  return rows.slice(0, 60).map((row, index) => {
+    const sourceId =
+      pickString(row, [
+        "publication-number",
+        "publicationNumber",
+        "notice-number",
+        "noticeNumber",
+        "id",
+      ]) ?? `ted-v3-${index + 1}`;
+    const title =
+      pickString(row, [
+        "BT-21-Notice",
+        "title",
+        "notice-title",
+        "description",
+      ]) ?? "TED procurement notice";
+    const publishedAt = toIsoDateOrNow(
+      pickString(row, ["publication-date", "publicationDate", "publishedAt"]),
+    );
+    const noticeType = noticeTypeFromTitle(title);
+
+    return {
+      id: `ted-v3-${sourceId}`,
+      sourceId,
+      title,
+      buyerName:
+        pickString(row, ["buyer-name", "buyerName", "organisation-name"]) ??
+        "Public Buyer (TED)",
+      buyerType: "public authority",
+      buyerCountry:
+        pickString(row, ["country", "buyer-country", "buyerCountry"]) ?? "EU",
+      buyerRegion: "Europe",
+      buyerCoordinates: { lat: 50.1109, lon: 8.6821 },
+      stage: stageFromNoticeType(noticeType),
+      noticeType,
+      theme: "public procurement",
+      secondaryThemes: [],
+      valueEur: 0,
+      currency: "EUR",
+      publishedAt,
+      placeOfPerformance: {
+        country:
+          pickString(row, ["country", "place-of-performance-country"]) ?? "EU",
+        region: "Europe",
+        coordinates: { lat: 50.1109, lon: 8.6821 },
+      },
+      strategicWeight: 60,
+      confidence: 0.7,
+      recurrence: 0.5,
+      novelty: 0.5,
+      urgency: 0.5,
+      sourceUrl: `https://ted.europa.eu/en/notice/-/detail/${encodeURIComponent(sourceId)}`,
+      cpvCodes: [],
+      evidence: {
+        directlyStatedFacts: [
+          `Fetched from TED v3 search API as notice ${sourceId}.`,
+        ],
+        aiInference: [
+          "Live TED ingestion is active; enrichments can layer on top of this raw notice feed.",
+        ],
+        confidence: 0.7,
+        whyItMatters: [
+          "Live procurement flow can now drive downstream TED intelligence panels.",
+        ],
+        linkedSystems: ["PANORAMA", "INTELLIGENCE", "DATA VAULT"],
+      },
+    };
+  });
+}
+
+function buildLiveSnapshotFromTedV3(
+  payload: unknown,
+  windowDays: TedIntelTimeWindow,
+  baseUrl: string,
+): TedIntelSnapshot {
+  const rows = extractTedV3Rows(payload);
+  if (!rows.length) {
+    throw new TedLiveError(
+      "ted_upstream_invalid_payload",
+      "TED v3 payload did not contain result rows",
+      502,
+    );
+  }
+
+  const radar = mapTedV3RowsToRadar(rows);
+  const base = buildTedIntelSnapshot(windowDays);
+  const sourceUpdatedAt = radar.reduce(
+    (latest, notice) =>
+      notice.publishedAt > latest ? notice.publishedAt : latest,
+    base.sourceUpdatedAt,
+  );
+
+  return normalizeSnapshotMetadata(
+    {
+      ...base,
+      generatedAt: new Date().toISOString(),
+      sourceUpdatedAt,
+      timeWindow: windowDays,
+      radar,
+      summaryCards: [
+        {
+          label: "Live notices",
+          value: String(radar.length),
+          delta: "Live API",
+          tone: "positive",
+          detail: "Rows from TED v3 /notices/search",
+        },
+        ...base.summaryCards.slice(1),
+      ],
+      sourceLabel: "TED v3 Search API",
+      sourceMode: "live",
+    },
+    baseUrl,
+  );
+}
+
 export async function fetchLiveTedSnapshotStrict(
   config: TedLiveConfig,
   windowDays: TedIntelTimeWindow,
@@ -150,7 +360,9 @@ export async function fetchLiveTedSnapshotStrict(
   }
 
   const url = new URL(config.baseUrl);
-  url.searchParams.set(config.windowQueryParam, windowDays);
+  if (!isTedV3SearchUrl(config.baseUrl)) {
+    url.searchParams.set(config.windowQueryParam, windowDays);
+  }
 
   const headers: Record<string, string> = {
     Accept: "application/json",
@@ -162,8 +374,27 @@ export async function fetchLiveTedSnapshotStrict(
 
   try {
     const response = await fetch(url.toString(), {
-      method: "GET",
-      headers,
+      method: isTedV3SearchUrl(config.baseUrl) ? "POST" : "GET",
+      headers: {
+        ...headers,
+        ...(isTedV3SearchUrl(config.baseUrl)
+          ? { "Content-Type": "application/json" }
+          : {}),
+      },
+      ...(isTedV3SearchUrl(config.baseUrl)
+        ? {
+            body: JSON.stringify({
+              query: "*",
+              limit: 60,
+              page: 1,
+              fields: [
+                "publication-number",
+                "BT-21-Notice",
+                "publication-date",
+              ],
+            }),
+          }
+        : {}),
       signal: AbortSignal.timeout(config.timeoutMs),
     });
 
@@ -181,6 +412,10 @@ export async function fetchLiveTedSnapshotStrict(
     }
 
     const payload = (await response.json()) as unknown;
+
+    if (isTedV3SearchUrl(config.baseUrl)) {
+      return buildLiveSnapshotFromTedV3(payload, windowDays, config.baseUrl);
+    }
 
     // Accept either a direct snapshot or an envelope with snapshot key.
     if (isTedSnapshot(payload)) {

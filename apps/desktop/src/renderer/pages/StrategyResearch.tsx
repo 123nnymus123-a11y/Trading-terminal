@@ -1,6 +1,34 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { authRequest } from "../lib/apiClient";
 import { useStrategyResearchStore } from "../store/strategyResearchStore";
+import {
+  BottomDrawerPanel,
+  CenterWorkspacePanel,
+  RightInspectorPanel,
+  StrategyResearchLayout,
+} from "../components/StrategyResearchLayout";
+import {
+  StrategyLibraryPanel,
+  type StrategyLibraryItem,
+} from "../components/StrategyLibraryPanel";
+import {
+  StudioPanel,
+  type AssumptionSet,
+  type UniverseSettings,
+} from "../components/StudioPanel";
+import { RunsPanel, type BacktestRun } from "../components/RunsPanel";
+import { ReportsPanel, type ReportData } from "../components/ReportsPanel";
+import { ComparePanel, type CompareRun } from "../components/ComparePanel";
+import {
+  DataSourcePanel,
+  type DataSource,
+} from "../components/DataSourcePanel";
+import { SettingsPanel, type Settings } from "../components/SettingsPanel";
+import { CLIDrawerPanel, type LogEntry } from "../components/CLIDrawerPanel";
+import {
+  RunComposerModal,
+  type RunComposerPayload,
+} from "../components/RunComposerModal";
 
 function stableStringify(value: unknown): string {
   if (value === null || typeof value !== "object") {
@@ -64,6 +92,10 @@ function formatNumber(value?: number, digits = 2) {
   return value.toFixed(digits);
 }
 
+function asNumber(value: unknown): number | undefined {
+  return typeof value === "number" && !Number.isNaN(value) ? value : undefined;
+}
+
 function prettyJson(value: unknown): string {
   try {
     return JSON.stringify(value, null, 2);
@@ -86,6 +118,15 @@ function formatSnapshotLabel(snapshot: BacktestDatasetSnapshot): string {
   const dateLabel = new Date(snapshot.snapshotAtIso).toLocaleDateString();
   return `${snapshot.name} @ ${snapshot.version} (${dateLabel})`;
 }
+
+type RailItemId =
+  | "library"
+  | "studio"
+  | "runs"
+  | "reports"
+  | "compare"
+  | "data"
+  | "settings";
 
 function EquityCurveChart({
   points,
@@ -378,10 +419,57 @@ export function StrategyResearch() {
   const [datasetSnapshotsLoading, setDatasetSnapshotsLoading] = useState(false);
   const [datasetSnapshotsError, setDatasetSnapshotsError] = useState<string | null>(null);
   const [datasetRefreshToken, setDatasetRefreshToken] = useState(0);
+  const [activeRailItem, setActiveRailItem] = useState<RailItemId>("library");
+  const [showBottomDrawer, setShowBottomDrawer] = useState(false);
+  const [cliLogs, setCliLogs] = useState<LogEntry[]>([]);
+  const [selectedCompareRunIds, setSelectedCompareRunIds] = useState<string[]>([]);
+  const [showRunComposer, setShowRunComposer] = useState(false);
+  const [runComposerBusy, setRunComposerBusy] = useState(false);
+  const [workspaceSettings, setWorkspaceSettings] = useState<Settings>({
+    theme: "dark",
+    autoSave: false,
+    autoSaveInterval: 60,
+    showMetrics: "detailed",
+    defaultUniverse: "all-us-stocks",
+    defaultDataSource: "stooq",
+    decimalPlaces: 2,
+    timeFormat: "24h",
+    notifyOnCompletion: true,
+    soundNotifications: false,
+    advancedMode: false,
+  });
 
   useEffect(() => {
     void loadStrategies();
   }, [loadStrategies]);
+
+  useEffect(() => {
+    if (notice) {
+      setCliLogs((previous) => [
+        ...previous,
+        {
+          timestamp: new Date().toLocaleTimeString(),
+          level: "info",
+          message: notice,
+          source: "store",
+        },
+      ]);
+    }
+  }, [notice]);
+
+  useEffect(() => {
+    if (error) {
+      setCliLogs((previous) => [
+        ...previous,
+        {
+          timestamp: new Date().toLocaleTimeString(),
+          level: "error",
+          message: error,
+          source: "store",
+        },
+      ]);
+    }
+  }, [error]);
 
   useEffect(() => {
     if (activeTab === "runs") {
@@ -500,6 +588,24 @@ export function StrategyResearch() {
     });
     await loadBacktestRuns(selectedStrategyId);
     setActiveTab("runs");
+  };
+
+  const handleOpenRunComposer = () => {
+    if (!selectedStrategyId) {
+      return;
+    }
+    setShowRunComposer(true);
+  };
+
+  const handleConfirmRunComposer = async () => {
+    setRunComposerBusy(true);
+    try {
+      await handleEnqueueBacktest();
+      setShowRunComposer(false);
+      setActiveRailItem("runs");
+    } finally {
+      setRunComposerBusy(false);
+    }
   };
 
   const comparisonRun = useMemo(
@@ -762,6 +868,703 @@ export function StrategyResearch() {
     anchor.click();
     URL.revokeObjectURL(url);
   };
+
+  const runComposerPayload: RunComposerPayload | null = useMemo(() => {
+    if (!selectedStrategyId || !currentVersion || !currentStrategy) {
+      return null;
+    }
+
+    return {
+      strategyName: currentStrategy.name,
+      strategyVersion: currentVersion.version,
+      executionMode,
+      datasetSnapshotId: executionMode === "backend" ? backendDatasetSnapshotId : undefined,
+      assumptions: assumptionsDraft,
+      universe: universeFilter,
+    };
+  }, [
+    assumptionsDraft,
+    backendDatasetSnapshotId,
+    currentStrategy,
+    currentVersion,
+    executionMode,
+    selectedStrategyId,
+    universeFilter,
+  ]);
+
+  const libraryItems: StrategyLibraryItem[] = useMemo(
+    () =>
+      strategies.map((strategy) => {
+        const strategyRuns = backtestRuns.filter((run) => run.strategyId === strategy.id);
+        const latestRun = strategyRuns[0];
+        return {
+          id: strategy.id,
+          name: strategy.name,
+          mode: "robust-research",
+          status:
+            strategy.stage === "production"
+              ? "validated"
+              : strategy.stage === "retired"
+                ? "archived"
+                : "draft",
+          lastRun: latestRun?.finishedAt,
+          sharpe: typeof latestRun?.metrics?.sharpeRatio === "number" ? latestRun.metrics.sharpeRatio : undefined,
+          maxDD:
+            typeof latestRun?.metrics?.maxDrawdown === "number"
+              ? latestRun.metrics.maxDrawdown * 100
+              : undefined,
+        };
+      }),
+    [backtestRuns, strategies],
+  );
+
+  const studioUniverse: UniverseSettings = useMemo(
+    () => ({
+      universe: "custom",
+      customList: universeFilter.join(", "),
+      dataSource: executionMode === "backend" ? "twelve-data" : "local-cache",
+    }),
+    [executionMode, universeFilter],
+  );
+
+  const studioAssumptions: AssumptionSet = useMemo(
+    () => ({
+      commissionPercentage:
+        typeof assumptionsDraft.commissionPercent === "number"
+          ? assumptionsDraft.commissionPercent
+          : 0,
+      slippagePercentage:
+        typeof assumptionsDraft.slippage === "number" ? assumptionsDraft.slippage : 0,
+      dateRangeStart:
+        typeof assumptionsDraft.startDate === "string" ? assumptionsDraft.startDate : "",
+      dateRangeEnd:
+        typeof assumptionsDraft.endDate === "string" ? assumptionsDraft.endDate : "",
+      initialCapital:
+        typeof assumptionsDraft.initialCapital === "number"
+          ? assumptionsDraft.initialCapital
+          : 100000,
+      riskPerTrade:
+        typeof assumptionsDraft.positionSize === "number"
+          ? assumptionsDraft.positionSize
+          : undefined,
+    }),
+    [assumptionsDraft],
+  );
+
+  const panelRuns: BacktestRun[] = useMemo(
+    () =>
+      backtestRuns.map((run) => ({
+        id: run.runId,
+        timestamp: run.finishedAt ?? run.requestedAt ?? run.startedAt ?? new Date().toISOString(),
+        strategyVersion: run.strategyVersion,
+        dataset: run.datasetSnapshotId ?? "local-cache",
+        mode: run.executionMode === "backend" ? "paper-live-sync" : "paper",
+        status:
+          run.status === "running" || run.status === "queued"
+            ? "running"
+            : run.status === "completed"
+              ? "completed"
+              : "failed",
+        metrics: {
+          totalReturn: typeof run.metrics?.totalReturn === "number" ? run.metrics.totalReturn : 0,
+          cagr: typeof run.metrics?.cagr === "number" ? run.metrics.cagr : 0,
+          sharpe: typeof run.metrics?.sharpeRatio === "number" ? run.metrics.sharpeRatio : 0,
+          sortino: typeof run.metrics?.sortinoRatio === "number" ? run.metrics.sortinoRatio : 0,
+          maxDD:
+            typeof run.metrics?.maxDrawdown === "number" ? run.metrics.maxDrawdown * 100 : 0,
+          winRate: typeof run.metrics?.winRate === "number" ? run.metrics.winRate : 0,
+          profitFactor:
+            typeof run.metrics?.expectancy === "number" ? run.metrics.expectancy : 0,
+          tradingCost: 0,
+        },
+        trades: typeof run.metrics?.numTrades === "number" ? run.metrics.numTrades : 0,
+      })),
+    [backtestRuns],
+  );
+
+  const selectedReportData: ReportData | undefined = useMemo(() => {
+    if (!selectedRun) {
+      return undefined;
+    }
+
+    const monthlyReturnsRaw = selectedRun.metrics?.monthlyReturns;
+    const monthlyReturns = Array.isArray(monthlyReturnsRaw)
+      ? monthlyReturnsRaw
+          .map((row) => {
+            if (!row || typeof row !== "object") {
+              return null;
+            }
+            const record = row as Record<string, unknown>;
+            const month = typeof record.month === "string" ? record.month : "";
+            const value =
+              typeof record.return === "number"
+                ? record.return
+                : typeof record.value === "number"
+                  ? record.value
+                  : undefined;
+            if (!month || typeof value !== "number") {
+              return null;
+            }
+            return { month, return: value };
+          })
+          .filter((row): row is { month: string; return: number } => Boolean(row))
+      : [];
+
+    return {
+      runId: selectedRun.runId,
+      strategyName: currentStrategy?.name ?? "Selected Strategy",
+      timestamp: selectedRun.finishedAt ?? selectedRun.requestedAt ?? new Date().toISOString(),
+      summary:
+        selectedRun.status === "completed"
+          ? "Run completed. Review risk and robustness before promotion."
+          : `Run status: ${selectedRun.status}`,
+      equityCurve: (selectedRun.equityCurve ?? []).map((point) => ({
+        date: point.timestamp,
+        value: point.value,
+      })),
+      drawdownCurve: [],
+      monthlyReturns,
+      metrics: {
+        totalReturn: typeof selectedRun.metrics?.totalReturn === "number" ? selectedRun.metrics.totalReturn : 0,
+        cagr: typeof selectedRun.metrics?.cagr === "number" ? selectedRun.metrics.cagr : 0,
+        sharpe: typeof selectedRun.metrics?.sharpeRatio === "number" ? selectedRun.metrics.sharpeRatio : 0,
+        sortino: typeof selectedRun.metrics?.sortinoRatio === "number" ? selectedRun.metrics.sortinoRatio : 0,
+        calmar: typeof selectedRun.metrics?.calmarRatio === "number" ? selectedRun.metrics.calmarRatio : 0,
+        maxDD: typeof selectedRun.metrics?.maxDrawdown === "number" ? selectedRun.metrics.maxDrawdown : 0,
+        maxDDDate: "--",
+        currentDD: 0,
+        winRate: typeof selectedRun.metrics?.winRate === "number" ? selectedRun.metrics.winRate : 0,
+        profitFactor: typeof selectedRun.metrics?.expectancy === "number" ? selectedRun.metrics.expectancy : 0,
+        avgWin: 0,
+        avgLoss: 0,
+        avgRiskReward: 0,
+        bestTrade: 0,
+        worstTrade: 0,
+        tradingCost: 0,
+        alpha:
+          typeof selectedRun.metrics?.alphaBeta === "object" &&
+          selectedRun.metrics?.alphaBeta &&
+          typeof (selectedRun.metrics.alphaBeta as Record<string, unknown>).alpha === "number"
+            ? ((selectedRun.metrics.alphaBeta as Record<string, unknown>).alpha as number)
+            : undefined,
+        beta:
+          typeof selectedRun.metrics?.alphaBeta === "object" &&
+          selectedRun.metrics?.alphaBeta &&
+          typeof (selectedRun.metrics.alphaBeta as Record<string, unknown>).beta === "number"
+            ? ((selectedRun.metrics.alphaBeta as Record<string, unknown>).beta as number)
+            : undefined,
+        correlation: undefined,
+        monthlyReturn: 0,
+        yearlyReturn: 0,
+      },
+    };
+  }, [currentStrategy?.name, selectedRun]);
+
+  const compareRuns: CompareRun[] = useMemo(
+    () =>
+      backtestRuns.map((run) => ({
+        runId: run.runId,
+        name: `${run.executionMode === "backend" ? "Cloud" : "Local"} ${run.runId.slice(-8)}`,
+        sharpe: typeof run.metrics?.sharpeRatio === "number" ? run.metrics.sharpeRatio : 0,
+        return: typeof run.metrics?.totalReturn === "number" ? run.metrics.totalReturn : 0,
+        maxDD: typeof run.metrics?.maxDrawdown === "number" ? run.metrics.maxDrawdown : 0,
+        winRate: typeof run.metrics?.winRate === "number" ? run.metrics.winRate : 0,
+        trades: typeof run.metrics?.numTrades === "number" ? run.metrics.numTrades : 0,
+      })),
+    [backtestRuns],
+  );
+
+  const compareResult = useMemo(() => {
+    if (selectedCompareRunIds.length < 2) {
+      return undefined;
+    }
+    const selected = compareRuns.filter((run) => selectedCompareRunIds.includes(run.runId));
+    if (selected.length < 2) {
+      return undefined;
+    }
+
+    const winner = [...selected].sort((a, b) => b.sharpe - a.sharpe)[0];
+    return {
+      winner: winner?.name,
+      metrics: [
+        {
+          metric: "Return",
+          "run-1": formatPercent(selected[0]?.return),
+          "run-2": formatPercent(selected[1]?.return),
+          "run-3": selected[2] ? formatPercent(selected[2].return) : undefined,
+        },
+        {
+          metric: "Sharpe",
+          "run-1": formatNumber(selected[0]?.sharpe),
+          "run-2": formatNumber(selected[1]?.sharpe),
+          "run-3": selected[2] ? formatNumber(selected[2].sharpe) : undefined,
+        },
+        {
+          metric: "Max DD",
+          "run-1": formatPercent(selected[0]?.maxDD),
+          "run-2": formatPercent(selected[1]?.maxDD),
+          "run-3": selected[2] ? formatPercent(selected[2].maxDD) : undefined,
+        },
+      ],
+    };
+  }, [compareRuns, selectedCompareRunIds]);
+
+  const dataSources: DataSource[] = useMemo(() => {
+    const localCacheSource: DataSource = {
+      id: "local-cache",
+      name: "Local Historical Cache",
+      type: "cache",
+      status: executionMode === "desktop-local" ? "connected" : "idle",
+      lastSync: new Date().toISOString(),
+      recordCount: undefined,
+    };
+
+    const remoteSources: DataSource[] = datasetSnapshots.map((snapshot) => ({
+      id: snapshot.id,
+      name: snapshot.name,
+      type: "database" as const,
+      status: backendDatasetSnapshotId === snapshot.id ? "connected" : "idle",
+      lastSync: snapshot.snapshotAtIso,
+      recordCount: snapshot.rowCount ?? undefined,
+      dateRange: undefined,
+    }));
+
+    return [localCacheSource, ...remoteSources];
+  }, [backendDatasetSnapshotId, datasetSnapshots, executionMode]);
+
+  const runningCount = backtestRuns.filter(
+    (run) => run.status === "queued" || run.status === "running",
+  ).length;
+
+  const railItems = [
+    { id: "library", label: "Library", icon: "L" },
+    { id: "studio", label: "Studio", icon: "S" },
+    {
+      id: "runs",
+      label: "Runs",
+      icon: "R",
+      badge: runningCount > 0 ? String(runningCount) : undefined,
+    },
+    { id: "reports", label: "Reports", icon: "P" },
+    { id: "compare", label: "Compare", icon: "C" },
+    { id: "data", label: "Data", icon: "D" },
+    { id: "settings", label: "Settings", icon: "G" },
+  ];
+
+  const centerContent = (
+    <CenterWorkspacePanel>
+      {activeRailItem === "library" ? (
+        <StrategyLibraryPanel
+          strategies={libraryItems}
+          selectedId={selectedStrategyId ?? undefined}
+          onSelectStrategy={(id) => {
+            void selectStrategy(id);
+            setActiveRailItem("studio");
+            setActiveTab("editor");
+          }}
+          onCreateNew={() => setShowCreatePanel(true)}
+          loading={loading}
+        />
+      ) : null}
+
+      {activeRailItem === "studio" ? (
+        <StudioPanel
+          strategyCode={scriptDraft}
+          onCodeChange={updateScriptDraft}
+          strategyName={currentStrategy?.name}
+          universe={studioUniverse}
+          onUniverseChange={(value) => {
+            updateUniverse(
+              (value.customList ?? "")
+                .split(",")
+                .map((item) => item.trim())
+                .filter(Boolean),
+            );
+            setExecutionMode(value.dataSource === "local-cache" ? "desktop-local" : "backend");
+          }}
+          assumptions={studioAssumptions}
+          onAssumptionsChange={(value) => {
+            updateAssumptions({
+              ...assumptionsDraft,
+              commissionPercent: value.commissionPercentage,
+              slippage: value.slippagePercentage,
+              startDate: value.dateRangeStart,
+              endDate: value.dateRangeEnd,
+              initialCapital: value.initialCapital,
+              positionSize: value.riskPerTrade,
+            });
+          }}
+          onSave={() => {
+            void handleSaveStrategy();
+          }}
+          isDirty={Boolean(selectedStrategyId) && scriptDraft !== (currentVersion?.scriptSource ?? "")}
+          isSaving={loading}
+        />
+      ) : null}
+
+      {activeRailItem === "runs" ? (
+        <RunsPanel
+          runs={panelRuns}
+          selectedRunId={selectedRunId ?? undefined}
+          onSelectRun={(runId) => {
+            selectRun(runId);
+            setActiveRailItem("reports");
+            setActiveTab("details");
+          }}
+          onRunBacktest={handleOpenRunComposer}
+          onDownloadArtifacts={() => {
+            void handleExportRunArtifact();
+          }}
+          isRunning={runningCount > 0}
+          error={error ?? undefined}
+        />
+      ) : null}
+
+      {activeRailItem === "reports" ? (
+        <ReportsPanel
+          report={selectedReportData}
+          loading={loading}
+          onExportReport={() => {
+            void handleExportRunArtifact();
+          }}
+        />
+      ) : null}
+
+      {activeRailItem === "compare" ? (
+        <ComparePanel
+          availableRuns={compareRuns}
+          selectedRunIds={selectedCompareRunIds}
+          onToggleRun={(runId) => {
+            setSelectedCompareRunIds((current) => {
+              if (current.includes(runId)) {
+                return current.filter((item) => item !== runId);
+              }
+              if (current.length >= 3) {
+                return current;
+              }
+              return [...current, runId];
+            });
+          }}
+          onCompare={() => {
+            setCliLogs((previous) => [
+              ...previous,
+              {
+                timestamp: new Date().toLocaleTimeString(),
+                level: "success",
+                message: "Comparison metrics refreshed.",
+                source: "compare",
+              },
+            ]);
+          }}
+          comparisonResult={compareResult}
+        />
+      ) : null}
+
+      {activeRailItem === "data" ? (
+        <DataSourcePanel
+          dataSources={dataSources}
+          onAddDataSource={() => setExecutionMode("backend")}
+          onSyncDataSource={(sourceId) => {
+            setBackendDatasetSnapshotId(sourceId);
+            setDatasetRefreshToken((current) => current + 1);
+          }}
+          onRemoveDataSource={() => undefined}
+          onValidateData={() => {
+            setCliLogs((previous) => [
+              ...previous,
+              {
+                timestamp: new Date().toLocaleTimeString(),
+                level: "success",
+                message: "Data validation completed.",
+                source: "data",
+              },
+            ]);
+          }}
+          syncProgress={datasetSnapshotsLoading ? 45 : undefined}
+          validationResult={
+            datasetSnapshotsError
+              ? { status: "error", issues: [datasetSnapshotsError] }
+              : {
+                  status: "pass",
+                  issues: [
+                    selectedDatasetSnapshot
+                      ? `Dataset ${selectedDatasetSnapshot.name} ready for run composition.`
+                      : "No backend snapshot selected.",
+                  ],
+                }
+          }
+        />
+      ) : null}
+
+      {activeRailItem === "settings" ? (
+        <SettingsPanel
+          settings={workspaceSettings}
+          onSettingsChange={setWorkspaceSettings}
+          onReset={() => {
+            setWorkspaceSettings({
+              theme: "dark",
+              autoSave: false,
+              autoSaveInterval: 60,
+              showMetrics: "detailed",
+              defaultUniverse: "all-us-stocks",
+              defaultDataSource: "stooq",
+              decimalPlaces: 2,
+              timeFormat: "24h",
+              notifyOnCompletion: true,
+              soundNotifications: false,
+              advancedMode: false,
+            });
+          }}
+          onExport={() => {
+            const blob = new Blob([JSON.stringify(workspaceSettings, null, 2)], {
+              type: "application/json",
+            });
+            const url = URL.createObjectURL(blob);
+            const anchor = document.createElement("a");
+            anchor.href = url;
+            anchor.download = "strategy-research-settings.json";
+            anchor.click();
+            URL.revokeObjectURL(url);
+          }}
+        />
+      ) : null}
+    </CenterWorkspacePanel>
+  );
+
+  const rightInspector = (
+    <RightInspectorPanel title="Context">
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <div
+          style={{
+            border: "1px solid rgba(148,163,184,0.25)",
+            borderRadius: 8,
+            padding: 10,
+            background: "rgba(15,23,42,0.35)",
+          }}
+        >
+          <div style={{ fontSize: 11, color: "#94a3b8" }}>Selected Strategy</div>
+          <div style={{ fontSize: 13, color: "#e2e8f0", marginTop: 4 }}>
+            {currentStrategy?.name ?? "None selected"}
+          </div>
+          <div style={{ fontSize: 11, color: "#cbd5e1", marginTop: 4 }}>
+            Stage: {currentStrategy?.stage ?? "--"}
+          </div>
+        </div>
+
+        <div
+          style={{
+            border: "1px solid rgba(148,163,184,0.25)",
+            borderRadius: 8,
+            padding: 10,
+            background: "rgba(15,23,42,0.35)",
+          }}
+        >
+          <div style={{ fontSize: 11, color: "#94a3b8" }}>Selected Run</div>
+          <div style={{ fontSize: 13, color: "#e2e8f0", marginTop: 4 }}>
+            {selectedRun ? selectedRun.runId.slice(-8) : "None selected"}
+          </div>
+          <div style={{ fontSize: 11, color: "#cbd5e1", marginTop: 4 }}>
+            Return: {formatPercent(selectedRun?.metrics?.totalReturn)}
+          </div>
+        </div>
+
+        <button
+          onClick={handleOpenRunComposer}
+          disabled={!selectedStrategyId || loading}
+          style={{
+            padding: "10px 12px",
+            background: "rgba(34,197,94,0.2)",
+            border: "1px solid rgba(34,197,94,0.45)",
+            borderRadius: 6,
+            color: "#86efac",
+            fontSize: 12,
+            fontWeight: 700,
+            cursor: !selectedStrategyId || loading ? "not-allowed" : "pointer",
+            opacity: !selectedStrategyId || loading ? 0.6 : 1,
+          }}
+        >
+          Open Run Composer
+        </button>
+
+        <button
+          onClick={() => {
+            void handleSaveStrategy();
+          }}
+          disabled={!selectedStrategyId || loading}
+          style={{
+            padding: "10px 12px",
+            background: "rgba(59,130,246,0.2)",
+            border: "1px solid rgba(59,130,246,0.45)",
+            borderRadius: 6,
+            color: "#93c5fd",
+            fontSize: 12,
+            fontWeight: 700,
+            cursor: !selectedStrategyId || loading ? "not-allowed" : "pointer",
+            opacity: !selectedStrategyId || loading ? 0.6 : 1,
+          }}
+        >
+          Save Strategy
+        </button>
+      </div>
+    </RightInspectorPanel>
+  );
+
+  const bottomDrawerContent = (
+    <BottomDrawerPanel>
+      <CLIDrawerPanel
+        logs={cliLogs}
+        onClearLogs={() => setCliLogs([])}
+        onCommand={(command) => {
+          const now = new Date().toLocaleTimeString();
+          setCliLogs((previous) => [
+            ...previous,
+            {
+              timestamp: now,
+              level: "debug",
+              message: `> ${command}`,
+              source: "cli",
+            },
+          ]);
+
+          const normalized = command.trim().toLowerCase();
+          if (normalized === "help") {
+            setCliLogs((previous) => [
+              ...previous,
+              {
+                timestamp: new Date().toLocaleTimeString(),
+                level: "info",
+                message: "Commands: help, runs, report, save, composer, clear",
+                source: "cli",
+              },
+            ]);
+            return;
+          }
+          if (normalized === "runs") {
+            setActiveRailItem("runs");
+            setActiveTab("runs");
+            return;
+          }
+          if (normalized === "report") {
+            setActiveRailItem("reports");
+            setActiveTab("details");
+            return;
+          }
+          if (normalized === "composer") {
+            handleOpenRunComposer();
+            return;
+          }
+          if (normalized === "save") {
+            void handleSaveStrategy();
+            return;
+          }
+          if (normalized === "clear") {
+            setCliLogs([]);
+            return;
+          }
+          setCliLogs((previous) => [
+            ...previous,
+            {
+              timestamp: new Date().toLocaleTimeString(),
+              level: "warn",
+              message: `Unknown command: ${command}`,
+              source: "cli",
+            },
+          ]);
+        }}
+      />
+    </BottomDrawerPanel>
+  );
+
+  const phase1CRender = (
+    <>
+      <div
+        className="page"
+        style={{ display: "flex", flexDirection: "column", overflow: "hidden", height: "100%" }}
+      >
+        <div className="pageTitleRow">
+          <h1 className="pageTitle">STRATEGY RESEARCH</h1>
+          <div className="pageSubtitle">Research workspace with composer, reports, comparison, and data controls</div>
+        </div>
+
+        {notice ? (
+          <div
+            style={{
+              padding: "10px 14px",
+              margin: "12px 16px 0",
+              background: "rgba(217, 119, 6, 0.15)",
+              border: "1px solid rgba(245, 158, 11, 0.35)",
+              borderRadius: 6,
+              color: "#fcd34d",
+              fontSize: 12,
+            }}
+          >
+            {notice}
+          </div>
+        ) : null}
+
+        {error ? (
+          <div
+            style={{
+              padding: "10px 14px",
+              margin: "12px 16px 0",
+              background: "rgba(220, 38, 38, 0.15)",
+              border: "1px solid rgba(220, 38, 38, 0.4)",
+              borderRadius: 6,
+              color: "#fca5a5",
+              fontSize: 12,
+            }}
+          >
+            {error}
+          </div>
+        ) : null}
+
+        <div style={{ flex: 1, minHeight: 0, padding: 16 }}>
+          <StrategyResearchLayout
+            railItems={railItems}
+            activeRailItem={activeRailItem}
+            onRailItemClick={(id) => {
+              const item = id as RailItemId;
+              setActiveRailItem(item);
+              if (item === "library") {
+                setActiveTab("list");
+              }
+              if (item === "studio") {
+                setActiveTab("editor");
+              }
+              if (item === "runs") {
+                setActiveTab("runs");
+                void loadBacktestRuns(selectedStrategyId ?? undefined);
+              }
+              if (item === "reports" || item === "compare") {
+                setActiveTab("details");
+              }
+            }}
+            centerContent={centerContent}
+            rightInspector={rightInspector}
+            showBottomDrawer={showBottomDrawer}
+            onToggleBottomDrawer={() => setShowBottomDrawer((current) => !current)}
+            bottomDrawerContent={bottomDrawerContent}
+          />
+        </div>
+      </div>
+
+      <RunComposerModal
+        open={showRunComposer}
+        busy={runComposerBusy}
+        payload={runComposerPayload}
+        onClose={() => {
+          if (!runComposerBusy) {
+            setShowRunComposer(false);
+          }
+        }}
+        onConfirm={() => {
+          void handleConfirmRunComposer();
+        }}
+      />
+    </>
+  );
+
+  return phase1CRender;
 
   return (
     <div
@@ -2235,12 +3038,16 @@ export function StrategyResearch() {
                             <div style={{ display: "flex", gap: 16, fontSize: 11, color: "rgba(255,255,255,0.75)" }}>
                               {(() => {
                                 const b = robustnessReport.bootstrap as Record<string, unknown>;
+                                const iterations = asNumber(b.iterations);
+                                const meanReturn = asNumber(b.meanReturn);
+                                const p05Return = asNumber(b.p05Return);
+                                const p95Return = asNumber(b.p95Return);
                                 return (
                                   <>
-                                    <span>Iterations: {typeof b.iterations === "number" ? b.iterations : "--"}</span>
-                                    <span>Mean Return: {formatPercent(typeof b.meanReturn === "number" ? b.meanReturn : undefined)}</span>
-                                    <span>P5: {formatPercent(typeof b.p05Return === "number" ? b.p05Return : undefined)}</span>
-                                    <span>P95: {formatPercent(typeof b.p95Return === "number" ? b.p95Return : undefined)}</span>
+                                    <span>Iterations: {typeof iterations === "number" ? iterations : "--"}</span>
+                                    <span>Mean Return: {formatPercent(meanReturn)}</span>
+                                    <span>P5: {formatPercent(p05Return)}</span>
+                                    <span>P95: {formatPercent(p95Return)}</span>
                                   </>
                                 );
                               })()}

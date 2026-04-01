@@ -324,7 +324,13 @@ declare global {
           windowDays: 7 | 30,
           limit?: number,
         ) => Promise<SectorTheme[]>;
-        getCandidates?: (themeId: number) => Promise<WatchlistCandidate[]>;
+        getCandidates?: (
+          themeId: number,
+          options?: {
+            minPriority?: "critical" | "high" | "medium" | "low";
+            minConfidence?: number;
+          },
+        ) => Promise<WatchlistCandidate[]>;
         getValuations?: (
           tickers: string[],
         ) => Promise<Record<string, ValuationTag>>;
@@ -527,7 +533,7 @@ declare global {
           credentials?: Record<string, string>,
         ) => Promise<{ ok: boolean; message: string }>;
         getCotSummary?: (symbols: string[]) => Promise<any[]>;
-        getJoltsSeries?: () => Promise<any[]>;
+        getJoltsSeries?: (opts?: { forceRefresh?: boolean }) => Promise<any[]>;
         getSecEvents?: (params: {
           tickers?: string[];
           limit?: number;

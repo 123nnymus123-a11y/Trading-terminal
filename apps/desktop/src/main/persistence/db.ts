@@ -3,7 +3,7 @@ import path from "node:path";
 import fs from "node:fs";
 import { app } from "electron";
 
-const DEFAULT_BACKEND_URL = "http://79.76.40.72:8787";
+const DEFAULT_BACKEND_URL = "http://localhost:8787";
 const BASELINE_SCHEMA_VERSION = 0;
 const LATEST_SCHEMA_VERSION = 5;
 

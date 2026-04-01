@@ -57,8 +57,7 @@ import {
   type LocalStrategyVersionRecord,
 } from "./persistence/strategyResearchRepo";
 
-const PRODUCTION_BACKEND_URL = "http://79.76.40.72:8787";
-const DEV_BACKEND_FALLBACK_URL = "http://localhost:8787";
+const DEFAULT_BACKEND_FALLBACK_URL = "http://localhost:8787";
 
 // Global error handlers
 process.on("uncaughtException", (err) => {
@@ -249,24 +248,32 @@ function ensurePersistedBackendUrl(): string {
     return existing;
   }
 
+  const defaultUrl = getConfiguredDefaultBackendUrl();
   const settings = AppSettingsRepo.get();
-  AppSettingsRepo.set({ ...settings, backendUrl: PRODUCTION_BACKEND_URL });
-  return PRODUCTION_BACKEND_URL;
+  AppSettingsRepo.set({ ...settings, backendUrl: defaultUrl });
+  return defaultUrl;
+}
+
+function getConfiguredDefaultBackendUrl(): string {
+  const envCandidate =
+    process.env.BACKEND_URL ||
+    process.env.TC_BACKEND_URL ||
+    process.env.VITE_BACKEND_URL ||
+    process.env.VITE_TC_BACKEND_URL;
+  const normalizedEnv = envCandidate ? normalizeBackendUrl(envCandidate) : null;
+  return normalizedEnv ?? DEFAULT_BACKEND_FALLBACK_URL;
 }
 
 // Get backend URL from environment or use default
 const getBackendUrl = (): string => {
-  if (isDev) {
-    const envCandidate =
-      process.env.BACKEND_URL ||
-      process.env.VITE_BACKEND_URL ||
-      process.env.VITE_TC_BACKEND_URL;
-    const normalizedEnv = envCandidate
-      ? normalizeBackendUrl(envCandidate)
-      : null;
-    if (normalizedEnv) {
-      return normalizedEnv;
-    }
+  const envCandidate =
+    process.env.BACKEND_URL ||
+    process.env.TC_BACKEND_URL ||
+    process.env.VITE_BACKEND_URL ||
+    process.env.VITE_TC_BACKEND_URL;
+  const normalizedEnv = envCandidate ? normalizeBackendUrl(envCandidate) : null;
+  if (normalizedEnv) {
+    return normalizedEnv;
   }
 
   const persisted = getPersistedBackendUrl();
@@ -274,7 +281,7 @@ const getBackendUrl = (): string => {
     return persisted;
   }
 
-  return isDev ? DEV_BACKEND_FALLBACK_URL : PRODUCTION_BACKEND_URL;
+  return DEFAULT_BACKEND_FALLBACK_URL;
 };
 
 function rebuildBackendApiClient(): void {
@@ -1562,9 +1569,12 @@ app.whenReady().then(async () => {
         return externalFeeds.getCotSummary(symbols ?? []);
       },
     );
-    ipcMain.handle("externalFeeds:getJoltsSeries", async () => {
-      return externalFeeds.getJoltsSeries();
-    });
+    ipcMain.handle(
+      "externalFeeds:getJoltsSeries",
+      async (_e, opts?: { forceRefresh?: boolean }) => {
+        return externalFeeds.getJoltsSeries(opts);
+      },
+    );
     ipcMain.handle(
       "externalFeeds:getSecEvents",
       async (_e, params: { tickers?: string[]; limit?: number }) => {
@@ -2128,21 +2138,33 @@ app.whenReady().then(async () => {
       },
     );
 
-    ipcMain.handle("publicFlow:getCandidates", async (_e, themeId: number) => {
-      if (backendApiClient) {
-        try {
-          const response =
-            await backendApiClient.publicFlowGetCandidates(themeId);
-          return response.items ?? [];
-        } catch (error) {
-          if (!canUseLocalFallback()) {
-            throw error;
+    ipcMain.handle(
+      "publicFlow:getCandidates",
+      async (
+        _e,
+        themeId: number,
+        options?: {
+          minPriority?: "critical" | "high" | "medium" | "low";
+          minConfidence?: number;
+        },
+      ) => {
+        if (backendApiClient) {
+          try {
+            const response = await backendApiClient.publicFlowGetCandidates(
+              themeId,
+              options,
+            );
+            return response.items ?? [];
+          } catch (error) {
+            if (!canUseLocalFallback()) {
+              throw error;
+            }
           }
         }
-      }
 
-      return getWatchlistCandidates(themeId);
-    });
+        return getWatchlistCandidates(themeId, options);
+      },
+    );
 
     ipcMain.handle(
       "publicFlow:getValuations",

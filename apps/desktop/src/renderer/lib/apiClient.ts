@@ -6,7 +6,7 @@ export type AuthSession = {
     id: string;
     email: string;
     username?: string;
-    tier: 'starter' | 'pro' | 'enterprise';
+    tier: "starter" | "pro" | "enterprise";
     licenseKey: string;
   };
 };
@@ -25,19 +25,19 @@ export type SignupPayload = {
   licenseKey: string;
 };
 
-const TENANT_ID_STORAGE_KEY = 'tc.tenant.id.v1';
-const PRODUCTION_BACKEND_URL = 'http://79.76.40.72:8787';
+const TENANT_ID_STORAGE_KEY = "tc.tenant.id.v1";
+const DEFAULT_BACKEND_FALLBACK_URL = "http://localhost:8787";
 let inMemorySession: AuthSession | null = null;
-let backendBaseUrl = PRODUCTION_BACKEND_URL;
+let backendBaseUrl = DEFAULT_BACKEND_FALLBACK_URL;
 
 function normalizeBackendUrl(value: string): string {
-  return value.trim().replace(/\/+$/, '');
+  return value.trim().replace(/\/+$/, "");
 }
 
 export async function refreshBackendBaseUrl(): Promise<string> {
   try {
     const fromIpc = await window.cockpit?.journal?.backendUrlGet?.();
-    if (typeof fromIpc === 'string' && fromIpc.trim()) {
+    if (typeof fromIpc === "string" && fromIpc.trim()) {
       backendBaseUrl = normalizeBackendUrl(fromIpc);
       return backendBaseUrl;
     }
@@ -45,9 +45,15 @@ export async function refreshBackendBaseUrl(): Promise<string> {
     // Browser mode and early boot can safely fallback.
   }
 
-  const envUrl = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env
-    ?.VITE_TC_BACKEND_URL;
-  backendBaseUrl = normalizeBackendUrl(envUrl && envUrl.trim() ? envUrl : PRODUCTION_BACKEND_URL);
+  const envUrl = (
+    import.meta as ImportMeta & { env?: Record<string, string | undefined> }
+  ).env;
+  const envCandidate = envUrl?.VITE_TC_BACKEND_URL || envUrl?.VITE_BACKEND_URL;
+  backendBaseUrl = normalizeBackendUrl(
+    envCandidate && envCandidate.trim()
+      ? envCandidate
+      : DEFAULT_BACKEND_FALLBACK_URL,
+  );
   return backendBaseUrl;
 }
 
@@ -80,21 +86,24 @@ export function setTenantId(value: string | null) {
 }
 
 function toUrl(path: string) {
-  return `${getBackendBaseUrl()}${path.startsWith('/') ? path : `/${path}`}`;
+  return `${getBackendBaseUrl()}${path.startsWith("/") ? path : `/${path}`}`;
 }
 
-async function requestJson<T>(path: string, init: RequestInit = {}): Promise<T> {
+async function requestJson<T>(
+  path: string,
+  init: RequestInit = {},
+): Promise<T> {
   const response = await fetch(toUrl(path), {
     ...init,
     headers: {
-      'Content-Type': 'application/json',
-      ...(getTenantId() ? { 'x-tenant-id': getTenantId()! } : {}),
+      "Content-Type": "application/json",
+      ...(getTenantId() ? { "x-tenant-id": getTenantId()! } : {}),
       ...(init.headers ?? {}),
     },
   });
 
   if (!response.ok) {
-    const text = await response.text().catch(() => '');
+    const text = await response.text().catch(() => "");
     if (response.status === 401) {
       // Auth endpoints (login/signup/refresh) use 401 for bad credentials — never
       // treat those as session expiry.
@@ -105,8 +114,8 @@ async function requestJson<T>(path: string, init: RequestInit = {}): Promise<T> 
         // {"error":"session_inactive"}. In that case, force a re-auth flow.
         if (isSessionInactive) {
           await writeStoredSession(null).catch(() => {});
-          window.dispatchEvent(new CustomEvent('tc:session-expired'));
-          throw new Error(`api_error:401:${text || 'authentication_required'}`);
+          window.dispatchEvent(new CustomEvent("tc:session-expired"));
+          throw new Error(`api_error:401:${text || "authentication_required"}`);
         }
 
         // Only fire session-expired when there is NO live token in memory.
@@ -118,12 +127,14 @@ async function requestJson<T>(path: string, init: RequestInit = {}): Promise<T> 
           inMemorySession.expiresAtMs > Date.now() + 5_000;
         if (!sessionIsLive) {
           await writeStoredSession(null).catch(() => {});
-          window.dispatchEvent(new CustomEvent('tc:session-expired'));
+          window.dispatchEvent(new CustomEvent("tc:session-expired"));
         }
       }
-      throw new Error(`api_error:401:${text || 'authentication_required'}`);
+      throw new Error(`api_error:401:${text || "authentication_required"}`);
     }
-    throw new Error(`api_error:${response.status}:${text || response.statusText}`);
+    throw new Error(
+      `api_error:${response.status}:${text || response.statusText}`,
+    );
   }
 
   return (await response.json()) as T;
@@ -136,27 +147,29 @@ export async function getRuntimeFlags(): Promise<{
     webPrimaryRouting: boolean;
     requireTenantHeader: boolean;
   };
-  tenant: { tenantId: string; source: 'header' | 'default' | 'user' };
+  tenant: { tenantId: string; source: "header" | "default" | "user" };
 }> {
-  return requestJson('/api/runtime/flags', { method: 'GET' });
+  return requestJson("/api/runtime/flags", { method: "GET" });
 }
 
 function decodeJwtExp(token: string): number | null {
-  const parts = token.split('.');
+  const parts = token.split(".");
   if (parts.length < 2 || !parts[1]) {
     return null;
   }
   try {
-    const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/'))) as {
+    const payload = JSON.parse(
+      atob(parts[1].replace(/-/g, "+").replace(/_/g, "/")),
+    ) as {
       exp?: number;
     };
-    return typeof payload.exp === 'number' ? payload.exp * 1000 : null;
+    return typeof payload.exp === "number" ? payload.exp * 1000 : null;
   } catch {
     return null;
   }
 }
 
-const SESSION_LS_KEY = 'tc.session.v1';
+const SESSION_LS_KEY = "tc.session.v1";
 
 export async function readStoredSession(): Promise<AuthSession | null> {
   if (inMemorySession) {
@@ -166,11 +179,18 @@ export async function readStoredSession(): Promise<AuthSession | null> {
   // Try IPC bridge first (Electron / cockpit)
   try {
     const session = await window.cockpit?.auth?.getSession?.();
-    if (session && session.token && session.refreshToken && session.expiresAtMs) {
+    if (
+      session &&
+      session.token &&
+      session.refreshToken &&
+      session.expiresAtMs
+    ) {
       inMemorySession = session as AuthSession;
       return inMemorySession;
     }
-  } catch { /* bridge unavailable */ }
+  } catch {
+    /* bridge unavailable */
+  }
 
   // Fallback: localStorage persistence for browser mode
   try {
@@ -178,10 +198,10 @@ export async function readStoredSession(): Promise<AuthSession | null> {
     if (raw) {
       const parsed = JSON.parse(raw) as AuthSession;
       // Discard if expired or within 60 s of expiry (avoids refresh-on-load failures)
-    if (
+      if (
         parsed?.token &&
         parsed?.refreshToken &&
-        typeof parsed?.expiresAtMs === 'number' &&
+        typeof parsed?.expiresAtMs === "number" &&
         parsed.expiresAtMs - 60_000 > Date.now()
       ) {
         inMemorySession = parsed;
@@ -190,7 +210,9 @@ export async function readStoredSession(): Promise<AuthSession | null> {
       // Expired or stale — clean up
       localStorage.removeItem(SESSION_LS_KEY);
     }
-  } catch { /* corrupt JSON */ }
+  } catch {
+    /* corrupt JSON */
+  }
 
   return null;
 }
@@ -204,7 +226,9 @@ export async function writeStoredSession(session: AuthSession | null) {
     } else {
       localStorage.removeItem(SESSION_LS_KEY);
     }
-  } catch { /* quota or SSR */ }
+  } catch {
+    /* quota or SSR */
+  }
   // Also notify IPC bridge if available
   try {
     await window.cockpit?.auth?.setSession?.(session);
@@ -226,11 +250,11 @@ function normalizeSession(data: {
   refreshToken: string;
   expiresInSeconds?: number;
   expiresAtMs?: number;
-  user: AuthSession['user'];
+  user: AuthSession["user"];
 }): AuthSession {
   const expFromJwt = decodeJwtExp(data.token);
   const fallbackExp =
-    typeof data.expiresAtMs === 'number'
+    typeof data.expiresAtMs === "number"
       ? data.expiresAtMs
       : Date.now() + (data.expiresInSeconds ?? 3600) * 1000;
   return {
@@ -251,13 +275,13 @@ export async function login(payload: LoginPayload): Promise<AuthSession> {
             refreshToken: string;
             expiresAtMs?: number;
             expiresInSeconds?: number;
-            user: AuthSession['user'];
+            user: AuthSession["user"];
           };
           error?: string;
         }
       | undefined;
     if (!ipcResponse?.ok || !ipcResponse.session) {
-      throw new Error(ipcResponse?.error ?? 'login_failed');
+      throw new Error(ipcResponse?.error ?? "login_failed");
     }
     const session = normalizeSession(ipcResponse.session);
     await writeStoredSession(session);
@@ -269,9 +293,9 @@ export async function login(payload: LoginPayload): Promise<AuthSession> {
     token: string;
     refreshToken: string;
     expiresInSeconds: number;
-    user: AuthSession['user'];
-  }>('/api/auth/login', {
-    method: 'POST',
+    user: AuthSession["user"];
+  }>("/api/auth/login", {
+    method: "POST",
     body: JSON.stringify(payload),
   });
   const session = normalizeSession(data);
@@ -289,13 +313,13 @@ export async function signup(payload: SignupPayload): Promise<AuthSession> {
             refreshToken: string;
             expiresAtMs?: number;
             expiresInSeconds?: number;
-            user: AuthSession['user'];
+            user: AuthSession["user"];
           };
           error?: string;
         }
       | undefined;
     if (!ipcResponse?.ok || !ipcResponse.session) {
-      throw new Error(ipcResponse?.error ?? 'signup_failed');
+      throw new Error(ipcResponse?.error ?? "signup_failed");
     }
     const session = normalizeSession(ipcResponse.session);
     await writeStoredSession(session);
@@ -307,9 +331,9 @@ export async function signup(payload: SignupPayload): Promise<AuthSession> {
     token: string;
     refreshToken: string;
     expiresInSeconds: number;
-    user: AuthSession['user'];
-  }>('/api/auth/signup', {
-    method: 'POST',
+    user: AuthSession["user"];
+  }>("/api/auth/signup", {
+    method: "POST",
     body: JSON.stringify(payload),
   });
   const session = normalizeSession(data);
@@ -320,7 +344,7 @@ export async function signup(payload: SignupPayload): Promise<AuthSession> {
 export async function refresh(refreshToken: string): Promise<AuthSession> {
   const existing = await readStoredSession();
   if (!existing || existing.refreshToken !== refreshToken) {
-    throw new Error('refresh_session_mismatch');
+    throw new Error("refresh_session_mismatch");
   }
 
   // Try IPC bridge first
@@ -333,13 +357,13 @@ export async function refresh(refreshToken: string): Promise<AuthSession> {
             refreshToken: string;
             expiresAtMs?: number;
             expiresInSeconds?: number;
-            user: AuthSession['user'];
+            user: AuthSession["user"];
           };
           error?: string;
         }
       | undefined;
     if (!ipcResponse?.ok || !ipcResponse.session) {
-      throw new Error(ipcResponse?.error ?? 'refresh_failed');
+      throw new Error(ipcResponse?.error ?? "refresh_failed");
     }
     const session = normalizeSession(ipcResponse.session);
     await writeStoredSession(session);
@@ -351,9 +375,9 @@ export async function refresh(refreshToken: string): Promise<AuthSession> {
     token: string;
     refreshToken: string;
     expiresInSeconds: number;
-    user: AuthSession['user'];
-  }>('/api/auth/refresh', {
-    method: 'POST',
+    user: AuthSession["user"];
+  }>("/api/auth/refresh", {
+    method: "POST",
     body: JSON.stringify({ refreshToken }),
   });
   const session = normalizeSession(data);
@@ -374,29 +398,30 @@ export async function ensureSession(): Promise<AuthSession> {
   }
 
   const devAutoLoginEnabled =
-    (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env
-      ?.VITE_TC_DEV_AUTO_LOGIN === 'true';
+    (import.meta as ImportMeta & { env?: Record<string, string | undefined> })
+      .env?.VITE_TC_DEV_AUTO_LOGIN === "true";
   if (!devAutoLoginEnabled) {
-    throw new Error('authentication_required');
+    throw new Error("authentication_required");
   }
 
   const email =
-    (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env
-      ?.VITE_TC_BOOTSTRAP_EMAIL ?? '';
-  const username = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env
-    ?.VITE_TC_BOOTSTRAP_USERNAME;
+    (import.meta as ImportMeta & { env?: Record<string, string | undefined> })
+      .env?.VITE_TC_BOOTSTRAP_EMAIL ?? "";
+  const username = (
+    import.meta as ImportMeta & { env?: Record<string, string | undefined> }
+  ).env?.VITE_TC_BOOTSTRAP_USERNAME;
   const password =
-    (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env
-      ?.VITE_TC_BOOTSTRAP_PASSWORD ?? '';
+    (import.meta as ImportMeta & { env?: Record<string, string | undefined> })
+      .env?.VITE_TC_BOOTSTRAP_PASSWORD ?? "";
   const licenseKey =
-    (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env
-      ?.VITE_TC_BOOTSTRAP_LICENSE_KEY ?? '';
+    (import.meta as ImportMeta & { env?: Record<string, string | undefined> })
+      .env?.VITE_TC_BOOTSTRAP_LICENSE_KEY ?? "";
 
   return login({ email, username, password, licenseKey });
 }
 
 export function getBackendBaseWsUrl() {
-  return getBackendBaseUrl().replace(/^http/i, 'ws');
+  return getBackendBaseUrl().replace(/^http/i, "ws");
 }
 
 /**
@@ -405,13 +430,15 @@ export function getBackendBaseWsUrl() {
  * Does NOT dispatch tc:session-expired — only for bootstrap validation.
  * Must use a non-/api/auth/* path so the authSessionStore middleware runs.
  */
-export async function probeSessionValid(token: string): Promise<boolean | null> {
+export async function probeSessionValid(
+  token: string,
+): Promise<boolean | null> {
   try {
-    const res = await fetch(toUrl('/api/ai/research/status'), {
-      method: 'GET',
+    const res = await fetch(toUrl("/api/ai/research/status"), {
+      method: "GET",
       signal: AbortSignal.timeout(3000),
       headers: {
-        'Content-Type': 'application/json',
+        "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
       },
     });
@@ -425,14 +452,17 @@ export async function probeSessionValid(token: string): Promise<boolean | null> 
 export async function authGet<T>(path: string): Promise<T> {
   const session = await ensureSession();
   return requestJson<T>(path, {
-    method: 'GET',
+    method: "GET",
     headers: {
       Authorization: `Bearer ${session.token}`,
     },
   });
 }
 
-export async function authRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
+export async function authRequest<T>(
+  path: string,
+  init: RequestInit = {},
+): Promise<T> {
   const session = await ensureSession();
   return requestJson<T>(path, {
     ...init,

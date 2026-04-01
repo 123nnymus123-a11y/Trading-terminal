@@ -1,10 +1,10 @@
-import type { Request, Response, NextFunction } from 'express';
-import { readdir, readFile } from 'node:fs/promises';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { Pool } from 'pg';
-import type { AppEnv } from './config.js';
-import { createLogger } from './logger.js';
+import type { Request, Response, NextFunction } from "express";
+import { readdir, readFile } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { Pool } from "pg";
+import type { AppEnv } from "./config.js";
+import { createLogger } from "./logger.js";
 import {
   addUserWatchlist,
   cancelOrder,
@@ -18,9 +18,9 @@ import {
   updateUserSettings,
   updateUserWatchlist,
   type Order,
-} from './domainStore.js';
+} from "./domainStore.js";
 
-const logger = createLogger('infra');
+const logger = createLogger("infra");
 
 type Position = {
   symbol: string;
@@ -39,8 +39,11 @@ type Account = {
 };
 
 type StorageAdapter = {
-  mode: 'memory' | 'postgres';
-  getSettings: (userId: string, tenantId?: string) => Promise<Record<string, unknown>>;
+  mode: "memory" | "postgres";
+  getSettings: (
+    userId: string,
+    tenantId?: string,
+  ) => Promise<Record<string, unknown>>;
   updateSettings: (
     userId: string,
     next: Record<string, unknown>,
@@ -62,7 +65,11 @@ type StorageAdapter = {
     fields: { symbol?: string; note?: string },
     tenantId?: string,
   ) => Promise<{ id: number; symbol: string; note: string } | null>;
-  removeWatchlist: (userId: string, id: number, tenantId?: string) => Promise<boolean>;
+  removeWatchlist: (
+    userId: string,
+    id: number,
+    tenantId?: string,
+  ) => Promise<boolean>;
   getOrders: (userId: string, tenantId?: string) => Promise<Order[]>;
   getPositions: (userId: string, tenantId?: string) => Promise<Position[]>;
   getAccount: (userId: string, tenantId?: string) => Promise<Account>;
@@ -70,7 +77,7 @@ type StorageAdapter = {
     userId: string,
     req: {
       symbol: string;
-      side: 'BUY' | 'SELL';
+      side: "BUY" | "SELL";
       qty: number;
       type: string;
       limitPrice?: number;
@@ -78,18 +85,22 @@ type StorageAdapter = {
     },
     tenantId?: string,
   ) => Promise<Order>;
-  cancelOrder: (userId: string, orderId: string, tenantId?: string) => Promise<boolean>;
+  cancelOrder: (
+    userId: string,
+    orderId: string,
+    tenantId?: string,
+  ) => Promise<boolean>;
 };
 
 type CacheAdapter = {
-  mode: 'memory' | 'redis';
+  mode: "memory" | "redis";
   getJson: <T>(key: string) => Promise<T | null>;
   setJson: <T>(key: string, value: T, ttlSeconds: number) => Promise<void>;
   incrementRateKey: (key: string, ttlSeconds: number) => Promise<number>;
 };
 
 class MemoryCache implements CacheAdapter {
-  readonly mode = 'memory' as const;
+  readonly mode = "memory" as const;
   private store = new Map<string, { value: string; expiresAt: number }>();
 
   async getJson<T>(key: string): Promise<T | null> {
@@ -118,7 +129,7 @@ class MemoryCache implements CacheAdapter {
 }
 
 class RedisCache implements CacheAdapter {
-  readonly mode = 'redis' as const;
+  readonly mode = "redis" as const;
   constructor(
     private readonly redis: {
       get: (key: string) => Promise<string | null>;
@@ -134,7 +145,7 @@ class RedisCache implements CacheAdapter {
   }
 
   async setJson<T>(key: string, value: T, ttlSeconds: number): Promise<void> {
-    await this.redis.set(key, JSON.stringify(value), 'EX', ttlSeconds);
+    await this.redis.set(key, JSON.stringify(value), "EX", ttlSeconds);
   }
 
   async incrementRateKey(key: string, ttlSeconds: number): Promise<number> {
@@ -148,11 +159,11 @@ class RedisCache implements CacheAdapter {
 
 function resolveMigrationsDir(): string {
   const candidates = [
-    path.resolve(process.cwd(), 'migrations'),
-    path.resolve(process.cwd(), 'apps/backend/migrations'),
-    path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../migrations'),
+    path.resolve(process.cwd(), "migrations"),
+    path.resolve(process.cwd(), "apps/backend/migrations"),
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../migrations"),
   ];
-  return candidates[0] ?? path.resolve(process.cwd(), 'migrations');
+  return candidates[0] ?? path.resolve(process.cwd(), "migrations");
 }
 
 async function applyMigrations(pool: Pool) {
@@ -167,32 +178,36 @@ async function applyMigrations(pool: Pool) {
   let files: string[] = [];
   try {
     files = (await readdir(migrationsDir))
-      .filter((fileName) => fileName.endsWith('.sql'))
+      .filter((fileName) => fileName.endsWith(".sql"))
       .sort((a, b) => a.localeCompare(b));
   } catch (error) {
-    logger.warn('migrations_directory_unavailable', { migrationsDir, error });
+    logger.warn("migrations_directory_unavailable", { migrationsDir, error });
     return;
   }
 
   for (const fileName of files) {
     const version = fileName;
-    const alreadyApplied = await pool.query('SELECT 1 FROM schema_migrations WHERE version = $1', [
-      version,
-    ]);
+    const alreadyApplied = await pool.query(
+      "SELECT 1 FROM schema_migrations WHERE version = $1",
+      [version],
+    );
     if (alreadyApplied.rowCount && alreadyApplied.rowCount > 0) {
       continue;
     }
 
-    const sql = await readFile(path.join(migrationsDir, fileName), 'utf8');
+    const sql = await readFile(path.join(migrationsDir, fileName), "utf8");
     const client = await pool.connect();
     try {
-      await client.query('BEGIN');
+      await client.query("BEGIN");
       await client.query(sql);
-      await client.query('INSERT INTO schema_migrations (version) VALUES ($1)', [version]);
-      await client.query('COMMIT');
-      logger.info('migration_applied', { version });
+      await client.query(
+        "INSERT INTO schema_migrations (version) VALUES ($1)",
+        [version],
+      );
+      await client.query("COMMIT");
+      logger.info("migration_applied", { version });
     } catch (error) {
-      await client.query('ROLLBACK');
+      await client.query("ROLLBACK");
       throw error;
     } finally {
       client.release();
@@ -202,18 +217,23 @@ async function applyMigrations(pool: Pool) {
 
 async function createPostgresStorage(
   databaseUrl: string,
-): Promise<{ storage: StorageAdapter; pool: Pool; close: () => Promise<void> }> {
+): Promise<{
+  storage: StorageAdapter;
+  pool: Pool;
+  close: () => Promise<void>;
+}> {
   const pool = new Pool({ connectionString: databaseUrl });
   await applyMigrations(pool);
 
-  const resolveTenant = (tenantId?: string) => tenantId?.trim() || 'default';
-  const scopedUserId = (userId: string, tenantId?: string) => `${resolveTenant(tenantId)}:${userId}`;
+  const resolveTenant = (tenantId?: string) => tenantId?.trim() || "default";
+  const scopedUserId = (userId: string, tenantId?: string) =>
+    `${resolveTenant(tenantId)}:${userId}`;
 
   async function ensureUserInitialized(userId: string, tenantId?: string) {
     const tenant = resolveTenant(tenantId);
     const scopedUser = scopedUserId(userId, tenant);
     await pool.query(
-      'INSERT INTO user_profiles (user_id, tenant_id) VALUES ($1, $2) ON CONFLICT (user_id) DO NOTHING',
+      "INSERT INTO user_profiles (user_id, tenant_id) VALUES ($1, $2) ON CONFLICT (user_id) DO NOTHING",
       [scopedUser, tenant],
     );
     await pool.query(
@@ -230,14 +250,14 @@ async function createPostgresStorage(
     );
 
     const watchlistCount = await pool.query(
-      'SELECT COUNT(*)::int AS count FROM watchlists WHERE user_id = $1 AND tenant_id = $2',
+      "SELECT COUNT(*)::int AS count FROM watchlists WHERE user_id = $1 AND tenant_id = $2",
       [scopedUser, tenant],
     );
     const count = Number(watchlistCount.rows[0]?.count ?? 0);
     if (count === 0) {
       await pool.query(
-        'INSERT INTO watchlists (user_id, tenant_id, symbol, note) VALUES ($1, $2, $3, $4), ($1, $2, $5, $6)',
-        [scopedUser, tenant, 'AAPL', 'Core tech', 'MSFT', 'Cloud'],
+        "INSERT INTO watchlists (user_id, tenant_id, symbol, note) VALUES ($1, $2, $3, $4), ($1, $2, $5, $6)",
+        [scopedUser, tenant, "AAPL", "Core tech", "MSFT", "Cloud"],
       );
     }
   }
@@ -245,12 +265,12 @@ async function createPostgresStorage(
   function mapOrderRow(row: {
     order_id: string;
     symbol: string;
-    side: 'BUY' | 'SELL';
+    side: "BUY" | "SELL";
     qty: number;
     type: string;
     limit_price: number | null;
     stop_price: number | null;
-    status: 'PENDING' | 'FILLED' | 'CANCELLED' | 'REJECTED';
+    status: "PENDING" | "FILLED" | "CANCELLED" | "REJECTED";
     filled_qty: number;
     avg_fill_price: number;
     created_at: number;
@@ -262,7 +282,9 @@ async function createPostgresStorage(
       side: row.side,
       qty: Number(row.qty),
       type: row.type,
-      ...(row.limit_price !== null ? { limitPrice: Number(row.limit_price) } : {}),
+      ...(row.limit_price !== null
+        ? { limitPrice: Number(row.limit_price) }
+        : {}),
       ...(row.stop_price !== null ? { stopPrice: Number(row.stop_price) } : {}),
       status: row.status,
       filledQty: Number(row.filled_qty),
@@ -273,13 +295,13 @@ async function createPostgresStorage(
   }
 
   const storage: StorageAdapter = {
-    mode: 'postgres',
+    mode: "postgres",
     getSettings: async (userId, tenantId) => {
       const tenant = resolveTenant(tenantId);
       const scopedUser = scopedUserId(userId, tenant);
       await ensureUserInitialized(userId, tenant);
       const result = await pool.query<{ settings: Record<string, unknown> }>(
-        'SELECT settings FROM user_settings WHERE user_id = $1 AND tenant_id = $2',
+        "SELECT settings FROM user_settings WHERE user_id = $1 AND tenant_id = $2",
         [scopedUser, tenant],
       );
       return result.rows[0]?.settings ?? {};
@@ -302,17 +324,25 @@ async function createPostgresStorage(
       const tenant = resolveTenant(tenantId);
       const scopedUser = scopedUserId(userId, tenant);
       await ensureUserInitialized(userId, tenant);
-      const result = await pool.query<{ id: number; symbol: string; note: string }>(
-        'SELECT id, symbol, note FROM watchlists WHERE user_id = $1 AND tenant_id = $2 ORDER BY id ASC',
+      const result = await pool.query<{
+        id: number;
+        symbol: string;
+        note: string;
+      }>(
+        "SELECT id, symbol, note FROM watchlists WHERE user_id = $1 AND tenant_id = $2 ORDER BY id ASC",
         [scopedUser, tenant],
       );
       return result.rows;
     },
-    addWatchlist: async (userId, symbol, note = '', tenantId) => {
+    addWatchlist: async (userId, symbol, note = "", tenantId) => {
       const tenant = resolveTenant(tenantId);
       const scopedUser = scopedUserId(userId, tenant);
       await ensureUserInitialized(userId, tenant);
-      const result = await pool.query<{ id: number; symbol: string; note: string }>(
+      const result = await pool.query<{
+        id: number;
+        symbol: string;
+        note: string;
+      }>(
         `INSERT INTO watchlists (user_id, tenant_id, symbol, note)
          VALUES ($1, $2, $3, $4)
          RETURNING id, symbol, note`,
@@ -324,14 +354,24 @@ async function createPostgresStorage(
       const tenant = resolveTenant(tenantId);
       const scopedUser = scopedUserId(userId, tenant);
       await ensureUserInitialized(userId, tenant);
-      const result = await pool.query<{ id: number; symbol: string; note: string }>(
+      const result = await pool.query<{
+        id: number;
+        symbol: string;
+        note: string;
+      }>(
         `UPDATE watchlists
          SET symbol = COALESCE($3, symbol),
              note = COALESCE($4, note),
              updated_at = NOW()
          WHERE user_id = $1 AND id = $2 AND tenant_id = $5
          RETURNING id, symbol, note`,
-        [scopedUser, id, fields.symbol ? fields.symbol.toUpperCase() : null, fields.note ?? null, tenant],
+        [
+          scopedUser,
+          id,
+          fields.symbol ? fields.symbol.toUpperCase() : null,
+          fields.note ?? null,
+          tenant,
+        ],
       );
       return result.rows[0] ?? null;
     },
@@ -340,7 +380,7 @@ async function createPostgresStorage(
       const scopedUser = scopedUserId(userId, tenant);
       await ensureUserInitialized(userId, tenant);
       const result = await pool.query(
-        'DELETE FROM watchlists WHERE user_id = $1 AND id = $2 AND tenant_id = $3',
+        "DELETE FROM watchlists WHERE user_id = $1 AND id = $2 AND tenant_id = $3",
         [scopedUser, id, tenant],
       );
       return (result.rowCount ?? 0) > 0;
@@ -352,12 +392,12 @@ async function createPostgresStorage(
       const result = await pool.query<{
         order_id: string;
         symbol: string;
-        side: 'BUY' | 'SELL';
+        side: "BUY" | "SELL";
         qty: number;
         type: string;
         limit_price: number | null;
         stop_price: number | null;
-        status: 'PENDING' | 'FILLED' | 'CANCELLED' | 'REJECTED';
+        status: "PENDING" | "FILLED" | "CANCELLED" | "REJECTED";
         filled_qty: number;
         avg_fill_price: number;
         created_at: number;
@@ -444,16 +484,17 @@ async function createPostgresStorage(
         type: req.type,
         ...(req.limitPrice !== undefined ? { limitPrice: req.limitPrice } : {}),
         ...(req.stopPrice !== undefined ? { stopPrice: req.stopPrice } : {}),
-        status: 'FILLED',
+        status: "FILLED",
         filledQty: req.qty,
-        avgFillPrice: req.limitPrice ?? Number((100 + Math.random() * 100).toFixed(2)),
+        avgFillPrice:
+          req.limitPrice ?? Number((100 + Math.random() * 100).toFixed(2)),
         createdAt: now,
         updatedAt: now,
       };
 
       const client = await pool.connect();
       try {
-        await client.query('BEGIN');
+        await client.query("BEGIN");
         await client.query(
           `INSERT INTO orders (
              order_id, user_id, symbol, side, qty, type, limit_price, stop_price,
@@ -480,7 +521,7 @@ async function createPostgresStorage(
           ],
         );
 
-        const signedQty = order.side === 'BUY' ? order.qty : -order.qty;
+        const signedQty = order.side === "BUY" ? order.qty : -order.qty;
         const unrealized = Number(((Math.random() - 0.5) * 500).toFixed(2));
         await client.query(
           `INSERT INTO positions (user_id, symbol, qty, avg_price, unrealized_pnl, realized_pnl, tenant_id)
@@ -490,7 +531,14 @@ async function createPostgresStorage(
              qty = positions.qty + EXCLUDED.qty,
              avg_price = EXCLUDED.avg_price,
              unrealized_pnl = EXCLUDED.unrealized_pnl`,
-          [scopedUser, order.symbol, signedQty, order.avgFillPrice, unrealized, tenant],
+          [
+            scopedUser,
+            order.symbol,
+            signedQty,
+            order.avgFillPrice,
+            unrealized,
+            tenant,
+          ],
         );
 
         const accountResult = await client.query<{
@@ -499,7 +547,7 @@ async function createPostgresStorage(
           daily_pnl: number;
           daily_pnl_percent: number;
         }>(
-          'SELECT balance, equity, daily_pnl, daily_pnl_percent FROM accounts WHERE user_id = $1 AND tenant_id = $2 FOR UPDATE',
+          "SELECT balance, equity, daily_pnl, daily_pnl_percent FROM accounts WHERE user_id = $1 AND tenant_id = $2 FOR UPDATE",
           [scopedUser, tenant],
         );
         const account = accountResult.rows[0] ?? {
@@ -509,7 +557,7 @@ async function createPostgresStorage(
           daily_pnl_percent: 0,
         };
         const notional = order.avgFillPrice * order.qty;
-        const cashDelta = order.side === 'BUY' ? -notional : notional;
+        const cashDelta = order.side === "BUY" ? -notional : notional;
         await client.query(
           `UPDATE accounts
            SET balance = $2,
@@ -521,16 +569,25 @@ async function createPostgresStorage(
           [
             scopedUser,
             Number((Number(account.balance) + cashDelta).toFixed(2)),
-            Number((Number(account.equity) + Math.random() * 100 - 50).toFixed(2)),
-            Number((Number(account.daily_pnl) + Math.random() * 50 - 25).toFixed(2)),
-            Number((Number(account.daily_pnl_percent) + (Math.random() - 0.5) * 0.5).toFixed(2)),
+            Number(
+              (Number(account.equity) + Math.random() * 100 - 50).toFixed(2),
+            ),
+            Number(
+              (Number(account.daily_pnl) + Math.random() * 50 - 25).toFixed(2),
+            ),
+            Number(
+              (
+                Number(account.daily_pnl_percent) +
+                (Math.random() - 0.5) * 0.5
+              ).toFixed(2),
+            ),
             tenant,
           ],
         );
 
-        await client.query('COMMIT');
+        await client.query("COMMIT");
       } catch (error) {
-        await client.query('ROLLBACK');
+        await client.query("ROLLBACK");
         throw error;
       } finally {
         client.release();
@@ -564,12 +621,14 @@ async function createPostgresStorage(
 
 function createMemoryStorage(): StorageAdapter {
   return {
-    mode: 'memory',
+    mode: "memory",
     getSettings: async (userId) => getUserSettings(userId),
     updateSettings: async (userId, next) => updateUserSettings(userId, next),
     listWatchlists: async (userId) => listUserWatchlists(userId),
-    addWatchlist: async (userId, symbol, note) => addUserWatchlist(userId, symbol, note),
-    updateWatchlist: async (userId, id, fields) => updateUserWatchlist(userId, id, fields),
+    addWatchlist: async (userId, symbol, note) =>
+      addUserWatchlist(userId, symbol, note),
+    updateWatchlist: async (userId, id, fields) =>
+      updateUserWatchlist(userId, id, fields),
     removeWatchlist: async (userId, id) => removeUserWatchlist(userId, id),
     getOrders: async (userId) => getOrders(userId),
     getPositions: async (userId) => getPositions(userId),
@@ -582,8 +641,12 @@ function createMemoryStorage(): StorageAdapter {
 export type BackendInfra = {
   storage: StorageAdapter;
   cache: CacheAdapter;
-  rateLimitMiddleware: (req: Request, res: Response, next: NextFunction) => Promise<void>;
-  meta: { storageMode: 'memory' | 'postgres'; cacheMode: 'memory' | 'redis' };
+  rateLimitMiddleware: (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => Promise<void>;
+  meta: { storageMode: "memory" | "postgres"; cacheMode: "memory" | "redis" };
   pool: Pool | null;
   close: () => Promise<void>;
 };
@@ -593,15 +656,24 @@ export async function createInfra(env: AppEnv): Promise<BackendInfra> {
   let closeStorage: () => Promise<void> = async () => {};
   let pgPool: Pool | null = null;
 
+  if (env.NODE_ENV === "production" && !env.DATABASE_URL) {
+    throw new Error("DATABASE_URL is required in production");
+  }
+
   if (env.DATABASE_URL) {
     try {
       const pgStorage = await createPostgresStorage(env.DATABASE_URL);
       storage = pgStorage.storage;
       closeStorage = pgStorage.close;
       pgPool = pgStorage.pool;
-      logger.info('postgres_storage_enabled');
+      logger.info("postgres_storage_enabled");
     } catch (error) {
-      logger.warn('postgres_storage_fallback_to_memory', error);
+      if (env.NODE_ENV === "production") {
+        throw new Error(
+          `postgres_storage_required_in_production: ${error instanceof Error ? error.message : "unknown_error"}`,
+        );
+      }
+      logger.warn("postgres_storage_fallback_to_memory", error);
     }
   }
 
@@ -610,7 +682,7 @@ export async function createInfra(env: AppEnv): Promise<BackendInfra> {
 
   if (env.REDIS_URL) {
     try {
-      const ioredis = await import('ioredis');
+      const ioredis = await import("ioredis");
       const RedisCtor = (
         ioredis as unknown as {
           Redis: new (
@@ -626,32 +698,47 @@ export async function createInfra(env: AppEnv): Promise<BackendInfra> {
           };
         }
       ).Redis;
-      const redis = new RedisCtor(env.REDIS_URL, { lazyConnect: true, maxRetriesPerRequest: 1 });
+      const redis = new RedisCtor(env.REDIS_URL, {
+        lazyConnect: true,
+        maxRetriesPerRequest: 1,
+      });
       await redis.connect();
       cache = new RedisCache(redis);
       closeRedis = async () => {
         await redis.quit();
       };
-      logger.info('redis_cache_enabled');
+      logger.info("redis_cache_enabled");
     } catch (error) {
-      logger.warn('redis_cache_fallback_to_memory', error);
+      logger.warn("redis_cache_fallback_to_memory", error);
     }
   }
 
-  const rateLimitMiddleware = async (req: Request, res: Response, next: NextFunction) => {
-    if (req.path === '/health' || req.path === '/metrics') {
+  const rateLimitMiddleware = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    if (req.path === "/health" || req.path === "/metrics") {
       next();
       return;
     }
 
-    const windowBucket = Math.floor(Date.now() / (env.RATE_LIMIT_WINDOW_SECONDS * 1000));
-    const key = `rate:${req.ip ?? 'unknown'}:${windowBucket}`;
-    const count = await cache.incrementRateKey(key, env.RATE_LIMIT_WINDOW_SECONDS);
+    const windowBucket = Math.floor(
+      Date.now() / (env.RATE_LIMIT_WINDOW_SECONDS * 1000),
+    );
+    const key = `rate:${req.ip ?? "unknown"}:${windowBucket}`;
+    const count = await cache.incrementRateKey(
+      key,
+      env.RATE_LIMIT_WINDOW_SECONDS,
+    );
 
     if (count > env.RATE_LIMIT_MAX_REQUESTS) {
       res
         .status(429)
-        .json({ error: 'rate_limited', retryAfterSeconds: env.RATE_LIMIT_WINDOW_SECONDS });
+        .json({
+          error: "rate_limited",
+          retryAfterSeconds: env.RATE_LIMIT_WINDOW_SECONDS,
+        });
       return;
     }
 
