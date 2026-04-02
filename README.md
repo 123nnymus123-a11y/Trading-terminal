@@ -4,7 +4,7 @@ This repository hosts the packaged Windows desktop installer for Trading Termina
 
 ## Download
 
-- `Trading Terminal Setup 0.0.2.exe` — Windows installer
+- `Trading Terminal Setup 0.0.3.exe` — Windows installer
 
 ## Notes
 
