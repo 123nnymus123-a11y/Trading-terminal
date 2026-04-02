@@ -1,8 +1,8 @@
-version: 0.0.1
+version: 0.0.2
 files:
-  - url: Trading-Cockpit-Setup-0.0.1.exe
-    sha512: s5LLIHSH+z1igN7DkQuv9KFpQjWtboGulXllouCBPfSE6oWzdq+8FceKa2RNcl42dHH8PcJRScXMARmBdgMzwA==
-    size: 88927001
-path: Trading-Cockpit-Setup-0.0.1.exe
-sha512: s5LLIHSH+z1igN7DkQuv9KFpQjWtboGulXllouCBPfSE6oWzdq+8FceKa2RNcl42dHH8PcJRScXMARmBdgMzwA==
-releaseDate: '2026-04-02T18:25:00.972Z'
+  - url: Trading-Terminal-Setup-0.0.2.exe
+    sha512: K1tmbp31agy14p8TsU8uImi3hWl2ki9lGaoziWusMP0BtUmCWsf2aNbvAKhnNMJlfauJiiGgWq0DNPB04sn/rQ==
+    size: 88927330
+path: Trading-Terminal-Setup-0.0.2.exe
+sha512: K1tmbp31agy14p8TsU8uImi3hWl2ki9lGaoziWusMP0BtUmCWsf2aNbvAKhnNMJlfauJiiGgWq0DNPB04sn/rQ==
+releaseDate: '2026-04-02T18:44:19.005Z'
