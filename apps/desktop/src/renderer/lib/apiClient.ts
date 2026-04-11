@@ -269,8 +269,13 @@ function normalizeSession(data: {
 }
 
 function shouldUseHttpAuthFallback(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error ?? '');
-  return /No handler registered for 'backendAuth:(login|signup)'/i.test(message);
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return (
+    /backendAuth:(login|signup)/i.test(message) &&
+    /(No handler registered|Error invoking remote method|No such handler|channel closed)/i.test(
+      message,
+    )
+  );
 }
 
 export async function login(payload: LoginPayload): Promise<AuthSession> {

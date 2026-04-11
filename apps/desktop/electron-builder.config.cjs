@@ -37,11 +37,13 @@ module.exports = {
     ],
     // Native addons are prepared in scripts/build-installer.mjs via
     // `electron-builder install-app-deps --platform win32 --arch x64`.
+    // IMPORTANT: desktop releases and in-app updates publish from the
+    // user-facing Trading-terminal repository, not the source-code repo.
     npmRebuild: false,
     nodeGypRebuild: false,
     publish: {
         provider: 'github',
         owner: '123nnymus123-a11y',
-        repo: 'TradingTerminal-SourceCode',
+        repo: 'Trading-terminal',
     },
 };

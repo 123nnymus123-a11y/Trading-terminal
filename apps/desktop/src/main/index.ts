@@ -978,6 +978,8 @@ function registerBackendAuthIpcHandlers() {
   console.log("[main] Backend auth IPC handlers registered");
 }
 
+registerBackendAuthIpcHandlers();
+
 function createWindow() {
   const preloadPath = path.join(__dirname, "../preload/index.cjs");
 
