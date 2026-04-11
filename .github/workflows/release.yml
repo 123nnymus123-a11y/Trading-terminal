@@ -85,9 +85,8 @@ jobs:
       - name: Build and package installer
         run: node apps/desktop/scripts/build-installer.mjs
         env:
-          # Tell electron-builder not to auto-publish during packaging.
           # Publishing is handled separately by softprops/action-gh-release.
-          EP_PUBLISH: never
+          GH_TOKEN: ${{ github.token }}
 
       # ── 7. Upload .exe as workflow artifact (accessible on every run) ──────
       - name: Upload installer artifact

@@ -31,6 +31,10 @@ function run(cmd, args, opts = {}) {
     });
 }
 
+function ensurePublishMode(args) {
+    return args.includes("--publish") ? args : [...args, "--publish", "never"];
+}
+
 async function runElectronBuilder(args) {
     // Resolve binary through pnpm workspace instead of node_modules/.bin
     return run("pnpm", ["exec", "electron-builder", ...args], { cwd: root });
@@ -82,12 +86,12 @@ async function main() {
         await prepareWindowsNativeDeps();
     }
 
-    await runElectronBuilder([
+    await runElectronBuilder(ensurePublishMode([
         "--config",
         path.join(root, "electron-builder.config.cjs"),
         "--win",
         "nsis",
-    ]);
+    ]));
 
     // After cross-building for Windows, restore native addons for the host
     // platform so this development environment stays functional.
@@ -103,7 +107,10 @@ const forwarded = process.argv.slice(2);
 
 if (forwarded.length > 0) {
     console.log("[build-installer] running electron-builder via pnpm exec...");
-    await runElectronBuilder(forwarded);
+    const safeArgs = forwarded[0] === "install-app-deps"
+        ? forwarded
+        : ensurePublishMode(forwarded);
+    await runElectronBuilder(safeArgs);
 } else {
     await main();
 }
