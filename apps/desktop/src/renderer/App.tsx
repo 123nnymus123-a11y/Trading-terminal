@@ -1,14 +1,4 @@
 import React, { useMemo, useState, useEffect, useRef, useCallback, Component, type ErrorInfo, type ReactNode } from "react";
-
-declare global {
-  interface Window {
-    updates?: {
-      onAvailable: (cb: (info: { version: string }) => void) => void;
-      onDownloaded: (cb: (info: { version: string }) => void) => void;
-      install: () => Promise<void>;
-    };
-  }
-}
 import { LastPricePill } from "./components/LastPricePill";
 import { startStreamController } from "./store/streamController";
 import { useMarketData } from "./marketData/useMarketData";
@@ -186,8 +176,42 @@ function TerminalWorkspace({ onLogout }: { onLogout: () => void }) {
   const [updateState, setUpdateState] = useState<{ version: string; downloaded: boolean } | null>(null);
 
   useEffect(() => {
-    window.updates?.onAvailable((info) => setUpdateState({ version: info.version, downloaded: false }));
-    window.updates?.onDownloaded((info) => setUpdateState({ version: info.version, downloaded: true }));
+    const updatesApi = window.cockpit?.updates;
+    if (!updatesApi) {
+      return;
+    }
+
+    let mounted = true;
+    const syncStatus = (status?: {
+      state?: string;
+      version?: string;
+    }) => {
+      if (!mounted) return;
+      if (
+        status?.state === "available" ||
+        status?.state === "downloading" ||
+        status?.state === "downloaded"
+      ) {
+        setUpdateState({
+          version: status.version ?? "latest",
+          downloaded: status.state === "downloaded",
+        });
+        return;
+      }
+      setUpdateState(null);
+    };
+
+    void updatesApi.getStatus?.().then(syncStatus).catch(() => void 0);
+    const unsubscribe = updatesApi.onStatus?.((status) => {
+      syncStatus(status);
+    });
+
+    return () => {
+      mounted = false;
+      if (typeof unsubscribe === "function") {
+        unsubscribe();
+      }
+    };
   }, []);
 
   const currentSymbol = "AAPL";
@@ -535,7 +559,9 @@ function TerminalWorkspace({ onLogout }: { onLogout: () => void }) {
           <div style={{ display: 'flex', gap: 8 }}>
             {updateState.downloaded && (
               <button
-                onClick={() => window.updates?.install()}
+                onClick={() => {
+                  void window.cockpit?.updates?.install?.();
+                }}
                 style={{
                   background: '#fff', color: '#15803d', border: 'none',
                   padding: '2px 10px', borderRadius: 3, cursor: 'pointer',

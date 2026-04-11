@@ -1,7 +1,7 @@
 module.exports = {
-    appId: "com.tradingcockpit.desktop",
-    productName: "Trading Cockpit",
-    copyright: "Copyright (c) 2026 Trading Cockpit",
+    appId: "com.tradingterminal.desktop",
+    productName: "Trading Terminal",
+    copyright: "Copyright (c) 2026 Trading Terminal",
     directories: {
         output: "release",
         buildResources: "build-resources",
@@ -25,7 +25,7 @@ module.exports = {
         allowToChangeInstallationDirectory: true,
         createDesktopShortcut: true,
         createStartMenuShortcut: true,
-        shortcutName: "Trading Cockpit",
+        shortcutName: "Trading Terminal",
         installerIcon: "build-resources/icon.ico",
         uninstallerIcon: "build-resources/icon.ico",
         installerHeaderIcon: "build-resources/icon.ico",
@@ -42,6 +42,6 @@ module.exports = {
     publish: {
         provider: 'github',
         owner: '123nnymus123-a11y',
-        repo: 'Trading-terminal',
+        repo: 'TradingTerminal-SourceCode',
     },
 };

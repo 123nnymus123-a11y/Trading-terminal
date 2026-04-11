@@ -1018,6 +1018,55 @@ declare global {
       tabs?: {
         openWindow?: (tabLabel: string) => Promise<boolean>;
       };
+      updates?: {
+        check?: () => Promise<{
+          ok?: boolean;
+          state:
+            | "idle"
+            | "checking"
+            | "available"
+            | "not-available"
+            | "downloading"
+            | "downloaded"
+            | "error"
+            | "unsupported";
+          message: string;
+          version?: string;
+          progress?: number;
+          error?: string;
+        }>;
+        getStatus?: () => Promise<{
+          state:
+            | "idle"
+            | "checking"
+            | "available"
+            | "not-available"
+            | "downloading"
+            | "downloaded"
+            | "error"
+            | "unsupported";
+          message: string;
+          version?: string;
+          progress?: number;
+        }>;
+        install?: () => Promise<{ ok: boolean; error?: string }>;
+        onStatus?: (
+          handler: (status: {
+            state:
+              | "idle"
+              | "checking"
+              | "available"
+              | "not-available"
+              | "downloading"
+              | "downloaded"
+              | "error"
+              | "unsupported";
+            message: string;
+            version?: string;
+            progress?: number;
+          }) => void,
+        ) => (() => void) | void;
+      };
       congress?: {
         queryTrades?: (filters: unknown) => Promise<any>;
         queryTradesWithParty?: (filters: unknown) => Promise<any>;

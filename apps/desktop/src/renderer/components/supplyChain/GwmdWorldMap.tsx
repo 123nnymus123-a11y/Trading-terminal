@@ -159,46 +159,6 @@ function dedupeVisualGeoNodes(nodes: GwmdGeoNode[]): GwmdGeoNode[] {
   return Array.from(byKey.values());
 }
 
-function normalizeLabel(value: unknown): string {
-  if (typeof value !== "string") return "";
-  return value.trim().toLowerCase().replace(/\s+/g, " ");
-}
-
-function dedupeVisualGeoNodes(nodes: GwmdGeoNode[]): GwmdGeoNode[] {
-  const byKey = new Map<string, GwmdGeoNode>();
-
-  for (const item of nodes) {
-    const metadata = (item.node.metadata ?? {}) as {
-      hqCity?: string;
-      hqCountry?: string;
-    };
-    const label = normalizeLabel(item.node.label);
-    const city = normalizeLabel(metadata.hqCity);
-    const country = normalizeLabel(metadata.hqCountry);
-
-    if (!label || !city) {
-      byKey.set(`id:${item.node.id}`, item);
-      continue;
-    }
-
-    const key = `${label}|${city}|${country}`;
-    const existing = byKey.get(key);
-    if (!existing) {
-      byKey.set(key, item);
-      continue;
-    }
-
-    const existingScore =
-      (existing.hasGeo ? 1000 : 0) + (existing.node.confidence ?? 0) * 100;
-    const nextScore = (item.hasGeo ? 1000 : 0) + (item.node.confidence ?? 0) * 100;
-    if (nextScore >= existingScore) {
-      byKey.set(key, item);
-    }
-  }
-
-  return Array.from(byKey.values());
-}
-
 function formatGeoSourceLabel(value?: string) {
   if (!value) return "Unknown";
   return value

@@ -10,6 +10,7 @@ import {
   refreshBackendBaseUrl,
   setBackendBaseUrl,
 } from "../lib/apiClient";
+import { DEFAULT_BACKEND_URL } from "../../shared/backendConfig";
 import type {
   AiStewardModule,
   AiStewardModuleState,
@@ -58,8 +59,26 @@ const MODEL_PRESETS = [
 const CUSTOM_MODEL_VALUE = "__custom_model__";
 const AI_SELECTIONS_KEY = "trading_terminal_ai_selections";
 const AI_DRAFT_KEY = "trading_terminal_ai_draft";
-const DEFAULT_BACKEND_URL = "http://localhost:8787";
 const GWMD_USER_SETTINGS_KEY = "gwmd:user-settings:v1";
+
+type DesktopUpdateState =
+  | "idle"
+  | "checking"
+  | "available"
+  | "not-available"
+  | "downloading"
+  | "downloaded"
+  | "error"
+  | "unsupported";
+
+type DesktopUpdateStatus = {
+  ok?: boolean;
+  state: DesktopUpdateState;
+  message: string;
+  version?: string;
+  progress?: number;
+  error?: string;
+};
 
 type GwmdSourceMode = "cache_only" | "hybrid" | "fresh";
 type GwmdUserSettings = {
@@ -104,8 +123,8 @@ function readGwmdUserSettings(): GwmdUserSettings {
           : DEFAULT_GWMD_SETTINGS.minConfidence,
       sourceMode:
         parsed.sourceMode === "cache_only" ||
-        parsed.sourceMode === "hybrid" ||
-        parsed.sourceMode === "fresh"
+          parsed.sourceMode === "hybrid" ||
+          parsed.sourceMode === "fresh"
           ? parsed.sourceMode
           : DEFAULT_GWMD_SETTINGS.sourceMode,
       showUnresolved:
@@ -234,6 +253,7 @@ export default function SettingsLogs() {
 
   const api = window.streaming;
   const settingsApi = window.cockpit?.journal;
+  const updatesApi = window.cockpit?.updates;
 
   // Keep status fresh
   useEffect(() => {
@@ -357,6 +377,8 @@ export default function SettingsLogs() {
   const [backendUrlSaving, setBackendUrlSaving] = useState(false);
   const [backendHealthChecking, setBackendHealthChecking] = useState(false);
   const [backendHealth, setBackendHealth] = useState<"unknown" | "ok" | "error">("unknown");
+  const [updateStatus, setUpdateStatus] = useState<DesktopUpdateStatus | null>(null);
+  const [updateChecking, setUpdateChecking] = useState(false);
   const [tedLiveEnabled, setTedLiveEnabled] = useState(false);
   const [tedBaseUrl, setTedBaseUrl] = useState("");
   const [tedApiKey, setTedApiKey] = useState("");
@@ -947,6 +969,83 @@ export default function SettingsLogs() {
       setBackendHealthChecking(false);
     }
   }, [backendUrlDraft]);
+
+  useEffect(() => {
+    let active = true;
+
+    void updatesApi?.getStatus?.()
+      .then((status) => {
+        if (active && status) {
+          setUpdateStatus(status as DesktopUpdateStatus);
+        }
+      })
+      .catch((error) => {
+        if (active) {
+          setUpdateStatus({
+            state: "error",
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
+      });
+
+    const unsubscribe = updatesApi?.onStatus?.((status) => {
+      if (active) {
+        setUpdateStatus(status as DesktopUpdateStatus);
+      }
+    });
+
+    return () => {
+      active = false;
+      if (typeof unsubscribe === "function") {
+        unsubscribe();
+      }
+    };
+  }, [updatesApi]);
+
+  const handleCheckForUpdates = useCallback(async () => {
+    if (!updatesApi?.check) {
+      setUpdateStatus({
+        state: "unsupported",
+        message: "Updater bridge unavailable in this build.",
+      });
+      return;
+    }
+
+    setUpdateChecking(true);
+    try {
+      const status = await updatesApi.check();
+      setUpdateStatus(status as DesktopUpdateStatus);
+    } catch (error) {
+      setUpdateStatus({
+        state: "error",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      setUpdateChecking(false);
+    }
+  }, [updatesApi]);
+
+  const handleInstallUpdate = useCallback(async () => {
+    if (!updatesApi?.install) {
+      setUpdateStatus({
+        state: "error",
+        message: "Install action unavailable in this build.",
+      });
+      return;
+    }
+
+    const result = await updatesApi.install();
+    if (!result?.ok) {
+      setUpdateStatus((prev) => ({
+        ...(prev ?? {
+          state: "error" as const,
+          message: "Update is not ready to install yet.",
+        }),
+        state: "error",
+        message: result?.error ?? "Update is not ready to install yet.",
+      }));
+    }
+  }, [updatesApi]);
 
   const saveTedConfig = useCallback(async () => {
     if (!settingsApi?.tedConfigSet) {
@@ -1657,9 +1756,31 @@ export default function SettingsLogs() {
           <h2 style={{ margin: 0, fontSize: 28, fontWeight: 800, letterSpacing: 1 }}>⚙️ Settings</h2>
           <div style={{ fontSize: 13, color: S.muted, marginTop: 4 }}>Configure your Trading Terminal</div>
         </div>
-        <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
           <StatusIndicator label="Stream" value={source} status={source === "live" ? "success" : source === "demo" ? "warning" : "info"} />
           <StatusIndicator label="AI" value={aiRuntime?.available ? "Ready" : "Offline"} status={aiRuntime?.available ? "success" : "error"} />
+          <StatusIndicator label="Update" value={updateIndicator.value} status={updateIndicator.status} />
+          <button
+            type="button"
+            onClick={() => {
+              void handleCheckForUpdates();
+            }}
+            disabled={updateChecking}
+            style={{
+              border: S.border,
+              background: "linear-gradient(180deg, rgba(16,185,129,0.9), rgba(5,150,105,0.85))",
+              color: "#fff",
+              borderRadius: 8,
+              padding: "8px 14px",
+              fontSize: 12,
+              fontWeight: 700,
+              letterSpacing: 0.3,
+              cursor: updateChecking ? "wait" : "pointer",
+              opacity: updateChecking ? 0.75 : 1,
+            }}
+          >
+            {updateChecking ? "Checking..." : "Check for Updates"}
+          </button>
           <button
             type="button"
             onClick={() => {
@@ -1766,9 +1887,9 @@ export default function SettingsLogs() {
           <Card title="🔌 AI Feature Routing">
             <div style={{ display: "grid", gap: 12 }}>
               {[{ key: "research", title: "AI Research Briefs", detail: "Daily research summaries and signal synthesis." },
-                { key: "supplyChain", title: "Supply Chain Intelligence", detail: "Shipping and logistics disruption analysis." },
-                { key: "congress", title: "Congressional Intelligence", detail: "Legislative and disclosure impact detection." },
-                { key: "cftc", title: "CFTC Analysis", detail: "Commitments of Traders and futures positioning insights." }].map((row) => (
+              { key: "supplyChain", title: "Supply Chain Intelligence", detail: "Shipping and logistics disruption analysis." },
+              { key: "congress", title: "Congressional Intelligence", detail: "Legislative and disclosure impact detection." },
+              { key: "cftc", title: "CFTC Analysis", detail: "Commitments of Traders and futures positioning insights." }].map((row) => (
                 <div key={row.key} style={{ display: "grid", gridTemplateColumns: "1fr minmax(220px, 280px)", gap: 12, alignItems: "center", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 10, padding: 12 }}>
                   <div>
                     <div style={{ fontWeight: 600 }}>{row.title}</div>
@@ -3131,6 +3252,34 @@ export default function SettingsLogs() {
       {/* System Section */}
       {activeSection === "system" && (
         <div style={{ display: "grid", gap: 20 }}>
+          <Card title="⬆️ Desktop Updates">
+            <div style={{ display: "grid", gap: 12 }}>
+              <div style={{ fontSize: 13, opacity: 0.8 }}>
+                Check for published desktop releases and install them from the app. Auto-update works only in installed packaged builds.
+              </div>
+
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <button onClick={() => { void handleCheckForUpdates(); }} disabled={updateChecking} style={{ padding: "8px 14px" }}>
+                  {updateChecking ? "Checking..." : "🔄 Check for Updates"}
+                </button>
+                {updateStatus?.state === "downloaded" && (
+                  <button onClick={() => { void handleInstallUpdate(); }} style={{ padding: "8px 14px" }}>
+                    ♻️ Restart & Install
+                  </button>
+                )}
+                <span style={{ fontSize: 12, opacity: 0.85 }}>
+                  State: {updateStatus?.state ?? "idle"}
+                  {updateStatus?.version ? ` • v${updateStatus.version}` : ""}
+                  {typeof updateStatus?.progress === "number" ? ` • ${Math.round(updateStatus.progress)}%` : ""}
+                </span>
+              </div>
+
+              <div style={{ fontSize: 12, opacity: 0.9 }}>
+                {updateStatus?.message ?? "No update check has been run yet."}
+              </div>
+            </div>
+          </Card>
+
           <Card title="🌐 Backend Connection">
             <div style={{ display: "grid", gap: 12 }}>
               <div style={{ fontSize: 13, opacity: 0.8 }}>

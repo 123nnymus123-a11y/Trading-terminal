@@ -1,5 +1,6 @@
-import { app, BrowserWindow, ipcMain, protocol, screen, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, protocol, screen, shell } from "electron";
 import { config as loadEnv } from "dotenv";
+import { autoUpdater } from "electron-updater";
 import { getDb } from "./persistence/db";
 import {
   WatchlistsRepo,
@@ -38,6 +39,11 @@ import { ExternalFeedsService } from "./services/externalFeeds";
 import { AiStewardService } from "./services/aiSteward/aiStewardService";
 import type { AiStewardConfig, AiStewardModule } from "../shared/aiSteward";
 import { BackendApiClient } from "../shared/backendApiClient";
+import {
+  DEFAULT_BACKEND_URL,
+  normalizeBackendUrl,
+  resolveBackendUrl,
+} from "../shared/backendConfig";
 import type { CalendarInsightRequest } from "@tc/shared";
 import { buildTedIntelSnapshot } from "@tc/shared";
 import {
@@ -57,22 +63,81 @@ import {
   type LocalStrategyVersionRecord,
 } from "./persistence/strategyResearchRepo";
 
-const DEFAULT_BACKEND_FALLBACK_URL = "http://localhost:8787";
+function formatMainProcessError(error: unknown): string {
+  if (error instanceof Error) {
+    return `${error.name}: ${error.message}`;
+  }
+  return String(error);
+}
+
+function reportMainProcessError(label: string, error: unknown): void {
+  const message = formatMainProcessError(error);
+  console.error(`[main] ${label}:`, error);
+
+  if (!app.isReady()) {
+    return;
+  }
+
+  try {
+    dialog.showErrorBox("Trading Terminal", `${label}\n\n${message}`);
+  } catch {
+    // Ignore secondary dialog failures and keep the app alive.
+  }
+}
+
+function showStartupFallbackWindow(title: string, detail: string): void {
+  if (!app.isReady()) {
+    return;
+  }
+
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    try {
+      mainWindow.show();
+      mainWindow.focus();
+    } catch {
+      // Ignore focus/show issues.
+    }
+    return;
+  }
+
+  const fallback = new BrowserWindow({
+    width: 900,
+    height: 640,
+    backgroundColor: "#0b1020",
+    title: "Trading Terminal",
+  });
+
+  const html = `<!doctype html>
+<html>
+  <body style="margin:0;font-family:Segoe UI,Arial,sans-serif;background:#0b1020;color:#f3f4f6;display:flex;align-items:center;justify-content:center;min-height:100vh;">
+    <div style="max-width:720px;padding:24px;border:1px solid rgba(255,255,255,0.14);border-radius:12px;background:rgba(15,23,42,0.92);box-shadow:0 20px 45px rgba(0,0,0,0.35);">
+      <h1 style="margin-top:0;font-size:24px;">${title}</h1>
+      <p style="line-height:1.5;white-space:pre-wrap;">${detail}</p>
+      <p style="opacity:0.8;line-height:1.5;">Please restart the app after updating, or contact support with this message if it keeps happening.</p>
+    </div>
+  </body>
+</html>`;
+
+  fallback.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+  fallback.show();
+  mainWindow = fallback;
+}
 
 // Global error handlers
 process.on("uncaughtException", (err) => {
-  console.error("[main] Uncaught Exception:", err);
-  process.exit(1);
+  reportMainProcessError("Uncaught Exception", err);
 });
 
 process.on("unhandledRejection", (reason) => {
-  console.error("[main] Unhandled Rejection:", reason);
-  process.exit(1);
+  reportMainProcessError("Unhandled Rejection", reason);
 });
 
 const isDev =
   !app.isPackaged &&
   (!!process.env.VITE_DEV_SERVER_URL || process.env.NODE_ENV === "development");
+
+// Reduce GPU/driver-related startup crashes on some Windows installations.
+app.disableHardwareAcceleration();
 
 if (isDev) {
   // Load .env first, then .env.local so local overrides take precedence.
@@ -82,7 +147,7 @@ if (isDev) {
 
 let mainWindow: BrowserWindow | null = null;
 let aiManager: AiResearchManager | null = null;
-let centralAI = getCentralAIOrchestrator();
+let centralAI: ReturnType<typeof getCentralAIOrchestrator> | null = null;
 let riskGuardian: RiskGuardian | null = null;
 let aiStewardService: AiStewardService | null = null;
 let apiHubWindow: BrowserWindow | null = null;
@@ -98,11 +163,32 @@ let gwmdDisplaySessionId: string | null = null;
 let gwmdWallClosing = false;
 const detachedTabWindows = new Map<string, BrowserWindow>();
 const apiHubService = new ApiHubService();
-const graphEnrichmentService = createGraphEnrichmentService();
-const graphMemoryService = createGraphMemoryService();
+let graphEnrichmentService: ReturnType<typeof createGraphEnrichmentService> | null = null;
+let graphMemoryService: ReturnType<typeof createGraphMemoryService> | null = null;
 let localStrategyResearchService: LocalStrategyResearchService | null = null;
 const TED_API_HUB_RECORD_ID = "ted-live";
 const TED_API_KEY_ACCOUNT = "api-hub:ted-live:api-key";
+
+function ensureCentralAI() {
+  if (!centralAI) {
+    centralAI = getCentralAIOrchestrator();
+  }
+  return centralAI;
+}
+
+function ensureGraphEnrichmentService() {
+  if (!graphEnrichmentService) {
+    graphEnrichmentService = createGraphEnrichmentService();
+  }
+  return graphEnrichmentService;
+}
+
+function ensureGraphMemoryService() {
+  if (!graphMemoryService) {
+    graphMemoryService = createGraphMemoryService();
+  }
+  return graphMemoryService;
+}
 
 function getLocalStrategyResearchService(): LocalStrategyResearchService {
   if (!localStrategyResearchService) {
@@ -210,24 +296,186 @@ type CongressAiWatchlistFallbackItem = {
 let congressAiWatchlistFallback: CongressAiWatchlistFallbackItem[] = [];
 let congressAiWatchlistFallbackSeq = 1;
 
-// Backend API client for AI services
-let backendApiClient: BackendApiClient | null = null;
+type AppUpdateState =
+  | "idle"
+  | "checking"
+  | "available"
+  | "not-available"
+  | "downloading"
+  | "downloaded"
+  | "error"
+  | "unsupported";
 
-function normalizeBackendUrl(value: string): string | null {
-  const trimmed = value.trim().replace(/\/+$/, "");
-  if (!trimmed) {
-    return null;
-  }
-  try {
-    const parsed = new URL(trimmed);
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-      return null;
+type AppUpdateStatus = {
+  state: AppUpdateState;
+  message: string;
+  version?: string;
+  progress?: number;
+};
+
+let autoUpdateInitialized = false;
+let manualUpdateCheckInFlight = false;
+let appUpdateStatus: AppUpdateStatus = {
+  state: "idle",
+  message: "Auto-update not checked yet.",
+};
+
+function broadcastAppUpdateStatus(next: AppUpdateStatus) {
+  appUpdateStatus = next;
+  for (const windowRef of BrowserWindow.getAllWindows()) {
+    if (!windowRef.isDestroyed()) {
+      windowRef.webContents.send("cockpit:update:status", appUpdateStatus);
     }
-    return trimmed;
-  } catch {
-    return null;
   }
 }
+
+async function promptForAvailableUpdate(version?: string) {
+  const parentWindow =
+    mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
+  const result = await dialog.showMessageBox(parentWindow, {
+    type: "info",
+    buttons: ["Download update", "Later"],
+    defaultId: 0,
+    cancelId: 1,
+    noLink: true,
+    title: "Trading Terminal Update",
+    message: version
+      ? `Version ${version} is available.`
+      : "A new Trading Terminal update is available.",
+    detail:
+      "Download it now? You'll be prompted to restart once the update is ready.",
+  });
+
+  if (result.response === 0) {
+    broadcastAppUpdateStatus({
+      state: "downloading",
+      message: "Downloading update…",
+      version,
+      progress: 0,
+    });
+    void autoUpdater.downloadUpdate();
+  }
+}
+
+async function promptForDownloadedUpdate(version?: string) {
+  const parentWindow =
+    mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
+  const result = await dialog.showMessageBox(parentWindow, {
+    type: "info",
+    buttons: ["Restart & install", "Later"],
+    defaultId: 0,
+    cancelId: 1,
+    noLink: true,
+    title: "Update Ready to Install",
+    message: version
+      ? `Version ${version} has been downloaded.`
+      : "A new Trading Terminal update has been downloaded.",
+    detail: "Restart the app now to install it, or do it later on exit.",
+  });
+
+  if (result.response === 0) {
+    setImmediate(() => autoUpdater.quitAndInstall());
+  }
+}
+
+function initializeAutoUpdates() {
+  if (autoUpdateInitialized) {
+    return;
+  }
+  autoUpdateInitialized = true;
+
+  if (!app.isPackaged || isDev) {
+    broadcastAppUpdateStatus({
+      state: "unsupported",
+      message: "Auto-update is only available in installed release builds.",
+    });
+    return;
+  }
+
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = true;
+
+  autoUpdater.on("checking-for-update", () => {
+    broadcastAppUpdateStatus({
+      state: "checking",
+      message: "Checking for updates…",
+    });
+  });
+
+  autoUpdater.on("update-available", (info) => {
+    const version = typeof info?.version === "string" ? info.version : undefined;
+    broadcastAppUpdateStatus({
+      state: "available",
+      message: "An update is available.",
+      version,
+    });
+    void promptForAvailableUpdate(version);
+  });
+
+  autoUpdater.on("update-not-available", (info) => {
+    const version = typeof info?.version === "string" ? info.version : undefined;
+    broadcastAppUpdateStatus({
+      state: "not-available",
+      message: version
+        ? `You're up to date on version ${version}.`
+        : "You're already on the latest version.",
+      version,
+    });
+
+    if (manualUpdateCheckInFlight) {
+      void dialog.showMessageBox({
+        type: "info",
+        buttons: ["OK"],
+        defaultId: 0,
+        noLink: true,
+        title: "No Update Available",
+        message: "You're already on the latest version of Trading Terminal.",
+      });
+    }
+
+    manualUpdateCheckInFlight = false;
+  });
+
+  autoUpdater.on("download-progress", (progress) => {
+    broadcastAppUpdateStatus({
+      state: "downloading",
+      message: `Downloading update… ${Math.round(progress.percent)}%`,
+      progress: progress.percent,
+    });
+  });
+
+  autoUpdater.on("update-downloaded", (info) => {
+    const version = typeof info?.version === "string" ? info.version : undefined;
+    broadcastAppUpdateStatus({
+      state: "downloaded",
+      message: "Update downloaded and ready to install.",
+      version,
+      progress: 100,
+    });
+    manualUpdateCheckInFlight = false;
+    void promptForDownloadedUpdate(version);
+  });
+
+  autoUpdater.on("error", (error) => {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("[main] autoUpdater error:", error);
+    broadcastAppUpdateStatus({
+      state: "error",
+      message,
+    });
+
+    if (manualUpdateCheckInFlight) {
+      dialog.showErrorBox("Update Check Failed", message);
+    }
+
+    manualUpdateCheckInFlight = false;
+  });
+
+  void autoUpdater.checkForUpdates();
+}
+
+// Backend API client for AI services
+let backendApiClient: BackendApiClient | null = null;
 
 function getPersistedBackendUrl(): string | null {
   try {
@@ -255,33 +503,22 @@ function ensurePersistedBackendUrl(): string {
 }
 
 function getConfiguredDefaultBackendUrl(): string {
-  const envCandidate =
-    process.env.BACKEND_URL ||
-    process.env.TC_BACKEND_URL ||
-    process.env.VITE_BACKEND_URL ||
-    process.env.VITE_TC_BACKEND_URL;
-  const normalizedEnv = envCandidate ? normalizeBackendUrl(envCandidate) : null;
-  return normalizedEnv ?? DEFAULT_BACKEND_FALLBACK_URL;
+  return resolveBackendUrl([
+    process.env.BACKEND_URL,
+    process.env.TC_BACKEND_URL,
+    process.env.VITE_BACKEND_URL,
+    process.env.VITE_TC_BACKEND_URL,
+  ]);
 }
 
 // Get backend URL from environment or use default
 const getBackendUrl = (): string => {
-  const envCandidate =
-    process.env.BACKEND_URL ||
-    process.env.TC_BACKEND_URL ||
-    process.env.VITE_BACKEND_URL ||
-    process.env.VITE_TC_BACKEND_URL;
-  const normalizedEnv = envCandidate ? normalizeBackendUrl(envCandidate) : null;
-  if (normalizedEnv) {
-    return normalizedEnv;
-  }
-
   const persisted = getPersistedBackendUrl();
   if (persisted) {
     return persisted;
   }
 
-  return DEFAULT_BACKEND_FALLBACK_URL;
+  return getConfiguredDefaultBackendUrl() ?? DEFAULT_BACKEND_URL;
 };
 
 function rebuildBackendApiClient(): void {
@@ -376,6 +613,7 @@ type MainAuthSession = {
 };
 
 let mainAuthSession: MainAuthSession | null = null;
+let backendAuthIpcHandlersRegistered = false;
 const AUTH_SESSION_SECRET_ACCOUNT = "backend-auth-session-v1";
 
 function broadcastBackendAuthTokenChanged(token: string | null): void {
@@ -586,6 +824,158 @@ async function ensureMainAuthToken(): Promise<string | null> {
     broadcastBackendAuthTokenChanged(null);
     return null;
   }
+}
+
+function registerBackendAuthIpcHandlers() {
+  if (backendAuthIpcHandlersRegistered) {
+    return;
+  }
+  backendAuthIpcHandlersRegistered = true;
+
+  ipcMain.handle("backendAuth:login", async (_e, payload: any = {}) => {
+    const username =
+      typeof payload.username === "string" ? payload.username : undefined;
+    const email =
+      typeof payload.email === "string" ? payload.email : undefined;
+    const password = typeof payload.password === "string" ? payload.password : "";
+    const licenseKey =
+      typeof payload.licenseKey === "string" ? payload.licenseKey : "";
+
+    if ((!username && !email) || !password || !licenseKey) {
+      return { ok: false, error: "invalid_login_payload" };
+    }
+
+    try {
+      const session = await loginMainSession({
+        username,
+        email,
+        password,
+        licenseKey,
+      });
+      if (backendApiClient) {
+        backendApiClient.setAuthToken(session.token);
+      }
+      broadcastBackendAuthTokenChanged(session.token);
+      return { ok: true, session };
+    } catch (error) {
+      return { ok: false, error: (error as Error).message };
+    }
+  });
+
+  ipcMain.handle("backendAuth:signup", async (_e, payload: any = {}) => {
+    const username =
+      typeof payload.username === "string" ? payload.username.trim() : "";
+    const email = typeof payload.email === "string" ? payload.email.trim() : "";
+    const password = typeof payload.password === "string" ? payload.password : "";
+    const licenseKey =
+      typeof payload.licenseKey === "string" ? payload.licenseKey : "";
+
+    if (!username || !email || !password || !licenseKey) {
+      return { ok: false, error: "invalid_signup_payload" };
+    }
+
+    try {
+      const session = await signupMainSession({
+        username,
+        email,
+        password,
+        licenseKey,
+      });
+      if (backendApiClient) {
+        backendApiClient.setAuthToken(session.token);
+      }
+      broadcastBackendAuthTokenChanged(session.token);
+      return { ok: true, session };
+    } catch (error) {
+      return { ok: false, error: (error as Error).message };
+    }
+  });
+
+  ipcMain.handle("backendAuth:refresh", async () => {
+    if (!mainAuthSession?.refreshToken) {
+      return { ok: false, error: "no_refresh_token" };
+    }
+
+    try {
+      const session = await refreshMainSession(mainAuthSession.refreshToken);
+      if (backendApiClient) {
+        backendApiClient.setAuthToken(session.token);
+      }
+      broadcastBackendAuthTokenChanged(session.token);
+      return { ok: true, session };
+    } catch (error) {
+      mainAuthSession = null;
+      broadcastBackendAuthTokenChanged(null);
+      return { ok: false, error: (error as Error).message };
+    }
+  });
+
+  ipcMain.handle("backendAuth:getSession", async () => {
+    return mainAuthSession;
+  });
+
+  ipcMain.handle(
+    "backendAuth:setSession",
+    async (_e, session: MainAuthSession | null) => {
+      if (session === null) {
+        mainAuthSession = null;
+        await persistMainAuthSession(null);
+        if (backendApiClient) {
+          backendApiClient.setAuthToken(null);
+        }
+        broadcastBackendAuthTokenChanged(null);
+        return true;
+      }
+
+      if (!isValidMainAuthSession(session)) {
+        return false;
+      }
+
+      mainAuthSession = session;
+      await persistMainAuthSession(session);
+      if (backendApiClient) {
+        backendApiClient.setAuthToken(session.token);
+      }
+      broadcastBackendAuthTokenChanged(session.token);
+      return true;
+    },
+  );
+
+  ipcMain.handle("backendAuth:logout", async () => {
+    if (mainAuthSession) {
+      try {
+        const token = await ensureMainAuthToken();
+        await fetch(`${getBackendUrl()}/api/auth/logout`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({
+            allSessions: false,
+            refreshToken: mainAuthSession.refreshToken,
+          }),
+        });
+      } catch (error) {
+        console.warn("[main] backend logout notify failed", error);
+      }
+    }
+
+    mainAuthSession = null;
+    await persistMainAuthSession(null);
+    if (backendApiClient) {
+      backendApiClient.setAuthToken(null);
+    }
+    broadcastBackendAuthTokenChanged(null);
+    return true;
+  });
+
+  ipcMain.handle("backendAuth:getToken", async () => {
+    const token = await ensureMainAuthToken();
+    return token;
+  });
+
+  console.log("[main] Backend auth IPC handlers registered");
 }
 
 function createWindow() {
@@ -1514,6 +1904,10 @@ app.whenReady().then(async () => {
   try {
     console.log("[main] app.whenReady()");
 
+    mainWindow = createWindow();
+    console.log("[main] window created");
+    registerBackendAuthIpcHandlers();
+
     // Recover any local backtest runs that were stuck in 'running' state from a previous crash
     try {
       const recoveredCount = StrategyResearchRepo.recoverStuckRuns();
@@ -1541,12 +1935,7 @@ app.whenReady().then(async () => {
     } catch (configErr) {
       const msg =
         configErr instanceof Error ? configErr.message : String(configErr);
-      console.error("[main] Cloud LLM config error:", msg);
-      const { dialog } = await import("electron");
-      dialog.showErrorBox(
-        "Cloud AI Configuration Error",
-        `${msg}\n\nThe app will continue but AI features will not work until you fix .env.local and restart.`,
-      );
+      console.warn("[main] Cloud LLM config warning:", msg);
     }
 
     await loadMainAuthSession();
@@ -1646,30 +2035,68 @@ app.whenReady().then(async () => {
       ensurePersistedBackendUrl();
       console.log("[main] SQLite initialized");
 
-      // Run ingest connectors (seed + local drop folder) before pipeline
-      const { ingestAll } = await import("./services/publicFlow/ingest");
-      const ingestResult = await ingestAll("1970-01-01T00:00:00.000Z");
-      console.log(
-        `[main] Public Flow ingest complete: fetched=${ingestResult.totals.fetched} parsed=${ingestResult.totals.parsed} inserted=${ingestResult.totals.inserted} skipped=${ingestResult.totals.skipped}`,
-      );
-      if (ingestResult.errors.length) {
-        console.warn(
-          "[main] Public Flow ingest errors:",
-          ingestResult.errors.join(" | "),
+      void (async () => {
+        // Run ingest connectors (seed + local drop folder) in the background so the UI opens immediately.
+        const { ingestAll } = await import("./services/publicFlow/ingest");
+        const ingestResult = await ingestAll("1970-01-01T00:00:00.000Z");
+        console.log(
+          `[main] Public Flow ingest complete: fetched=${ingestResult.totals.fetched} parsed=${ingestResult.totals.parsed} inserted=${ingestResult.totals.inserted} skipped=${ingestResult.totals.skipped}`,
         );
-      }
+        if (ingestResult.errors.length) {
+          console.warn(
+            "[main] Public Flow ingest errors:",
+            ingestResult.errors.join(" | "),
+          );
+        }
 
-      // Run Public Flow Intel pipeline on startup
-      const { PublicFlowPipeline } =
-        await import("./services/publicFlow/pipeline");
-      PublicFlowPipeline.run().catch((err) => {
-        console.error("[main] Public Flow pipeline startup error:", err);
+        // Run Public Flow Intel pipeline on startup.
+        const { PublicFlowPipeline } =
+          await import("./services/publicFlow/pipeline");
+        PublicFlowPipeline.run().catch((err) => {
+          console.error("[main] Public Flow pipeline startup error:", err);
+        });
+      })().catch((err) => {
+        console.error("[main] Background public flow startup failed:", err);
       });
     } catch (dbErr) {
       console.error("[main] SQLite init failed", dbErr);
     }
-    mainWindow = createWindow();
-    console.log("[main] window created");
+    ipcMain.handle("cockpit:update:status", () => appUpdateStatus);
+    ipcMain.handle("cockpit:update:check", async () => {
+      initializeAutoUpdates();
+      if (!app.isPackaged || isDev) {
+        return {
+          ok: false,
+          ...appUpdateStatus,
+        };
+      }
+
+      manualUpdateCheckInFlight = true;
+      await autoUpdater.checkForUpdates();
+      return {
+        ok: true,
+        ...appUpdateStatus,
+      };
+    });
+    ipcMain.handle("cockpit:update:install", async () => {
+      if (!app.isPackaged || isDev) {
+        return {
+          ok: false,
+          error: "auto_update_requires_packaged_build",
+        };
+      }
+      if (appUpdateStatus.state !== "downloaded") {
+        return {
+          ok: false,
+          error: "update_not_ready",
+        };
+      }
+
+      setImmediate(() => autoUpdater.quitAndInstall());
+      return { ok: true };
+    });
+
+    initializeAutoUpdates();
 
     // KEEP APP ALIVE - Don't auto-quit when windows close (during dev)
     if (isDev) {
@@ -1767,7 +2194,7 @@ app.whenReady().then(async () => {
 
         // Initialize Central AI Orchestrator
         console.log("[main] [2/4] initializing Central AI...");
-        centralAI.setWebContents(mainWindow!.webContents);
+        ensureCentralAI().setWebContents(mainWindow!.webContents);
         console.log("[main] [2/4] ✓ Central AI initialized");
 
         // Start default stream + heartbeat
@@ -1807,155 +2234,12 @@ app.whenReady().then(async () => {
         console.error("[main] ===== ✗ FATAL ERROR IN DID-FINISH-LOAD =====");
         console.error("[main] Error:", e);
         console.error("[main]");
-        process.exit(1);
+        reportMainProcessError("Renderer initialization error", e);
+        showStartupFallbackWindow(
+          "Trading Terminal hit a startup problem",
+          formatMainProcessError(e),
+        );
       }
-    });
-
-    // --- Auth session bridge for backend API ---
-    ipcMain.handle("backendAuth:login", async (_e, payload: any = {}) => {
-      const username =
-        typeof payload.username === "string" ? payload.username : undefined;
-      const email =
-        typeof payload.email === "string" ? payload.email : undefined;
-      const password =
-        typeof payload.password === "string" ? payload.password : "";
-      const licenseKey =
-        typeof payload.licenseKey === "string" ? payload.licenseKey : "";
-
-      if ((!username && !email) || !password || !licenseKey) {
-        return { ok: false, error: "invalid_login_payload" };
-      }
-
-      try {
-        const session = await loginMainSession({
-          username,
-          email,
-          password,
-          licenseKey,
-        });
-        if (backendApiClient) {
-          backendApiClient.setAuthToken(session.token);
-        }
-        broadcastBackendAuthTokenChanged(session.token);
-        return { ok: true, session };
-      } catch (error) {
-        return { ok: false, error: (error as Error).message };
-      }
-    });
-
-    ipcMain.handle("backendAuth:signup", async (_e, payload: any = {}) => {
-      const username =
-        typeof payload.username === "string" ? payload.username.trim() : "";
-      const email =
-        typeof payload.email === "string" ? payload.email.trim() : "";
-      const password =
-        typeof payload.password === "string" ? payload.password : "";
-      const licenseKey =
-        typeof payload.licenseKey === "string" ? payload.licenseKey : "";
-
-      if (!username || !email || !password || !licenseKey) {
-        return { ok: false, error: "invalid_signup_payload" };
-      }
-
-      try {
-        const session = await signupMainSession({
-          username,
-          email,
-          password,
-          licenseKey,
-        });
-        if (backendApiClient) {
-          backendApiClient.setAuthToken(session.token);
-        }
-        broadcastBackendAuthTokenChanged(session.token);
-        return { ok: true, session };
-      } catch (error) {
-        return { ok: false, error: (error as Error).message };
-      }
-    });
-
-    ipcMain.handle("backendAuth:refresh", async () => {
-      if (!mainAuthSession?.refreshToken) {
-        return { ok: false, error: "no_refresh_token" };
-      }
-
-      try {
-        const session = await refreshMainSession(mainAuthSession.refreshToken);
-        if (backendApiClient) {
-          backendApiClient.setAuthToken(session.token);
-        }
-        broadcastBackendAuthTokenChanged(session.token);
-        return { ok: true, session };
-      } catch (error) {
-        mainAuthSession = null;
-        broadcastBackendAuthTokenChanged(null);
-        return { ok: false, error: (error as Error).message };
-      }
-    });
-
-    ipcMain.handle("backendAuth:getSession", async () => {
-      return mainAuthSession;
-    });
-
-    ipcMain.handle(
-      "backendAuth:setSession",
-      async (_e, session: MainAuthSession | null) => {
-        if (session === null) {
-          mainAuthSession = null;
-          await persistMainAuthSession(null);
-          if (backendApiClient) {
-            backendApiClient.setAuthToken(null);
-          }
-          broadcastBackendAuthTokenChanged(null);
-          return true;
-        }
-
-        if (!isValidMainAuthSession(session)) {
-          return false;
-        }
-
-        mainAuthSession = session;
-        await persistMainAuthSession(session);
-        if (backendApiClient) {
-          backendApiClient.setAuthToken(session.token);
-        }
-        broadcastBackendAuthTokenChanged(session.token);
-        return true;
-      },
-    );
-
-    ipcMain.handle("backendAuth:logout", async () => {
-      if (mainAuthSession) {
-        try {
-          const token = await ensureMainAuthToken();
-          await fetch(`${getBackendUrl()}/api/auth/logout`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              ...(token ? { Authorization: `Bearer ${token}` } : {}),
-            },
-            body: JSON.stringify({
-              allSessions: false,
-              refreshToken: mainAuthSession.refreshToken,
-            }),
-          });
-        } catch (error) {
-          console.warn("[main] backend logout notify failed", error);
-        }
-      }
-
-      mainAuthSession = null;
-      await persistMainAuthSession(null);
-      if (backendApiClient) {
-        backendApiClient.setAuthToken(null);
-      }
-      broadcastBackendAuthTokenChanged(null);
-      return true;
-    });
-
-    ipcMain.handle("backendAuth:getToken", async () => {
-      const token = await ensureMainAuthToken();
-      return token;
     });
 
     ipcMain.handle(
@@ -3833,7 +4117,7 @@ app.whenReady().then(async () => {
             return { success: true, source: "backend" };
           }
           // Fall back to local
-          centralAI.trackInteraction({
+          ensureCentralAI().trackInteraction({
             type: type as
               | "symbol_search"
               | "supply_chain_view"
@@ -3849,7 +4133,7 @@ app.whenReady().then(async () => {
         } catch (error) {
           // Try local fallback
           try {
-            centralAI.trackInteraction({
+            ensureCentralAI().trackInteraction({
               type: type as
                 | "symbol_search"
                 | "supply_chain_view"
@@ -3884,12 +4168,12 @@ app.whenReady().then(async () => {
             return { success: true, predictions, source: "backend" };
           }
           // Fall back to local
-          const predictions = centralAI.predictNextSymbols(limit ?? 5);
+          const predictions = ensureCentralAI().predictNextSymbols(limit ?? 5);
           return { success: true, predictions, source: "local" };
         } catch (error) {
           // Try local fallback
           try {
-            const predictions = centralAI.predictNextSymbols(limit ?? 5);
+            const predictions = ensureCentralAI().predictNextSymbols(limit ?? 5);
             return { success: true, predictions, source: "local-fallback" };
           } catch (fallbackError) {
             console.error("[main] centralAI:predict error", fallbackError);
@@ -3903,7 +4187,7 @@ app.whenReady().then(async () => {
       "centralAI:validate",
       async (_e, response: string, context: any) => {
         try {
-          const result = await centralAI.validateAIResponse(response, context);
+          const result = await ensureCentralAI().validateAIResponse(response, context);
           return { success: true, ...result };
         } catch (err) {
           console.error("[main] centralAI:validate error", err);
@@ -3972,7 +4256,7 @@ app.whenReady().then(async () => {
       try {
         return {
           success: true,
-          intelligence: centralAI.getPersonalizedIntelligence(),
+          intelligence: ensureCentralAI().getPersonalizedIntelligence(),
         };
       } catch (err) {
         console.error("[main] centralAI:getIntelligence error", err);
@@ -3982,7 +4266,7 @@ app.whenReady().then(async () => {
 
     ipcMain.handle("centralAI:getStats", () => {
       try {
-        return { success: true, stats: centralAI.getStats() };
+        return { success: true, stats: ensureCentralAI().getStats() };
       } catch (err) {
         console.error("[main] centralAI:getStats error", err);
         return { success: false, error: String(err) };
@@ -4032,7 +4316,7 @@ app.whenReady().then(async () => {
           });
 
           try {
-            await graphEnrichmentService.ingestMindMapResult({
+            await ensureGraphEnrichmentService().ingestMindMapResult({
               mindMapData: result.data,
               queryUsage: {
                 queryText: `supplychain:${options.ticker.toUpperCase()}`,
@@ -4075,7 +4359,7 @@ app.whenReady().then(async () => {
                 const maybeData = (backendResult as Record<string, unknown>)
                   ?.data as unknown;
                 if (maybeData && typeof maybeData === "object") {
-                  await graphEnrichmentService.ingestMindMapResult({
+                  await ensureGraphEnrichmentService().ingestMindMapResult({
                     mindMapData:
                       maybeData as import("@tc/shared/supplyChain").MindMapData,
                     queryUsage: {
@@ -4186,7 +4470,7 @@ app.whenReady().then(async () => {
       try {
         return {
           success: true,
-          data: await graphEnrichmentService.getInspector(),
+          data: await ensureGraphEnrichmentService().getInspector(),
         };
       } catch (err) {
         return { success: false, error: String(err) };
@@ -4197,7 +4481,7 @@ app.whenReady().then(async () => {
       try {
         return {
           success: true,
-          data: await graphEnrichmentService.exportSnapshot(),
+          data: await ensureGraphEnrichmentService().exportSnapshot(),
         };
       } catch (err) {
         return { success: false, error: String(err) };
@@ -4208,7 +4492,7 @@ app.whenReady().then(async () => {
       try {
         return {
           success: true,
-          data: await graphEnrichmentService.getSyncStatus(),
+          data: await ensureGraphEnrichmentService().getSyncStatus(),
         };
       } catch (err) {
         return { success: false, error: String(err) };
@@ -4221,7 +4505,7 @@ app.whenReady().then(async () => {
         try {
           return {
             success: true,
-            data: await graphEnrichmentService.getCachedSubgraph(
+            data: await ensureGraphEnrichmentService().getCachedSubgraph(
               payload?.query ?? "",
               payload?.hops ?? 1,
             ),
@@ -4236,7 +4520,7 @@ app.whenReady().then(async () => {
       try {
         return {
           success: true,
-          data: await graphEnrichmentService.runMaintenance(),
+          data: await ensureGraphEnrichmentService().runMaintenance(),
         };
       } catch (err) {
         return { success: false, error: String(err) };
@@ -4247,7 +4531,7 @@ app.whenReady().then(async () => {
       try {
         return {
           success: true,
-          data: await graphMemoryService.getDashboard(),
+          data: await ensureGraphMemoryService().getDashboard(),
         };
       } catch (err) {
         return { success: false, error: String(err) };
@@ -4258,7 +4542,7 @@ app.whenReady().then(async () => {
       try {
         return {
           success: true,
-          data: await graphMemoryService.getSection(
+          data: await ensureGraphMemoryService().getSection(
             payload ?? { section: "overview" },
           ),
         };
@@ -4271,7 +4555,7 @@ app.whenReady().then(async () => {
       try {
         return {
           success: true,
-          data: await graphMemoryService.getDetail(
+          data: await ensureGraphMemoryService().getDetail(
             payload ?? { section: "overview", id: "" },
           ),
         };
@@ -4284,7 +4568,7 @@ app.whenReady().then(async () => {
       try {
         return {
           success: true,
-          data: await graphMemoryService.refresh(),
+          data: await ensureGraphMemoryService().refresh(),
         };
       } catch (err) {
         return { success: false, error: String(err) };
@@ -4295,7 +4579,7 @@ app.whenReady().then(async () => {
       try {
         return {
           success: true,
-          data: await graphMemoryService.revalidateSelected(
+          data: await ensureGraphMemoryService().revalidateSelected(
             payload ?? { records: [] },
           ),
         };
@@ -4308,7 +4592,7 @@ app.whenReady().then(async () => {
       try {
         return {
           success: true,
-          data: await graphMemoryService.exportNow(),
+          data: await ensureGraphMemoryService().exportNow(),
         };
       } catch (err) {
         return { success: false, error: String(err) };
@@ -4319,7 +4603,7 @@ app.whenReady().then(async () => {
       try {
         return {
           success: true,
-          data: await graphMemoryService.getExportsManifest(),
+          data: await ensureGraphMemoryService().getExportsManifest(),
         };
       } catch (err) {
         return { success: false, error: String(err) };
@@ -4328,7 +4612,7 @@ app.whenReady().then(async () => {
 
     ipcMain.handle("graphMemory:openLatestSnapshot", async () => {
       try {
-        const latestPath = await graphMemoryService.getLatestSnapshotPath();
+        const latestPath = await ensureGraphMemoryService().getLatestSnapshotPath();
         if (!latestPath) {
           return { success: false, error: "no_snapshot_found" };
         }
@@ -4410,7 +4694,7 @@ app.whenReady().then(async () => {
               result.companies,
               result.edges,
             );
-            await graphEnrichmentService.ingestMindMapResult({
+            await ensureGraphEnrichmentService().ingestMindMapResult({
               mindMapData: mappedMindMapData,
               queryUsage: {
                 queryText: `gwmd:${String(payload.ticker || "")
@@ -5336,6 +5620,10 @@ app.whenReady().then(async () => {
     console.error("[main] ===== FATAL ERROR IN APP.WHENREADY() =====");
     console.error("[main] Error:", e);
     console.error("[main] Error stack:", (e as any).stack);
-    process.exit(1);
+    reportMainProcessError("Fatal startup error", e);
+    showStartupFallbackWindow(
+      "Trading Terminal couldn't finish starting",
+      formatMainProcessError(e),
+    );
   }
 });

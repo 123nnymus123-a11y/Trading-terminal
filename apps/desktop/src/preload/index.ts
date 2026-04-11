@@ -1137,6 +1137,24 @@ const cockpitApi = {
       return ipcRenderer.invoke("cockpit:tabs:openWindow", tabLabel);
     },
   },
+  updates: {
+    async check() {
+      return ipcRenderer.invoke("cockpit:update:check");
+    },
+    async getStatus() {
+      return ipcRenderer.invoke("cockpit:update:status");
+    },
+    async install() {
+      return ipcRenderer.invoke("cockpit:update:install");
+    },
+    onStatus(handler: (status: unknown) => void) {
+      const listener: AnyListener = (_event: unknown, status: unknown) =>
+        handler(status);
+      const ipcListener = asIpcListener(listener);
+      ipcRenderer.on("cockpit:update:status", ipcListener);
+      return () => ipcRenderer.off("cockpit:update:status", ipcListener);
+    },
+  },
   apiKey: {
     async validate(provider: string, credentials: Record<string, string>) {
       return ipcRenderer.invoke(

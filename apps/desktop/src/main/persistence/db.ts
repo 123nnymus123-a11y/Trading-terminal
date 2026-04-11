@@ -1,13 +1,42 @@
-import Database from "better-sqlite3";
+import type Database from "better-sqlite3";
 import path from "node:path";
 import fs from "node:fs";
 import { app } from "electron";
+import { DEFAULT_BACKEND_URL } from "../../shared/backendConfig";
 
-const DEFAULT_BACKEND_URL = "http://localhost:8787";
 const BASELINE_SCHEMA_VERSION = 0;
 const LATEST_SCHEMA_VERSION = 5;
 
 let db: Database.Database | null = null;
+let databaseCtor: typeof import("better-sqlite3")["default"] | null = null;
+
+function resolveDatabaseCtor(): typeof import("better-sqlite3")["default"] {
+  if (databaseCtor) {
+    return databaseCtor;
+  }
+
+  try {
+    const loaded = require("better-sqlite3") as
+      | typeof import("better-sqlite3")["default"]
+      | { default?: typeof import("better-sqlite3")["default"] };
+    const ctor =
+      typeof loaded === "function"
+        ? loaded
+        : typeof loaded?.default === "function"
+          ? loaded.default
+          : null;
+
+    if (!ctor) {
+      throw new TypeError("better-sqlite3 did not expose a usable constructor");
+    }
+
+    databaseCtor = ctor;
+    return databaseCtor;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`SQLite native module failed to load: ${message}`);
+  }
+}
 
 export function getDb(): Database.Database {
   if (db) return db;
@@ -18,7 +47,8 @@ export function getDb(): Database.Database {
 
   if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
 
-  db = new Database(dbPath);
+  const BetterSqlite3 = resolveDatabaseCtor();
+  db = new BetterSqlite3(dbPath);
   db.pragma("journal_mode = WAL");
   migrate(db);
   return db;

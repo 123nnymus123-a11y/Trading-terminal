@@ -25,21 +25,26 @@ export type SignupPayload = {
   licenseKey: string;
 };
 
-const TENANT_ID_STORAGE_KEY = "tc.tenant.id.v1";
-const DEFAULT_BACKEND_FALLBACK_URL = "http://localhost:8787";
-let inMemorySession: AuthSession | null = null;
-let backendBaseUrl = DEFAULT_BACKEND_FALLBACK_URL;
+import {
+  DEFAULT_BACKEND_URL,
+  normalizeBackendUrl,
+  resolveBackendUrl,
+} from "../../shared/backendConfig";
 
-function normalizeBackendUrl(value: string): string {
-  return value.trim().replace(/\/+$/, "");
-}
+const TENANT_ID_STORAGE_KEY = "tc.tenant.id.v1";
+let inMemorySession: AuthSession | null = null;
+let backendBaseUrl = DEFAULT_BACKEND_URL;
+let inFlightRefreshPromise: Promise<AuthSession> | null = null;
 
 export async function refreshBackendBaseUrl(): Promise<string> {
   try {
     const fromIpc = await window.cockpit?.journal?.backendUrlGet?.();
     if (typeof fromIpc === "string" && fromIpc.trim()) {
-      backendBaseUrl = normalizeBackendUrl(fromIpc);
-      return backendBaseUrl;
+      const normalized = normalizeBackendUrl(fromIpc);
+      if (normalized) {
+        backendBaseUrl = normalized;
+        return backendBaseUrl;
+      }
     }
   } catch {
     // Browser mode and early boot can safely fallback.
@@ -48,12 +53,10 @@ export async function refreshBackendBaseUrl(): Promise<string> {
   const envUrl = (
     import.meta as ImportMeta & { env?: Record<string, string | undefined> }
   ).env;
-  const envCandidate = envUrl?.VITE_TC_BACKEND_URL || envUrl?.VITE_BACKEND_URL;
-  backendBaseUrl = normalizeBackendUrl(
-    envCandidate && envCandidate.trim()
-      ? envCandidate
-      : DEFAULT_BACKEND_FALLBACK_URL,
-  );
+  backendBaseUrl = resolveBackendUrl([
+    envUrl?.VITE_TC_BACKEND_URL,
+    envUrl?.VITE_BACKEND_URL,
+  ]);
   return backendBaseUrl;
 }
 
@@ -265,27 +268,38 @@ function normalizeSession(data: {
   };
 }
 
+function shouldUseHttpAuthFallback(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  return /No handler registered for 'backendAuth:(login|signup)'/i.test(message);
+}
+
 export async function login(payload: LoginPayload): Promise<AuthSession> {
   if (window.cockpit?.auth?.login) {
-    const ipcResponse = (await window.cockpit.auth.login(payload)) as
-      | {
-          ok: boolean;
-          session?: {
-            token: string;
-            refreshToken: string;
-            expiresAtMs?: number;
-            expiresInSeconds?: number;
-            user: AuthSession["user"];
-          };
-          error?: string;
-        }
-      | undefined;
-    if (!ipcResponse?.ok || !ipcResponse.session) {
-      throw new Error(ipcResponse?.error ?? "login_failed");
+    try {
+      const ipcResponse = (await window.cockpit.auth.login(payload)) as
+        | {
+            ok: boolean;
+            session?: {
+              token: string;
+              refreshToken: string;
+              expiresAtMs?: number;
+              expiresInSeconds?: number;
+              user: AuthSession["user"];
+            };
+            error?: string;
+          }
+        | undefined;
+      if (!ipcResponse?.ok || !ipcResponse.session) {
+        throw new Error(ipcResponse?.error ?? 'login_failed');
+      }
+      const session = normalizeSession(ipcResponse.session);
+      await writeStoredSession(session);
+      return session;
+    } catch (error) {
+      if (!shouldUseHttpAuthFallback(error)) {
+        throw error;
+      }
     }
-    const session = normalizeSession(ipcResponse.session);
-    await writeStoredSession(session);
-    return session;
   }
 
   // Web/browser fallback: direct HTTP when Electron IPC bridge is unavailable
@@ -295,7 +309,7 @@ export async function login(payload: LoginPayload): Promise<AuthSession> {
     expiresInSeconds: number;
     user: AuthSession["user"];
   }>("/api/auth/login", {
-    method: "POST",
+    method: 'POST',
     body: JSON.stringify(payload),
   });
   const session = normalizeSession(data);
@@ -305,25 +319,31 @@ export async function login(payload: LoginPayload): Promise<AuthSession> {
 
 export async function signup(payload: SignupPayload): Promise<AuthSession> {
   if (window.cockpit?.auth?.signup) {
-    const ipcResponse = (await window.cockpit.auth.signup(payload)) as
-      | {
-          ok: boolean;
-          session?: {
-            token: string;
-            refreshToken: string;
-            expiresAtMs?: number;
-            expiresInSeconds?: number;
-            user: AuthSession["user"];
-          };
-          error?: string;
-        }
-      | undefined;
-    if (!ipcResponse?.ok || !ipcResponse.session) {
-      throw new Error(ipcResponse?.error ?? "signup_failed");
+    try {
+      const ipcResponse = (await window.cockpit.auth.signup(payload)) as
+        | {
+            ok: boolean;
+            session?: {
+              token: string;
+              refreshToken: string;
+              expiresAtMs?: number;
+              expiresInSeconds?: number;
+              user: AuthSession["user"];
+            };
+            error?: string;
+          }
+        | undefined;
+      if (!ipcResponse?.ok || !ipcResponse.session) {
+        throw new Error(ipcResponse?.error ?? 'signup_failed');
+      }
+      const session = normalizeSession(ipcResponse.session);
+      await writeStoredSession(session);
+      return session;
+    } catch (error) {
+      if (!shouldUseHttpAuthFallback(error)) {
+        throw error;
+      }
     }
-    const session = normalizeSession(ipcResponse.session);
-    await writeStoredSession(session);
-    return session;
   }
 
   // Web/browser fallback: direct HTTP when Electron IPC bridge is unavailable
@@ -333,7 +353,7 @@ export async function signup(payload: SignupPayload): Promise<AuthSession> {
     expiresInSeconds: number;
     user: AuthSession["user"];
   }>("/api/auth/signup", {
-    method: "POST",
+    method: 'POST',
     body: JSON.stringify(payload),
   });
   const session = normalizeSession(data);
@@ -342,47 +362,60 @@ export async function signup(payload: SignupPayload): Promise<AuthSession> {
 }
 
 export async function refresh(refreshToken: string): Promise<AuthSession> {
+  if (inFlightRefreshPromise) {
+    return inFlightRefreshPromise;
+  }
+
   const existing = await readStoredSession();
   if (!existing || existing.refreshToken !== refreshToken) {
     throw new Error("refresh_session_mismatch");
   }
 
-  // Try IPC bridge first
-  if (window.cockpit?.auth?.refresh) {
-    const ipcResponse = (await window.cockpit.auth.refresh()) as
-      | {
-          ok: boolean;
-          session?: {
-            token: string;
-            refreshToken: string;
-            expiresAtMs?: number;
-            expiresInSeconds?: number;
-            user: AuthSession["user"];
-          };
-          error?: string;
-        }
-      | undefined;
-    if (!ipcResponse?.ok || !ipcResponse.session) {
-      throw new Error(ipcResponse?.error ?? "refresh_failed");
+  const refreshPromise = (async () => {
+    if (window.cockpit?.auth?.refresh) {
+      const ipcResponse = (await window.cockpit.auth.refresh()) as
+        | {
+            ok: boolean;
+            session?: {
+              token: string;
+              refreshToken: string;
+              expiresAtMs?: number;
+              expiresInSeconds?: number;
+              user: AuthSession["user"];
+            };
+            error?: string;
+          }
+        | undefined;
+      if (!ipcResponse?.ok || !ipcResponse.session) {
+        throw new Error(ipcResponse?.error ?? "refresh_failed");
+      }
+      const session = normalizeSession(ipcResponse.session);
+      await writeStoredSession(session);
+      return session;
     }
-    const session = normalizeSession(ipcResponse.session);
+
+    const data = await requestJson<{
+      token: string;
+      refreshToken: string;
+      expiresInSeconds: number;
+      user: AuthSession["user"];
+    }>("/api/auth/refresh", {
+      method: "POST",
+      body: JSON.stringify({ refreshToken }),
+    });
+    const session = normalizeSession(data);
     await writeStoredSession(session);
     return session;
-  }
+  })();
 
-  // Web/browser fallback: direct HTTP token refresh
-  const data = await requestJson<{
-    token: string;
-    refreshToken: string;
-    expiresInSeconds: number;
-    user: AuthSession["user"];
-  }>("/api/auth/refresh", {
-    method: "POST",
-    body: JSON.stringify({ refreshToken }),
-  });
-  const session = normalizeSession(data);
-  await writeStoredSession(session);
-  return session;
+  inFlightRefreshPromise = refreshPromise;
+  try {
+    return await refreshPromise;
+  } finally {
+    if (inFlightRefreshPromise === refreshPromise) {
+      inFlightRefreshPromise = null;
+    }
+  }
 }
 
 export async function ensureSession(): Promise<AuthSession> {

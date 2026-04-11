@@ -1,5 +1,11 @@
-
 import fs from "node:fs";
+import path from "node:path";
+import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const root = path.resolve(__dirname, "..");
 
 const ELECTRON_ABI_MAP = {
     "28": "119",
@@ -43,11 +49,10 @@ function ensureExists(file) {
     }
 }
 
-// Dummy implementation for downloadBetterSqlite3Win32 (replace with real one if needed)
-async function downloadBetterSqlite3Win32(version, abi, dir) {
-    // Implement download logic or import from another module
-    // For now, just log
-    console.log(`[mock] Would download better-sqlite3 v${version} ABI ${abi} to ${dir}`);
+async function prepareWindowsNativeDeps() {
+    console.log("[build] Preparing Windows native modules via electron-builder install-app-deps...");
+    await runElectronBuilder(["install-app-deps", "--platform", "win32", "--arch", "x64"]);
+    console.log("[build] Windows native modules prepared.");
 }
 
 async function main() {
@@ -59,8 +64,8 @@ async function main() {
     ensureExists(path.join(root, "dist/main/index.cjs"));
     ensureExists(path.join(root, "dist/preload/index.cjs"));
 
-    // When cross-building on Linux/macOS for Windows, download the pre-built
-    // Windows PE binaries for native addons before packaging.
+    // When cross-building on Linux/macOS for Windows, prepare the Windows
+    // native addon binaries before packaging.
     if (process.platform !== "win32") {
         const desktopPkg = JSON.parse(
             fs.readFileSync(path.join(root, "package.json"), "utf8"),
@@ -74,17 +79,7 @@ async function main() {
             );
         }
 
-        const bs3Pkg = JSON.parse(
-            fs.readFileSync(path.join(root, "node_modules/better-sqlite3/package.json"), "utf8"),
-        );
-        const bs3Version = bs3Pkg.version;
-        const bs3Dir = path.join(root, "node_modules/better-sqlite3");
-
-        console.log(
-            `[build] Downloading better-sqlite3 v${bs3Version} win32-x64 for Electron ${electronVersion} (ABI ${abi})...`,
-        );
-        await downloadBetterSqlite3Win32(bs3Version, abi, bs3Dir);
-        console.log("[build] better-sqlite3 win32 binary ready.");
+        await prepareWindowsNativeDeps();
     }
 
     await runElectronBuilder([

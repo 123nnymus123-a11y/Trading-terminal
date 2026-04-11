@@ -154,19 +154,20 @@ const electronEntry = path.resolve(__dirname, "..", "dist", "main", "index.cjs")
 ensureExists(electronEntry);
 
 // Rebuild native modules for Electron (better-sqlite3, keytar)
-const rebuildScript = path.resolve(__dirname, "..", "node_modules", ".bin", process.platform === "win32" ? "electron-rebuild.cmd" : "electron-rebuild");
-if (false && fs.existsSync(rebuildScript)) {
-  console.log("[dev] Rebuilding native modules for Electron...");
-  await new Promise((resolve, reject) => {
-    const p = spawn(rebuildScript, ["-f", "-w", "better-sqlite3,keytar"], {
-      cwd: path.resolve(__dirname, ".."),
-      stdio: "inherit",
-      shell: process.platform === "win32",
-    });
-    p.on("exit", (code) => (code === 0 ? resolve() : reject(new Error(`electron-rebuild exit ${code}`))));
-  });
+const appRoot = path.resolve(__dirname, "..");
+const skipElectronRebuild =
+  process.env.SKIP_ELECTRON_REBUILD === "1" ||
+  process.env.SKIP_ELECTRON_REBUILD === "true";
+
+if (skipElectronRebuild) {
+  console.warn("[dev] Skipping electron-rebuild due to SKIP_ELECTRON_REBUILD.");
 } else {
-  console.warn("[dev] Skipping electron-rebuild (commented out to avoid lock issues).");
+  console.log("[dev] Rebuilding native modules for Electron...");
+  await runAndWait("pnpm", ["exec", "electron-rebuild", "-f", "-w", "better-sqlite3,keytar"], {
+    cwd: appRoot,
+    env: { ...process.env },
+  });
+  console.log("[dev] Electron native modules rebuilt.");
 }
 
 try {
@@ -187,9 +188,9 @@ const electron = run("electron", ["."], {
 });
 
 function shutdown(code = 0) {
-  try { vite.kill("SIGINT"); } catch {}
-  try { esbuild.kill("SIGINT"); } catch {}
-  try { electron.kill("SIGINT"); } catch {}
+  try { vite.kill("SIGINT"); } catch { }
+  try { esbuild.kill("SIGINT"); } catch { }
+  try { electron.kill("SIGINT"); } catch { }
   process.exit(code);
 }
 
