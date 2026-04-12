@@ -1,8 +1,16 @@
-version: 0.0.8
+version: 0.0.16
 files:
-  - url: Trading-Terminal-Setup-0.0.8.exe
-    sha512: oOPR9YG5kxbaAMz2yDSRspsQp12wVWeDx7qpgwW3ZELsybDBCiL6lnLj6smWhgbvK7DHXMq4t/3ytebzSAs+Sw==
-    size: 88929859
-path: Trading-Terminal-Setup-0.0.8.exe
-sha512: oOPR9YG5kxbaAMz2yDSRspsQp12wVWeDx7qpgwW3ZELsybDBCiL6lnLj6smWhgbvK7DHXMq4t/3ytebzSAs+Sw==
-releaseDate: '2026-04-11T19:54:30.396Z'
+  - url: Trading Terminal Setup 0.0.16.exe
+    sha512: MdmhXTNRtMK6ru50hA7DQ/StyQgead5eb0qbXf29P9Sk7Ycd8XhUGahHTjM7JhD4uZScfK5YrjBuMALBRKXbEQ==
+    size: 115712
+  - url: @tcdesktop-0.0.16-x64.nsis.7z
+    sha512: u8Q1h9zpEF636cYq0B7xubIk4HOESBBJ4TGAas074WBjnhmDmKRPnfuVwYZ0RpuMS3rQhlIwSAL9fpE0gafzaw==
+    size: 88181606
+path: Trading Terminal Setup 0.0.16.exe
+sha512: MdmhXTNRtMK6ru50hA7DQ/StyQgead5eb0qbXf29P9Sk7Ycd8XhUGahHTjM7JhD4uZScfK5YrjBuMALBRKXbEQ==
+releaseDate: '2026-04-12T19:29:10.000Z'
+packages:
+  x64:
+    path: @tcdesktop-0.0.16-x64.nsis.7z
+    sha512: u8Q1h9zpEF636cYq0B7xubIk4HOESBBJ4TGAas074WBjnhmDmKRPnfuVwYZ0RpuMS3rQhlIwSAL9fpE0gafzaw==
+    size: 88181606
