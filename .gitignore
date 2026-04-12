@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+build/
+*.asar
+
+# Installer artifacts — published as GitHub Releases, never committed
+release/
+*.exe
+*.blockmap
+*.zip
+*.tar.gz
+builder-debug.yml
+
+# Environment / secrets — NEVER commit these
+.env
+.env.local
+.env.*.local
+
+# Logs
+logs/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/settings.json
+*.bak_*
+
+# Tauri build artefacts
+src-tauri/target/
