@@ -329,6 +329,21 @@ function broadcastAppUpdateStatus(next: AppUpdateStatus) {
   }
 }
 
+function formatUpdateErrorMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  const normalized = raw.replace(/\s+/g, " ").trim();
+
+  if (/releases\.atom/i.test(normalized) && /\b404\b/.test(normalized)) {
+    return "Update feed is not reachable (HTTP 404). This usually means the release repository is private or has no published GitHub Releases yet.";
+  }
+
+  if (/latest(\.ya?ml)?/i.test(normalized) && /\b404\b/.test(normalized)) {
+    return "Update metadata was not found. The release is missing latest.yml assets.";
+  }
+
+  return normalized;
+}
+
 async function promptForAvailableUpdate(version?: string) {
   const parentWindow =
     mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
@@ -353,7 +368,14 @@ async function promptForAvailableUpdate(version?: string) {
       version,
       progress: 0,
     });
-    void autoUpdater.downloadUpdate();
+    void autoUpdater.downloadUpdate().catch((error) => {
+      const message = formatUpdateErrorMessage(error);
+      console.error("[main] autoUpdater downloadUpdate failed:", error);
+      broadcastAppUpdateStatus({
+        state: "error",
+        message,
+      });
+    });
   }
 }
 
@@ -457,7 +479,7 @@ function initializeAutoUpdates() {
   });
 
   autoUpdater.on("error", (error) => {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = formatUpdateErrorMessage(error);
     console.error("[main] autoUpdater error:", error);
     broadcastAppUpdateStatus({
       state: "error",
@@ -465,13 +487,19 @@ function initializeAutoUpdates() {
     });
 
     if (manualUpdateCheckInFlight) {
-      dialog.showErrorBox("Update Check Failed", message);
+      dialog.showErrorBox(
+        "Update Check Failed",
+        `${message}\n\nIf you're testing updates, publish a GitHub Release in 123nnymus123-a11y/Trading-terminal with latest.yml assets.`,
+      );
     }
 
     manualUpdateCheckInFlight = false;
   });
 
-  void autoUpdater.checkForUpdates();
+  void autoUpdater.checkForUpdates().catch((error) => {
+    // Prevent startup checks from surfacing as global unhandled rejections.
+    console.warn("[main] autoUpdater startup check failed:", error);
+  });
 }
 
 // Backend API client for AI services
@@ -2074,7 +2102,21 @@ app.whenReady().then(async () => {
       }
 
       manualUpdateCheckInFlight = true;
-      await autoUpdater.checkForUpdates();
+      try {
+        await autoUpdater.checkForUpdates();
+      } catch (error) {
+        const message = formatUpdateErrorMessage(error);
+        console.error("[main] manual update check failed:", error);
+        broadcastAppUpdateStatus({
+          state: "error",
+          message,
+        });
+        manualUpdateCheckInFlight = false;
+        return {
+          ok: false,
+          ...appUpdateStatus,
+        };
+      }
       return {
         ok: true,
         ...appUpdateStatus,
