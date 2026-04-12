@@ -520,11 +520,19 @@ function getPersistedBackendUrl(): string | null {
 
 function ensurePersistedBackendUrl(): string {
   const existing = getPersistedBackendUrl();
+  const defaultUrl = getConfiguredDefaultBackendUrl();
+
+  // Auto-migrate older persisted localhost values when current default is cloud.
+  if (existing && existing === "http://localhost:8787" && defaultUrl !== existing) {
+    const settings = AppSettingsRepo.get();
+    AppSettingsRepo.set({ ...settings, backendUrl: defaultUrl });
+    return defaultUrl;
+  }
+
   if (existing) {
     return existing;
   }
 
-  const defaultUrl = getConfiguredDefaultBackendUrl();
   const settings = AppSettingsRepo.get();
   AppSettingsRepo.set({ ...settings, backendUrl: defaultUrl });
   return defaultUrl;
@@ -662,12 +670,8 @@ function broadcastBackendUrlChanged(url: string): void {
   }
 }
 
-function getAuthFallbackPassphrase(): string {
-  return (
-    process.env.AUTH_SESSION_FALLBACK_PASSPHRASE ||
-    process.env.JWT_SECRET ||
-    "tc-auth-fallback"
-  );
+function getAuthFallbackPassphrase(): string | undefined {
+  return process.env.AUTH_SESSION_FALLBACK_PASSPHRASE;
 }
 
 function isValidMainAuthSession(session: unknown): session is MainAuthSession {
@@ -688,36 +692,44 @@ function isValidMainAuthSession(session: unknown): session is MainAuthSession {
 async function persistMainAuthSession(
   session: MainAuthSession | null,
 ): Promise<void> {
+  const fallbackPassphrase = getAuthFallbackPassphrase();
   if (!session) {
-    await deleteSecret(AUTH_SESSION_SECRET_ACCOUNT);
+    await deleteSecret(AUTH_SESSION_SECRET_ACCOUNT, fallbackPassphrase);
     return;
+  }
+
+  if (!fallbackPassphrase) {
+    console.warn(
+      "[main] AUTH_SESSION_FALLBACK_PASSPHRASE is not set; secure fallback persistence disabled when keytar is unavailable.",
+    );
   }
 
   await setSecret(
     AUTH_SESSION_SECRET_ACCOUNT,
     JSON.stringify(session),
-    getAuthFallbackPassphrase(),
+    fallbackPassphrase,
   );
 }
 
 async function loadMainAuthSession(): Promise<void> {
   try {
+    const fallbackPassphrase = getAuthFallbackPassphrase();
     const raw = await getSecret(
       AUTH_SESSION_SECRET_ACCOUNT,
-      getAuthFallbackPassphrase(),
+      fallbackPassphrase,
     );
     if (!raw) {
       return;
     }
     const parsed = JSON.parse(raw) as unknown;
     if (!isValidMainAuthSession(parsed)) {
-      await deleteSecret(AUTH_SESSION_SECRET_ACCOUNT);
+      await deleteSecret(AUTH_SESSION_SECRET_ACCOUNT, fallbackPassphrase);
       mainAuthSession = null;
       broadcastBackendAuthTokenChanged(null);
       return;
     }
     if (parsed.expiresAtMs <= Date.now()) {
-      await deleteSecret(AUTH_SESSION_SECRET_ACCOUNT);
+      await deleteSecret(AUTH_SESSION_SECRET_ACCOUNT, fallbackPassphrase);
       mainAuthSession = null;
       broadcastBackendAuthTokenChanged(null);
       return;
