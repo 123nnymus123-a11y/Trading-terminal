@@ -88,6 +88,41 @@ jobs:
           # Publishing is handled separately by softprops/action-gh-release.
           GH_TOKEN: ${{ github.token }}
 
+      - name: Validate updater artifact names
+        shell: pwsh
+        run: |
+          $releaseDir = "apps/desktop/release"
+          $latestPath = Join-Path $releaseDir "latest.yml"
+          if (-not (Test-Path $latestPath)) {
+            throw "latest.yml was not generated"
+          }
+
+          $latest = Get-Content $latestPath
+          $expectedPrimary = "Trading-Terminal-Setup-${{ steps.desktop_version.outputs.value }}.exe"
+
+          $pathLine = $latest | Where-Object { $_ -match '^path:' } | Select-Object -First 1
+          if (-not $pathLine) {
+            throw "latest.yml is missing a path entry"
+          }
+
+          $actualPrimary = ($pathLine -replace '^path:\s*', '').Trim()
+          if ($actualPrimary -ne $expectedPrimary) {
+            throw "latest.yml path mismatch. Expected '$expectedPrimary' but found '$actualPrimary'"
+          }
+
+          $urlLines = $latest | Where-Object { $_ -match '^\s*-?\s*url:' }
+          if (-not $urlLines) {
+            throw "latest.yml is missing file url entries"
+          }
+
+          foreach ($line in $urlLines) {
+            $relativePath = ($line -replace '^\s*-?\s*url:\s*', '').Trim()
+            $assetPath = Join-Path $releaseDir $relativePath
+            if (-not (Test-Path $assetPath)) {
+              throw "latest.yml references missing asset '$relativePath'"
+            }
+          }
+
       # ── 7. Upload .exe as workflow artifact (accessible on every run) ──────
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4

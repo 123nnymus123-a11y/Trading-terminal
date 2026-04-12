@@ -18,6 +18,7 @@ module.exports = {
     win: {
         target: [{ target: "nsis", arch: ["x64"] }],
         icon: "build-resources/icon.ico",
+        artifactName: "Trading-Terminal-Setup-${version}.${ext}",
     },
     nsis: {
         oneClick: false,
