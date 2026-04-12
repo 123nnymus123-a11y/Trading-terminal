@@ -70,6 +70,12 @@ const envSchema = z.object({
   REDIS_URL: z.string().optional(),
   RATE_LIMIT_WINDOW_SECONDS: z.coerce.number().int().positive().default(60),
   RATE_LIMIT_MAX_REQUESTS: z.coerce.number().int().positive().default(240),
+  METRICS_TOKEN: z.string().min(24).optional(),
+  AUTH_LOGIN_WINDOW_SECONDS: z.coerce.number().int().positive().default(900),
+  AUTH_LOGIN_MAX_ATTEMPTS: z.coerce.number().int().positive().default(5),
+  AUTH_LOGIN_LOCKOUT_SECONDS: z.coerce.number().int().positive().default(900),
+  AUTH_SIGNUP_WINDOW_SECONDS: z.coerce.number().int().positive().default(900),
+  AUTH_SIGNUP_MAX_ATTEMPTS_PER_IP: z.coerce.number().int().positive().default(20),
   AI_RATE_LIMIT_WINDOW_SECONDS: z.coerce.number().int().positive().default(60),
   AI_RATE_LIMIT_MAX_REQUESTS: z.coerce.number().int().positive().default(60),
   CACHE_PUBLICFLOW_TTL_SECONDS: z.coerce.number().int().positive().default(30),
@@ -148,5 +154,44 @@ export function readEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
       .join("; ");
     throw new Error(`Invalid backend environment configuration: ${details}`);
   }
-  return parsed.data;
+  const env = parsed.data;
+  if (env.NODE_ENV === "production") {
+    const insecureReasons: string[] = [];
+    if (env.JWT_SECRET === "dev-only-change-me" || env.JWT_SECRET.length < 32) {
+      insecureReasons.push("JWT_SECRET must be unique and at least 32 characters in production");
+    }
+    if (!env.AUTH_SESSION_STORE_ENABLED) {
+      insecureReasons.push("AUTH_SESSION_STORE_ENABLED must be true in production");
+    }
+    if (!env.AUTH_REFRESH_ROTATION_ENABLED) {
+      insecureReasons.push("AUTH_REFRESH_ROTATION_ENABLED must be true in production");
+    }
+    if (!env.AUTH_RBAC_ENFORCED) {
+      insecureReasons.push("AUTH_RBAC_ENFORCED must be true in production");
+    }
+    if (!env.IPC_STRICT_ALLOWLIST_ENABLED) {
+      insecureReasons.push("IPC_STRICT_ALLOWLIST_ENABLED must be true in production");
+    }
+    if (env.CORS_ORIGIN.trim() === "*") {
+      insecureReasons.push("CORS_ORIGIN cannot be '*' in production");
+    }
+    if (!env.METRICS_TOKEN) {
+      insecureReasons.push("METRICS_TOKEN is required in production");
+    }
+    if (!env.MIGRATION_REQUIRE_TENANT_HEADER) {
+      insecureReasons.push("MIGRATION_REQUIRE_TENANT_HEADER must be true in production");
+    }
+    if (env.AUTH_BOOTSTRAP_PASSWORD === "ChangeMe123!") {
+      insecureReasons.push("AUTH_BOOTSTRAP_PASSWORD must not use the default value");
+    }
+    if (env.AUTH_BOOTSTRAP_LICENSE_KEY === "007") {
+      insecureReasons.push("AUTH_BOOTSTRAP_LICENSE_KEY must not use the default value");
+    }
+
+    if (insecureReasons.length > 0) {
+      throw new Error(`Insecure production environment configuration: ${insecureReasons.join("; ")}`);
+    }
+  }
+
+  return env;
 }

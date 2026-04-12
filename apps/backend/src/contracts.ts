@@ -240,6 +240,97 @@ export const gwmdSyncStatusResponseSchema = z.object({
   status: gwmdSyncStatusSchema,
 });
 
+export const graphSorStatusSchema = z.object({
+  tenantId: z.string().min(1),
+  entitiesCount: z.number().int().nonnegative(),
+  relationshipsCount: z.number().int().nonnegative(),
+  evidenceCount: z.number().int().nonnegative(),
+  validationEventsCount: z.number().int().nonnegative(),
+  scenarioRunsCount: z.number().int().nonnegative(),
+  latestEntityUpdateAt: z.string().datetime().nullable(),
+  latestRelationshipUpdateAt: z.string().datetime().nullable(),
+});
+
+export const graphSorStatusResponseSchema = z.object({
+  ok: z.literal(true),
+  status: graphSorStatusSchema,
+});
+
+const graphSorEntityTypeSchema = z.enum([
+  "company",
+  "facility",
+  "country",
+  "commodity",
+  "route",
+  "event",
+  "other",
+]);
+
+const graphSorZoneSchema = z.enum(["candidate", "validation", "production"]);
+
+const graphSorEvidenceQualitySchema = z.enum([
+  "reported",
+  "verified",
+  "estimated",
+  "inferred",
+]);
+
+export const graphSorEntityInputSchema = z.object({
+  entityId: z.string().min(1),
+  entityType: graphSorEntityTypeSchema,
+  canonicalName: z.string().min(1),
+  ticker: z.string().nullable().optional(),
+  isin: z.string().nullable().optional(),
+  countryCode: z.string().nullable().optional(),
+  metadata: z.record(z.unknown()).optional(),
+  confidence: z.number().min(0).max(1).optional(),
+  freshnessScore: z.number().min(0).max(1).optional(),
+  zone: graphSorZoneSchema.optional(),
+  seenAt: z.string().datetime().optional(),
+});
+
+export const graphSorRelationshipInputSchema = z.object({
+  relationshipId: z.string().min(1),
+  predicate: z.string().min(1),
+  relationType: z.string().min(1),
+  confidence: z.number().min(0).max(1).optional(),
+  freshnessScore: z.number().min(0).max(1).optional(),
+  evidenceQuality: graphSorEvidenceQualitySchema.optional(),
+  zone: graphSorZoneSchema.optional(),
+  firstSeenAt: z.string().datetime().optional(),
+  lastSeenAt: z.string().datetime().optional(),
+});
+
+export const graphSorEvidenceInputSchema = z.object({
+  evidenceId: z.string().min(1),
+  sourceId: z.string().min(1),
+  sourceType: z.string().min(1),
+  retrievedAt: z.string().datetime(),
+  rawSnippet: z.string().optional(),
+  provenanceHash: z.string().min(1),
+  confidence: z.number().min(0).max(1).optional(),
+  freshnessScore: z.number().min(0).max(1).optional(),
+  lineage: z.record(z.unknown()).optional(),
+});
+
+export const graphSorFactUpsertRequestSchema = z.object({
+  subjectEntity: graphSorEntityInputSchema,
+  objectEntity: graphSorEntityInputSchema,
+  relationship: graphSorRelationshipInputSchema,
+  evidence: graphSorEvidenceInputSchema.optional(),
+});
+
+export const graphSorFactUpsertResponseSchema = z.object({
+  ok: z.literal(true),
+  applied: z.object({
+    tenantId: z.string().min(1),
+    relationshipId: z.string().min(1),
+    entityUpserts: z.number().int().nonnegative(),
+    relationshipUpserted: z.boolean(),
+    evidenceUpserted: z.boolean(),
+  }),
+});
+
 export const calendarInsightRequestEventSchema = z.object({
   id: z.string(),
   title: z.string(),

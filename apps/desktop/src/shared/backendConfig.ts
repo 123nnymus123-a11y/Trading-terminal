@@ -1,10 +1,9 @@
-export const DEFAULT_BACKEND_URL = "http://79.76.40.72:8787";
+export const DEFAULT_BACKEND_URL = "http://localhost:8787";
 
 const ALLOWED_INSECURE_HTTP_HOSTS = new Set([
   "localhost",
   "127.0.0.1",
   "::1",
-  "79.76.40.72",
 ]);
 
 function isLocalHost(hostname: string): boolean {

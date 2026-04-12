@@ -780,10 +780,12 @@ async function requestBackendAuth(
   pathName: string,
   payload: Record<string, unknown>,
 ) {
+  const tenantId = process.env.DEFAULT_TENANT_ID?.trim() || "default";
   const response = await fetch(`${getBackendUrl()}${pathName}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
+      "x-tenant-id": tenantId,
     },
     body: JSON.stringify(payload),
   });
@@ -985,10 +987,12 @@ function registerBackendAuthIpcHandlers() {
     if (mainAuthSession) {
       try {
         const token = await ensureMainAuthToken();
+        const tenantId = process.env.DEFAULT_TENANT_ID?.trim() || "default";
         await fetch(`${getBackendUrl()}/api/auth/logout`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
+            "x-tenant-id": tenantId,
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
           body: JSON.stringify({
@@ -2433,6 +2437,415 @@ app.whenReady().then(async () => {
       }
       backendApiClient.setAuthToken(resolvedToken);
       return true;
+    };
+
+    type GwmdSearchCompanyPayload = {
+      ticker: string;
+      name: string;
+      hq_lat?: number;
+      hq_lon?: number;
+      hq_city?: string;
+      hq_country?: string;
+      industry?: string;
+      health_score?: number;
+      geo_source?: string;
+      geo_confidence?: number;
+      data_status?: string;
+    };
+
+    type GwmdSearchEdgePayload = {
+      id: string;
+      from_ticker: string;
+      to_ticker: string;
+      relation_type: string;
+      weight?: number;
+      confidence?: number;
+      evidence?: string;
+      source_type?: string;
+      source_citation?: string;
+      relationship_strength?: number;
+      directness?: string;
+      product_or_service?: string;
+      dependency_summary?: string;
+      logistics_mode?: string;
+      logistics_nodes?: string[];
+      chokepoints?: string[];
+      exposure_regions?: string[];
+      related_company_aliases?: string[];
+      related_company_industry?: string;
+      field_statuses?: Record<string, string>;
+      data_status?: string;
+    };
+
+    type GwmdCloudSyncStatusPayload = {
+      cloudVersion?: number;
+      lastSyncAt?: string | null;
+      companiesCount?: number;
+      relationshipsCount?: number;
+      syncStatus?: "idle" | "syncing" | "ok" | "error";
+    };
+
+    const GWMD_CLOUD_RELATION_TYPES = new Set([
+      "supplier",
+      "customer",
+      "partner",
+      "competitor",
+      "financing",
+      "license",
+    ]);
+
+    const normalizeGwmdTicker = (value: string) => value.trim().toUpperCase();
+
+    const buildGwmdCloudPayload = (
+      companies: GwmdSearchCompanyPayload[],
+      edges: GwmdSearchEdgePayload[],
+    ) => {
+      const companyMap = new Map<
+        string,
+        {
+          ticker: string;
+          name: string;
+          hq_lat?: number;
+          hq_lon?: number;
+          hq_city?: string;
+          hq_country?: string;
+          industry?: string;
+          health_score?: number;
+        }
+      >();
+
+      for (const company of companies) {
+        const ticker = normalizeGwmdTicker(company.ticker || "");
+        if (!ticker || !company.name?.trim()) continue;
+        const existing = companyMap.get(ticker);
+        companyMap.set(ticker, {
+          ticker,
+          name: company.name,
+          hq_lat: existing?.hq_lat ?? company.hq_lat,
+          hq_lon: existing?.hq_lon ?? company.hq_lon,
+          hq_city: existing?.hq_city ?? company.hq_city,
+          hq_country: existing?.hq_country ?? company.hq_country,
+          industry: existing?.industry ?? company.industry,
+          health_score: existing?.health_score ?? company.health_score,
+        });
+      }
+
+      const edgeMap = new Map<
+        string,
+        {
+          id: string;
+          from_ticker: string;
+          to_ticker: string;
+          relation_type:
+            | "supplier"
+            | "customer"
+            | "partner"
+            | "competitor"
+            | "financing"
+            | "license";
+          weight?: number;
+          confidence?: number;
+          evidence?: string;
+        }
+      >();
+
+      for (const edge of edges) {
+        const fromTicker = normalizeGwmdTicker(edge.from_ticker || "");
+        const toTicker = normalizeGwmdTicker(edge.to_ticker || "");
+        const relationType = edge.relation_type?.trim().toLowerCase();
+        if (
+          !fromTicker ||
+          !toTicker ||
+          fromTicker === toTicker ||
+          !relationType ||
+          !GWMD_CLOUD_RELATION_TYPES.has(relationType)
+        ) {
+          continue;
+        }
+
+        const key = `${fromTicker}|${toTicker}|${relationType}`;
+        const existing = edgeMap.get(key);
+        edgeMap.set(key, {
+          id: existing?.id ?? edge.id ?? key.replace(/\|/g, "-"),
+          from_ticker: fromTicker,
+          to_ticker: toTicker,
+          relation_type: relationType as
+            | "supplier"
+            | "customer"
+            | "partner"
+            | "competitor"
+            | "financing"
+            | "license",
+          weight: existing?.weight ?? edge.weight,
+          confidence: existing?.confidence ?? edge.confidence,
+          evidence: existing?.evidence ?? edge.evidence,
+        });
+      }
+
+      return {
+        companies: Array.from(companyMap.values()),
+        relationships: Array.from(edgeMap.values()),
+      };
+    };
+
+    const scopeGwmdGraph = (
+      rootTicker: string,
+      companies: GwmdSearchCompanyPayload[],
+      edges: GwmdSearchEdgePayload[],
+    ) => {
+      const focalTicker = normalizeGwmdTicker(rootTicker);
+      const companyMap = new Map<string, GwmdSearchCompanyPayload>();
+      const normalizedEdges: GwmdSearchEdgePayload[] = [];
+
+      for (const company of companies) {
+        const ticker = normalizeGwmdTicker(company.ticker || "");
+        if (!ticker || !company.name?.trim()) continue;
+        const existing = companyMap.get(ticker);
+        companyMap.set(ticker, {
+          ...(existing ?? {}),
+          ...company,
+          ticker,
+          name: company.name || existing?.name || ticker,
+        });
+      }
+
+      for (const edge of edges) {
+        const fromTicker = normalizeGwmdTicker(edge.from_ticker || "");
+        const toTicker = normalizeGwmdTicker(edge.to_ticker || "");
+        const relationType = edge.relation_type?.trim().toLowerCase();
+        if (
+          !fromTicker ||
+          !toTicker ||
+          fromTicker === toTicker ||
+          !relationType
+        ) {
+          continue;
+        }
+        normalizedEdges.push({
+          ...edge,
+          id:
+            edge.id && edge.id.trim().length > 0
+              ? edge.id
+              : `${fromTicker}-${toTicker}-${relationType}`,
+          from_ticker: fromTicker,
+          to_ticker: toTicker,
+          relation_type: relationType,
+        });
+      }
+
+      if (!companyMap.has(focalTicker)) {
+        const edgeTouchesRoot = normalizedEdges.some(
+          (edge) =>
+            edge.from_ticker === focalTicker || edge.to_ticker === focalTicker,
+        );
+        if (!edgeTouchesRoot) {
+          return { companies: [], edges: [] };
+        }
+        companyMap.set(focalTicker, {
+          ticker: focalTicker,
+          name: focalTicker,
+        });
+      }
+
+      const included = new Set<string>([focalTicker]);
+      let changed = true;
+      while (changed) {
+        changed = false;
+        for (const edge of normalizedEdges) {
+          const touches =
+            included.has(edge.from_ticker) || included.has(edge.to_ticker);
+          if (!touches) continue;
+          if (!included.has(edge.from_ticker)) {
+            included.add(edge.from_ticker);
+            changed = true;
+          }
+          if (!included.has(edge.to_ticker)) {
+            included.add(edge.to_ticker);
+            changed = true;
+          }
+        }
+      }
+
+      return {
+        companies: Array.from(included)
+          .map((ticker) => companyMap.get(ticker))
+          .filter((company): company is GwmdSearchCompanyPayload => !!company),
+        edges: normalizedEdges.filter(
+          (edge) =>
+            included.has(edge.from_ticker) && included.has(edge.to_ticker),
+        ),
+      };
+    };
+
+    const ingestGwmdSnapshotToLocalVault = async (
+      rootTicker: string,
+      companies: GwmdSearchCompanyPayload[],
+      edges: GwmdSearchEdgePayload[],
+      cacheHit: boolean,
+    ) => {
+      let displayCompanies = companies;
+      let displayEdges = edges;
+
+      try {
+        const {
+          canUseGwmdVault,
+          lookupGwmdResearchScope,
+          mergeGwmdResultsWithVault,
+        } = require("./services/GWMD/gwmdVaultBridge");
+        const { persistGwmdCandidates } = require("./services/GWMD/gwmdCandidateWriter");
+
+        if (canUseGwmdVault()) {
+          const scope = lookupGwmdResearchScope(
+            companies.map((company) => company.ticker),
+          );
+          persistGwmdCandidates({
+            rootTicker,
+            companies,
+            edges,
+            scope,
+          });
+          const merged = mergeGwmdResultsWithVault({
+            companies,
+            edges,
+          });
+          displayCompanies = merged.companies;
+          displayEdges = merged.edges;
+        }
+      } catch (vaultError) {
+        console.warn(
+          `[gwmdMap] Cloud fallback vault ingest failed for ${rootTicker}`,
+          vaultError,
+        );
+      }
+
+      try {
+        const { mapGwmdToMindMap } = require("./services/GWMD/gwmdToMindMap");
+        const mappedMindMapData = mapGwmdToMindMap(
+          rootTicker,
+          displayCompanies,
+          displayEdges,
+        );
+        await ensureGraphEnrichmentService().ingestMindMapResult({
+          mindMapData: mappedMindMapData,
+          queryUsage: {
+            queryText: `gwmd:${rootTicker}`,
+            queryCluster: "gwmd_map",
+            cacheHit,
+          },
+        });
+      } catch (ingestError) {
+        console.warn(
+          `[gwmdMap] Cloud fallback graph enrichment ingest failed for ${rootTicker}`,
+          ingestError,
+        );
+      }
+
+      const { gwmdMapRepo } = require("./persistence/gwmdMapRepo");
+      gwmdMapRepo.addCompanies(displayCompanies);
+      gwmdMapRepo.addRelationships(displayEdges);
+      gwmdMapRepo.logSearch(rootTicker, displayCompanies.length, displayEdges.length);
+      broadcastGwmdGraphUpdated();
+
+      return {
+        companies: displayCompanies,
+        edges: displayEdges,
+      };
+    };
+
+    const tryAutoPushGwmdSearchSnapshot = async (
+      companies: GwmdSearchCompanyPayload[],
+      edges: GwmdSearchEdgePayload[],
+    ): Promise<GwmdCloudSyncStatusPayload | null> => {
+      try {
+        if (!backendApiClient || !(await bindBackendToken())) {
+          return null;
+        }
+
+        const payload = buildGwmdCloudPayload(companies, edges);
+        if (
+          payload.companies.length === 0 &&
+          payload.relationships.length === 0
+        ) {
+          return null;
+        }
+
+        const response = await backendApiClient.gwmdPushSync({
+          ...payload,
+          replace: false,
+        });
+        return response.status ?? null;
+      } catch (error) {
+        console.warn("[gwmdMap] Auto cloud push skipped", error);
+        return null;
+      }
+    };
+
+    const tryGwmdCloudFallback = async (
+      ticker: string,
+      requestedHops?: number,
+    ) => {
+      const normalizedTicker = normalizeGwmdTicker(ticker);
+
+      try {
+        if (!backendApiClient || !(await bindBackendToken())) {
+          return null;
+        }
+
+        const response = await backendApiClient.gwmdPullSync();
+        const scoped = scopeGwmdGraph(
+          normalizedTicker,
+          (response.data?.companies ?? []) as GwmdSearchCompanyPayload[],
+          (response.data?.relationships ?? []) as GwmdSearchEdgePayload[],
+        );
+
+        if (scoped.companies.length === 0 && scoped.edges.length === 0) {
+          return null;
+        }
+
+        const hydrated = await ingestGwmdSnapshotToLocalVault(
+          normalizedTicker,
+          scoped.companies,
+          scoped.edges,
+          true,
+        );
+
+        return {
+          success: true,
+          status: "degraded_cache" as const,
+          companies: hydrated.companies,
+          edges: hydrated.edges,
+          meta: {
+            status: "degraded_cache" as const,
+            source: "cloud_sync" as const,
+            degraded: true,
+            reason: "upstream_failed" as const,
+            unlocatedCount: hydrated.companies.filter(
+              (company) => company.hq_lat == null || company.hq_lon == null,
+            ).length,
+            hypothesisRatio: 0,
+            primaryRelationshipCount: hydrated.edges.length,
+            hop2SeedCount: 0,
+            requestedHops:
+              typeof requestedHops === "number" &&
+              Number.isFinite(requestedHops)
+                ? Math.max(1, Math.min(3, Math.floor(requestedHops)))
+                : 2,
+            expandedTickerCount: Math.max(0, hydrated.companies.length - 1),
+            cloudStatus: response.status ?? null,
+          },
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (message.includes("gwmd_sync_unavailable_no_database")) {
+          console.warn("[gwmdMap] Cloud fallback unavailable: backend GWMD sync is disabled");
+        } else {
+          console.warn(
+            `[gwmdMap] Cloud fallback failed for ${normalizedTicker}`,
+            error,
+          );
+        }
+        return null;
+      }
     };
 
     // --- IPC handlers (Prompt 5) ---
@@ -4764,6 +5177,11 @@ app.whenReady().then(async () => {
             console.warn("[gwmdMap] Graph enrichment ingest failed", ingestErr);
           }
 
+          const cloudStatus =
+            result.meta.status === "ok" && result.meta.source === "fresh"
+              ? await tryAutoPushGwmdSearchSnapshot(result.companies, result.edges)
+              : null;
+
           console.log(
             `[gwmdMap] Found ${result.companies.length} companies and ${result.edges.length} relationships`,
           );
@@ -4773,7 +5191,10 @@ app.whenReady().then(async () => {
             status: result.meta.status,
             companies: result.companies,
             edges: result.edges,
-            meta: result.meta,
+            meta: {
+              ...result.meta,
+              ...(cloudStatus ? { cloudStatus } : {}),
+            },
           };
         } catch (err) {
           console.error("[main] gwmdMap:search error", err);
@@ -4784,6 +5205,15 @@ app.whenReady().then(async () => {
               /parse|quality checks/i.test(err.message))
               ? "parse_fail"
               : "error";
+
+          const cloudFallback = await tryGwmdCloudFallback(
+            payload.ticker,
+            payload.hops,
+          );
+          if (cloudFallback) {
+            return cloudFallback;
+          }
+
           return {
             success: false,
             status,

@@ -109,6 +109,9 @@ export class BackendApiClient {
     if (!tenantId && this.getTenantId) {
       tenantId = await this.getTenantId();
     }
+    if (!tenantId || !tenantId.trim()) {
+      tenantId = "default";
+    }
 
     const headers: HeadersInit = {
       "Content-Type": "application/json",

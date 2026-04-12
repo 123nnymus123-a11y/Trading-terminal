@@ -10,7 +10,8 @@ function asIpcListener(listener: unknown): IpcCompatListener {
 }
 
 const strictIpcAllowlistEnabled =
-  String(process.env.IPC_STRICT_ALLOWLIST_ENABLED ?? "false") === "true";
+  String(process.env.IPC_STRICT_ALLOWLIST_ENABLED ?? "").toLowerCase() === "true" ||
+  process.env.NODE_ENV === "production";
 
 const allowedIpcPrefixes = [
   "cockpit:",
@@ -117,9 +118,6 @@ async function resolveBackendWsEndpoint(token?: string): Promise<string> {
   parsed.protocol = parsed.protocol === "https:" ? "wss:" : "ws:";
   parsed.pathname = "/ws";
   parsed.search = "";
-  if (token) {
-    parsed.searchParams.set("token", token);
-  }
   return parsed.toString();
 }
 
@@ -160,7 +158,9 @@ async function connectBackendWs(): Promise<boolean> {
   try {
     const token = await resolveAuthToken();
     const endpoint = await resolveBackendWsEndpoint(token);
-    backendWs = new WebSocket(endpoint);
+    backendWs = token
+      ? new WebSocket(endpoint, ["Bearer", token])
+      : new WebSocket(endpoint);
 
     backendWs.onopen = () => {
       backendWsReconnectAttempt = 0;

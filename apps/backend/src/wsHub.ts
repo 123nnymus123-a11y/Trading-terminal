@@ -42,18 +42,6 @@ function parseTokenFromProtocols(rawProtocol?: string): string | null {
   return parts[1] ?? null;
 }
 
-function parseTokenFromUrl(rawUrl: string | undefined): string | null {
-  if (!rawUrl) {
-    return null;
-  }
-  try {
-    const url = new URL(rawUrl, 'http://localhost');
-    return url.searchParams.get('token');
-  } catch {
-    return null;
-  }
-}
-
 function normalizeSymbols(symbols: string[]): string[] {
   return [...new Set(symbols.map((symbol) => symbol.trim().toUpperCase()).filter(Boolean))];
 }
@@ -74,11 +62,7 @@ export function attachWebSocket(
   wss.on('connection', (socket: WebSocket, req) => {
     const tokenFromHeader = extractBearerToken(req.headers.authorization);
     const tokenFromProtocol = parseTokenFromProtocols(req.headers['sec-websocket-protocol']);
-    const tokenFromUrl = parseTokenFromUrl(req.url);
-    const token =
-      tokenFromHeader ??
-      tokenFromProtocol ??
-      (env.WS_REVOCATION_CHECKS_ENABLED ? null : tokenFromUrl);
+    const token = tokenFromHeader ?? tokenFromProtocol;
 
     if (!token) {
       const payload = wsServerErrorSchema.parse({ type: 'error', reason: 'missing_token' });

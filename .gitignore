@@ -18,6 +18,8 @@ builder-debug.yml
 .env
 .env.local
 .env.*.local
+.env.production
+.env.production.*
 
 # Logs
 logs/

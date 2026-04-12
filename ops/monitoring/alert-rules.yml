@@ -33,3 +33,33 @@ groups:
         annotations:
           summary: High P95 request latency
           description: Backend p95 latency has been over 1 second for 10 minutes.
+
+      - alert: TradingTerminalAuthBruteforceSuspected
+        expr: |
+          sum(rate(tc_http_requests_total{route=~".*/api/auth/login",status="401"}[5m])) > 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Suspicious repeated login failures
+          description: Login 401 responses are elevated, potential credential stuffing or brute-force attempts.
+
+      - alert: TradingTerminalAuthLockoutRateHigh
+        expr: |
+          sum(rate(tc_http_requests_total{route=~".*/api/auth/login",status="429"}[5m])) > 0.2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Elevated auth lockout activity
+          description: Repeated login lockouts detected; investigate abuse patterns and source IPs.
+
+      - alert: TradingTerminalUnauthorizedBurst
+        expr: |
+          sum(rate(tc_http_requests_total{status=~"401|403"}[5m])) > 3
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: High unauthorized/forbidden response rate
+          description: Significant authorization failures detected across API routes.

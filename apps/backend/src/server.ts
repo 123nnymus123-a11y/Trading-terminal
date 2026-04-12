@@ -18,6 +18,9 @@ import {
   gwmdSyncPullResponseSchema,
   gwmdSyncPushRequestSchema,
   gwmdSyncPushResponseSchema,
+  graphSorFactUpsertRequestSchema,
+  graphSorFactUpsertResponseSchema,
+  graphSorStatusResponseSchema,
   gwmdSyncStatusResponseSchema,
   healthResponseSchema,
   listStrategiesResponseSchema,
@@ -90,6 +93,7 @@ import { createAiResearchService } from "./services/aiResearch/aiResearchService
 import { createAiCongressService } from "./services/congress/aiCongressService.js";
 import { createSupplyChainService } from "./services/supplyChain/supplyChainService.js";
 import { createGwmdCloudService } from "./services/gwmd/gwmdCloudService.js";
+import { createGraphSorService } from "./services/graphSor/graphSorService.js";
 import { createAiOrchestratorService } from "./services/orchestrator/aiOrchestratorService.js";
 import { createAiStewardService } from "./services/steward/aiStewardService.js";
 import { createEconomicInsightsService } from "./services/economicCalendar/economicInsightsService.js";
@@ -206,6 +210,7 @@ export function createServer(
     ? createSupplyChainService(infra.pool, ollama, env)
     : null;
   const gwmdCloud = infra.pool ? createGwmdCloudService(infra.pool) : null;
+  const graphSor = infra.pool ? createGraphSorService(infra.pool) : null;
   const aiOrchestrator = infra.pool
     ? createAiOrchestratorService(infra.pool, env)
     : null;
@@ -570,6 +575,16 @@ export function createServer(
     }),
   );
   app.use(express.json({ limit: "1mb" }));
+  app.use((req: Request, res: Response, next) => {
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Frame-Options", "DENY");
+    res.setHeader("Referrer-Policy", "no-referrer");
+    res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+    if (env.NODE_ENV === "production") {
+      res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+    }
+    next();
+  });
   app.use(
     attachTenantContext(
       env.DEFAULT_TENANT_ID,
@@ -740,7 +755,25 @@ export function createServer(
     next();
   });
 
-  app.get("/metrics/prometheus", async (_req: Request, res: Response) => {
+  const isMetricsAuthorized = (req: Request): boolean => {
+    const candidateAuth = req.headers.authorization;
+    const bearer =
+      typeof candidateAuth === "string" && candidateAuth.startsWith("Bearer ")
+        ? candidateAuth.slice("Bearer ".length).trim()
+        : null;
+    const headerToken =
+      typeof req.headers["x-metrics-token"] === "string"
+        ? req.headers["x-metrics-token"].trim()
+        : null;
+    const token = bearer ?? headerToken;
+    return Boolean(env.METRICS_TOKEN && token && token === env.METRICS_TOKEN);
+  };
+
+  app.get("/metrics/prometheus", async (req: Request, res: Response) => {
+    if (!isMetricsAuthorized(req)) {
+      res.status(401).json({ error: "unauthorized" });
+      return;
+    }
     res.set("Content-Type", metricsRegistry.register.contentType);
     res.end(await metricsRegistry.register.metrics());
   });
@@ -830,7 +863,92 @@ export function createServer(
     res.status(200).json(payload);
   });
 
+  const normalizeAuthIdentifier = (identifier: string): string =>
+    identifier.trim().toLowerCase() || "unknown";
+
+  const buildAuthLoginKeys = (identifier: string, ipAddress: string) => {
+    const normalizedIdentifier = normalizeAuthIdentifier(identifier);
+    const normalizedIp = ipAddress.trim() || "unknown";
+    return {
+      failureKey: `auth:login:fail:${normalizedIdentifier}:${normalizedIp}`,
+      lockKey: `auth:login:lock:${normalizedIdentifier}:${normalizedIp}`,
+    };
+  };
+
+  const enforceSignupRateLimit = async (ipAddress: string): Promise<number | null> => {
+    const normalizedIp = ipAddress.trim() || "unknown";
+    const key = `auth:signup:ip:${normalizedIp}`;
+    const count = await infra.cache.incrementRateKey(
+      key,
+      env.AUTH_SIGNUP_WINDOW_SECONDS,
+    );
+    if (count <= env.AUTH_SIGNUP_MAX_ATTEMPTS_PER_IP) {
+      return null;
+    }
+    return env.AUTH_SIGNUP_WINDOW_SECONDS;
+  };
+
+  const enforceLoginLockout = async (
+    identifier: string,
+    ipAddress: string,
+  ): Promise<number | null> => {
+    const { lockKey } = buildAuthLoginKeys(identifier, ipAddress);
+    const lockUntilMs = await infra.cache.getJson<number>(lockKey);
+    if (!lockUntilMs || lockUntilMs <= Date.now()) {
+      return null;
+    }
+    return Math.ceil((lockUntilMs - Date.now()) / 1000);
+  };
+
+  const registerLoginFailure = async (
+    identifier: string,
+    ipAddress: string,
+    userAgent?: string,
+  ): Promise<number | null> => {
+    const { failureKey, lockKey } = buildAuthLoginKeys(identifier, ipAddress);
+    const failures = await infra.cache.incrementRateKey(
+      failureKey,
+      env.AUTH_LOGIN_WINDOW_SECONDS,
+    );
+    if (failures < env.AUTH_LOGIN_MAX_ATTEMPTS) {
+      return null;
+    }
+
+    const lockUntil = Date.now() + env.AUTH_LOGIN_LOCKOUT_SECONDS * 1000;
+    await infra.cache.setJson(lockKey, lockUntil, env.AUTH_LOGIN_LOCKOUT_SECONDS);
+    if (authSessionStore) {
+      void authSessionStore.writeAuditEvent({
+        eventType: "auth.login_lockout",
+        outcome: "threshold_exceeded",
+        metadata: {
+          identifier: normalizeAuthIdentifier(identifier),
+          failures,
+          lockoutSeconds: env.AUTH_LOGIN_LOCKOUT_SECONDS,
+        },
+        ...(ipAddress ? { ipAddress } : {}),
+        ...(userAgent ? { userAgent } : {}),
+      });
+    }
+    return env.AUTH_LOGIN_LOCKOUT_SECONDS;
+  };
+
+  const clearLoginFailureState = async (identifier: string, ipAddress: string) => {
+    const { failureKey, lockKey } = buildAuthLoginKeys(identifier, ipAddress);
+    await infra.cache.deleteKey(failureKey);
+    await infra.cache.deleteKey(lockKey);
+  };
+
   app.post("/api/auth/signup", async (req: Request, res: Response) => {
+    const signupRetryAfter = await enforceSignupRateLimit(req.ip ?? "unknown");
+    if (signupRetryAfter) {
+      res.set("Retry-After", String(signupRetryAfter));
+      res.status(429).json({
+        error: "signup_rate_limited",
+        retryAfterSeconds: signupRetryAfter,
+      });
+      return;
+    }
+
     const parsed = signupRequestSchema.safeParse(req.body);
     if (!parsed.success) {
       res
@@ -926,15 +1044,46 @@ export function createServer(
     }
 
     const identifier = parsed.data.username ?? parsed.data.email ?? "";
+    const loginIp = req.ip ?? "unknown";
+    const userAgentHeader =
+      typeof req.headers["user-agent"] === "string"
+        ? req.headers["user-agent"]
+        : undefined;
+
+    const lockoutRetryAfter = await enforceLoginLockout(identifier, loginIp);
+    if (lockoutRetryAfter) {
+      res.set("Retry-After", String(lockoutRetryAfter));
+      res.status(429).json({
+        error: "account_temporarily_locked",
+        retryAfterSeconds: lockoutRetryAfter,
+      });
+      return;
+    }
+
     const user = await auth.validateUserCredentials(
       identifier,
       parsed.data.password,
       parsed.data.licenseKey,
     );
     if (!user) {
+      const retryAfter = await registerLoginFailure(
+        identifier,
+        loginIp,
+        userAgentHeader,
+      );
+      if (retryAfter) {
+        res.set("Retry-After", String(retryAfter));
+        res.status(429).json({
+          error: "account_temporarily_locked",
+          retryAfterSeconds: retryAfter,
+        });
+        return;
+      }
       res.status(401).json({ error: "invalid_credentials" });
       return;
     }
+
+    await clearLoginFailureState(identifier, loginIp);
 
     const tokenPair = auth.issueTokenPair(user);
     const response = loginResponseSchema.parse(tokenPair);
@@ -5268,6 +5417,109 @@ export function createServer(
     },
   );
 
+  app.get(
+    "/api/ai/graph/sor/status",
+    authGuard,
+    async (req: Request, res: Response) => {
+      if (!graphSor) {
+        res.status(503).json({ error: "graph_sor_unavailable_no_database" });
+        return;
+      }
+
+      const tenantId = req.tenantContext?.tenantId ?? env.DEFAULT_TENANT_ID;
+      const cacheKey = `graph:sor:status:${tenantId}`;
+      const cached = await infra.cache.getJson<unknown>(cacheKey);
+      if (cached) {
+        res.status(200).json(cached);
+        return;
+      }
+
+      try {
+        const status = await graphSor.getStatus(tenantId);
+        const payload = graphSorStatusResponseSchema.parse({
+          ok: true,
+          status,
+        });
+        await infra.cache.setJson(cacheKey, payload, 30);
+        res.status(200).json(payload);
+      } catch (error) {
+        const errorCode =
+          error && typeof error === "object" && "code" in error
+            ? String((error as { code?: unknown }).code ?? "")
+            : "";
+
+        if (errorCode === "42P01") {
+          res.status(503).json({
+            error: "graph_sor_schema_not_ready",
+            message: "Run backend migration 028_supply_chain_graph_sor.sql",
+          });
+          return;
+        }
+
+        logger.error("graph_sor_status_failed", {
+          error: error instanceof Error ? error.message : "unknown_error",
+        });
+        res.status(500).json({ error: "graph_sor_status_failed" });
+      }
+    },
+  );
+
+  app.post(
+    "/api/ai/graph/sor/facts",
+    authGuard,
+    async (req: Request, res: Response) => {
+      if (!graphSor) {
+        res.status(503).json({ error: "graph_sor_unavailable_no_database" });
+        return;
+      }
+
+      const parsed = graphSorFactUpsertRequestSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res
+          .status(400)
+          .json({ error: "invalid_request", details: parsed.error.flatten() });
+        return;
+      }
+
+      const tenantId = req.tenantContext?.tenantId ?? env.DEFAULT_TENANT_ID;
+
+      try {
+        const applied = await graphSor.upsertFact(parsed.data, tenantId);
+        const payload = graphSorFactUpsertResponseSchema.parse({
+          ok: true,
+          applied,
+        });
+        res.status(200).json(payload);
+      } catch (error) {
+        const errorCode =
+          error && typeof error === "object" && "code" in error
+            ? String((error as { code?: unknown }).code ?? "")
+            : "";
+
+        if (errorCode === "42P01") {
+          res.status(503).json({
+            error: "graph_sor_schema_not_ready",
+            message: "Run backend migration 028_supply_chain_graph_sor.sql",
+          });
+          return;
+        }
+
+        if (errorCode === "23505") {
+          res.status(409).json({
+            error: "graph_sor_conflict",
+            message: "Duplicate relationship or provenance hash",
+          });
+          return;
+        }
+
+        logger.error("graph_sor_fact_upsert_failed", {
+          error: error instanceof Error ? error.message : "unknown_error",
+        });
+        res.status(500).json({ error: "graph_sor_fact_upsert_failed" });
+      }
+    },
+  );
+
   app.post(
     "/api/ai/gwmd/sync/push",
     authGuard,
@@ -5839,7 +6091,22 @@ export function createServer(
     },
   );
 
-  app.get("/metrics", (_req: Request, res: Response) => {
+  app.get("/metrics", (req: Request, res: Response) => {
+    const candidateAuth = req.headers.authorization;
+    const bearer =
+      typeof candidateAuth === "string" && candidateAuth.startsWith("Bearer ")
+        ? candidateAuth.slice("Bearer ".length).trim()
+        : null;
+    const headerToken =
+      typeof req.headers["x-metrics-token"] === "string"
+        ? req.headers["x-metrics-token"].trim()
+        : null;
+    const token = bearer ?? headerToken;
+    if (!env.METRICS_TOKEN || !token || token !== env.METRICS_TOKEN) {
+      res.status(401).json({ error: "unauthorized" });
+      return;
+    }
+
     res.status(200).json({
       ws: readWsMetrics(),
       infra: infra.meta,

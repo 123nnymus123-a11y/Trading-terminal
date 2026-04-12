@@ -86,14 +86,14 @@ async function main() {
         await prepareWindowsNativeDeps();
     }
 
-        // Always rebuild native modules for the target Electron version.
-        // On Windows: rebuild for the installed Electron (fixes ABI mismatch).
-        // On Linux/macOS cross-build: also do a Windows-specific prep.
-        if (process.platform === "win32") {
-            console.log("[build] Rebuilding native modules for Electron (Windows)...");
-            await runElectronBuilder(["install-app-deps"]);
-            console.log("[build] Native modules rebuilt.");
-        }
+    // Always rebuild native modules for the target Electron version.
+    // On Windows: rebuild for the installed Electron (fixes ABI mismatch).
+    // On Linux/macOS cross-build: also do a Windows-specific prep.
+    if (process.platform === "win32") {
+        console.log("[build] Rebuilding native modules for Electron (Windows)...");
+        await runElectronBuilder(["install-app-deps"]);
+        console.log("[build] Native modules rebuilt.");
+    }
 
     await runElectronBuilder(ensurePublishMode([
         "--config",

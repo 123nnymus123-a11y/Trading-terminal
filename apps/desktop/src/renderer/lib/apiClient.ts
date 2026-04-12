@@ -77,7 +77,10 @@ export function setBackendBaseUrl(url: string) {
 
 export function getTenantId(): string | null {
   const value = localStorage.getItem(TENANT_ID_STORAGE_KEY);
-  return value && value.trim() ? value.trim() : null;
+  if (value && value.trim()) {
+    return value.trim();
+  }
+  return "default";
 }
 
 export function setTenantId(value: string | null) {

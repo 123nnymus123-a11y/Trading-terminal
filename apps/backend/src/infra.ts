@@ -97,6 +97,7 @@ type CacheAdapter = {
   getJson: <T>(key: string) => Promise<T | null>;
   setJson: <T>(key: string, value: T, ttlSeconds: number) => Promise<void>;
   incrementRateKey: (key: string, ttlSeconds: number) => Promise<number>;
+  deleteKey: (key: string) => Promise<void>;
 };
 
 class MemoryCache implements CacheAdapter {
@@ -126,6 +127,10 @@ class MemoryCache implements CacheAdapter {
     await this.setJson(key, next, ttlSeconds);
     return next;
   }
+
+  async deleteKey(key: string): Promise<void> {
+    this.store.delete(key);
+  }
 }
 
 class RedisCache implements CacheAdapter {
@@ -136,6 +141,7 @@ class RedisCache implements CacheAdapter {
       set: (...args: unknown[]) => Promise<unknown>;
       incr: (key: string) => Promise<number>;
       expire: (key: string, ttl: number) => Promise<unknown>;
+      del: (key: string) => Promise<number>;
     },
   ) {}
 
@@ -154,6 +160,10 @@ class RedisCache implements CacheAdapter {
       await this.redis.expire(key, ttlSeconds);
     }
     return count;
+  }
+
+  async deleteKey(key: string): Promise<void> {
+    await this.redis.del(key);
   }
 }
 
@@ -695,6 +705,7 @@ export async function createInfra(env: AppEnv): Promise<BackendInfra> {
             set: (...args: unknown[]) => Promise<unknown>;
             incr: (key: string) => Promise<number>;
             expire: (key: string, ttl: number) => Promise<unknown>;
+            del: (key: string) => Promise<number>;
           };
         }
       ).Redis;

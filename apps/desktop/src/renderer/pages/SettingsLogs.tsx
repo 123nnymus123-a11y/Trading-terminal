@@ -1156,16 +1156,16 @@ export default function SettingsLogs() {
     tedWindowQueryParam,
   ]);
 
-    const updateIndicator = useMemo(() => {
-      const state = updateStatus?.state ?? "idle";
-      if (state === "downloaded") return { value: "Ready", status: "success" as const };
-      if (state === "downloading") return { value: `${Math.round(updateStatus?.progress ?? 0)}%`, status: "warning" as const };
-      if (state === "available") return { value: "Available", status: "warning" as const };
-      if (state === "checking") return { value: "Checking…", status: "info" as const };
-      if (state === "error") return { value: "Error", status: "error" as const };
-      if (state === "not-available") return { value: "Up to date", status: "success" as const };
-      return { value: "—", status: "info" as const };
-    }, [updateStatus]);
+  const updateIndicator = useMemo(() => {
+    const state = updateStatus?.state ?? "idle";
+    if (state === "downloaded") return { value: "Ready", status: "success" as const };
+    if (state === "downloading") return { value: `${Math.round(updateStatus?.progress ?? 0)}%`, status: "warning" as const };
+    if (state === "available") return { value: "Available", status: "warning" as const };
+    if (state === "checking") return { value: "Checking…", status: "info" as const };
+    if (state === "error") return { value: "Error", status: "error" as const };
+    if (state === "not-available") return { value: "Up to date", status: "success" as const };
+    return { value: "—", status: "info" as const };
+  }, [updateStatus]);
   const testTedApi = useCallback(async () => {
     setTedApiTesting(true);
     setTedApiTestResult(null);

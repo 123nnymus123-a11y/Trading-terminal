@@ -45,6 +45,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Dependency audit (high+)
+        run: pnpm audit --audit-level high
+
       - name: Typecheck shared package
         run: pnpm -C packages/shared typecheck
 
@@ -59,3 +62,13 @@ jobs:
 
       - name: Build backend
         run: pnpm -C apps/backend build
+
+      - name: Generate SBOM
+        run: pnpm dlx @cyclonedx/cyclonedx-npm --output-file sbom-backend.json
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-sbom
+          path: sbom-backend.json
+          if-no-files-found: error
