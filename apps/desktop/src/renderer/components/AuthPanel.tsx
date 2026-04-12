@@ -14,7 +14,7 @@ type HealthStatus = 'checking' | 'online' | 'offline';
 
 const DEFAULT_LICENSE_KEY =
   (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env
-    ?.VITE_TC_BOOTSTRAP_LICENSE_KEY ?? '007';
+    ?.VITE_TC_BOOTSTRAP_LICENSE_KEY ?? '';
 
 function parseAuthError(error: unknown): string {
   const message = error instanceof Error ? error.message : 'auth_failed';
@@ -79,12 +79,12 @@ export function AuthPanel({ onLogin, onSignup, onAuthenticated, initialError }: 
 
   const [loginIdentifier, setLoginIdentifier] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
-  const [loginLicenseKey, setLoginLicenseKey] = useState(DEFAULT_LICENSE_KEY);
+  const [loginLicenseKey, setLoginLicenseKey] = useState('');
 
   const [signupEmail, setSignupEmail] = useState('');
   const [signupUsername, setSignupUsername] = useState('');
   const [signupPassword, setSignupPassword] = useState('');
-  const [signupLicenseKey, setSignupLicenseKey] = useState(DEFAULT_LICENSE_KEY);
+  const [signupLicenseKey, setSignupLicenseKey] = useState('');
 
   const [backendUrl, setBackendUrl] = useState(getBackendBaseUrl);
   useEffect(() => {
@@ -210,6 +210,7 @@ export function AuthPanel({ onLogin, onSignup, onAuthenticated, initialError }: 
             <label className="loginFieldLabel">LICENSE KEY</label>
             <input
               className="loginInput"
+              placeholder="Enter your license key"
               value={loginLicenseKey}
               onChange={(e) => setLoginLicenseKey(e.target.value)}
               required
@@ -258,6 +259,7 @@ export function AuthPanel({ onLogin, onSignup, onAuthenticated, initialError }: 
             <label className="loginFieldLabel">LICENSE KEY</label>
             <input
               className="loginInput"
+              placeholder="Enter your license key"
               value={signupLicenseKey}
               onChange={(e) => setSignupLicenseKey(e.target.value)}
               required

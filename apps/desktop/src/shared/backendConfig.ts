@@ -1,4 +1,4 @@
-export const DEFAULT_BACKEND_URL = "http://localhost:8787";
+export const DEFAULT_BACKEND_URL = "http://79.76.40.72:8787";
 
 export function normalizeBackendUrl(value: string): string | null {
   const trimmed = value.trim().replace(/\/+$/, "");
