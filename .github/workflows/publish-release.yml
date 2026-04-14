@@ -23,6 +23,6 @@ jobs:
           generate_release_notes: true
           fail_on_unmatched_files: true
           files: |
-            Trading-Terminal-Setup-*.exe
-            Trading-Terminal-Setup-*.exe.blockmap
+            Trading-Terminal-Setup-0.0.19.exe
+            Trading-Terminal-Setup-0.0.19.exe.blockmap
             latest.yml
