@@ -74,9 +74,9 @@ export const EdgeLine: React.FC<EdgeLineProps> = ({
 
   const animationStyle = animated
     ? {
-        animation: 'flow-dash 20s linear infinite',
-        strokeDasharray: '5,5',
-      }
+      animation: 'flow-dash 20s linear infinite',
+      strokeDasharray: '5,5',
+    }
     : {};
 
   return (

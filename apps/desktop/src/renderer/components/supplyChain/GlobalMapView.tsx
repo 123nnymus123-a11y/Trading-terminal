@@ -163,8 +163,8 @@ function buildRingLayout(
       status: failedNodeIds.has(node.id)
         ? 'failed'
         : impactedNodeIds.has(node.id)
-        ? 'impacted'
-        : 'normal',
+          ? 'impacted'
+          : 'normal',
       isSelected: node.id === selectedNodeId,
     },
     type: 'supplyChainNode',

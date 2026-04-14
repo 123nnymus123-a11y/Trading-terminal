@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented in this file.
 
+## v1.2.2 - 2026-04-14
+
+### Added
+- Always-visible desktop version watermark so the installed app clearly shows its current build.
+
+### Changed
+- Desktop release packaging updated to publish a newer updater-compatible version for existing installs.
+
+### Notes
+- Public downloadable desktop package is released as version 0.0.19.
+
 ## v1.2.1 - 2026-04-14
 
 ### Added

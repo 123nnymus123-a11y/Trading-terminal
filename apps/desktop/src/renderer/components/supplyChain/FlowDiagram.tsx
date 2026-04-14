@@ -32,8 +32,8 @@ function normalizedWeight(edge: SupplyChainGraphEdge) {
   const base = edge.weightRange
     ? (edge.weightRange.min + edge.weightRange.max) / 2
     : typeof edge.weight === 'number'
-    ? edge.weight
-    : edge.criticality ?? 1;
+      ? edge.weight
+      : edge.criticality ?? 1;
   if (base <= 1) return Math.max(0.1, base);
   return Math.max(0.1, Math.min(1, Math.log1p(base) / 6));
 }
@@ -134,8 +134,8 @@ function buildFlowData(
     const status = failedNodeIds.has(node.id)
       ? 'failed'
       : impactedNodeIds.has(node.id)
-      ? 'impacted'
-      : 'normal';
+        ? 'impacted'
+        : 'normal';
 
     return {
       id: node.id,

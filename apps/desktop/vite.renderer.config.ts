@@ -1,6 +1,11 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import path from "node:path";
+import fs from "node:fs";
+
+const desktopPackageJson = JSON.parse(
+  fs.readFileSync(path.resolve(__dirname, "package.json"), "utf8"),
+) as { version?: string };
 
 export default defineConfig({
   // IMPORTANT: Make Vite serve apps/desktop/src/renderer as the app root
@@ -58,5 +63,6 @@ export default defineConfig({
 
   define: {
     "process.env": JSON.stringify(process.env),
+    __APP_VERSION__: JSON.stringify(desktopPackageJson.version ?? "dev"),
   },
 });

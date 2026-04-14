@@ -42,6 +42,10 @@ import * as FlowMod from "./pages/Flow";
 import * as ExecuteMod from "./pages/Execute";
 import * as JournalMod from "./pages/Journal";
 
+declare const __APP_VERSION__: string;
+
+const APP_VERSION = __APP_VERSION__ || "dev";
+
 console.log("[App] component file loaded");
 
 let Microscape: React.ComponentType;
@@ -127,6 +131,33 @@ function StatCard({ label, value, hint, tone }: StatCardProps) {
       <div className="statLabel">{label}</div>
       <div className={`statValue ${tone ?? ""}`}>{value}</div>
       {hint && <div className="statHint">{hint}</div>}
+    </div>
+  );
+}
+
+function VersionWatermark() {
+  return (
+    <div
+      style={{
+        position: "fixed",
+        right: 14,
+        bottom: 12,
+        zIndex: 10000,
+        pointerEvents: "none",
+        userSelect: "none",
+        padding: "4px 10px",
+        borderRadius: 999,
+        border: "1px solid rgba(255, 255, 255, 0.12)",
+        background: "rgba(7, 12, 20, 0.78)",
+        color: "rgba(191, 219, 254, 0.88)",
+        fontSize: 11,
+        letterSpacing: "0.08em",
+        fontFamily: "'IBM Plex Mono', monospace",
+        boxShadow: "0 6px 18px rgba(0,0,0,0.25)",
+      }}
+      aria-hidden="true"
+    >
+      Trading Terminal • v{APP_VERSION}
     </div>
   );
 }
@@ -823,35 +854,44 @@ export default function App() {
 
   if (!authReady) {
     return (
-      <div className="loginScreen">
-        <div className="loginCard">
-          <div className="loginHeader">
-            <div className="loginHeaderTitle">TRADING TERMINAL  //  AUTH</div>
-            <div className="loginHeaderSep">{'\u2550'.repeat(48)}</div>
-            <div className="loginHeaderMeta">SYSTEM: TRADING COCKPIT v2.0 &nbsp;&nbsp; &copy; 2026</div>
-          </div>
-          <div style={{ color: '#ff6600', fontSize: 12, letterSpacing: '0.12em', fontFamily: "'IBM Plex Mono', 'Courier New', monospace" }}>
-            AUTHENTICATING...<span className="loginCursor">█</span>
+      <>
+        <div className="loginScreen">
+          <div className="loginCard">
+            <div className="loginHeader">
+              <div className="loginHeaderTitle">TRADING TERMINAL  //  AUTH</div>
+              <div className="loginHeaderSep">{'\u2550'.repeat(48)}</div>
+              <div className="loginHeaderMeta">SYSTEM: TRADING COCKPIT v2.0 &nbsp;&nbsp; &copy; 2026</div>
+            </div>
+            <div style={{ color: '#ff6600', fontSize: 12, letterSpacing: '0.12em', fontFamily: "'IBM Plex Mono', 'Courier New', monospace" }}>
+              AUTHENTICATING...<span className="loginCursor">█</span>
+            </div>
           </div>
         </div>
-      </div>
+        <VersionWatermark />
+      </>
     );
   }
 
   if (!session) {
     return (
-      <AuthPanel
-        onLogin={login}
-        onSignup={signup}
-        onAuthenticated={handleAuthenticated}
-        initialError={authError}
-      />
+      <>
+        <AuthPanel
+          onLogin={login}
+          onSignup={signup}
+          onAuthenticated={handleAuthenticated}
+          initialError={authError}
+        />
+        <VersionWatermark />
+      </>
     );
   }
 
   return (
-    <ErrorBoundary>
-      <TerminalWorkspace onLogout={handleLogout} />
-    </ErrorBoundary>
+    <>
+      <ErrorBoundary>
+        <TerminalWorkspace onLogout={handleLogout} />
+      </ErrorBoundary>
+      <VersionWatermark />
+    </>
   );
 }
