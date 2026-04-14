@@ -107,7 +107,7 @@ export function AuthPanel({ onLogin, onSignup, onAuthenticated, initialError }: 
         loginLicenseKey.trim() === '007' &&
         (import.meta.env?.MODE === 'development' || process.env.NODE_ENV !== 'production')
       ) {
-        const mockSession = {
+        const mockSession: AuthSession = {
           token: 'dev-bypass-token',
           refreshToken: 'dev-bypass-refresh',
           expiresAtMs: Date.now() + 1000 * 60 * 60 * 24,

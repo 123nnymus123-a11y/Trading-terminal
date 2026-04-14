@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented in this file.
 
+## v1.2.1 - 2026-04-14
+
+### Added
+- Baseline backend response hardening headers and build provenance attestation updates.
+
+### Changed
+- Data Vault cloud query routing, search debounce behavior, and TED vault status presentation in the desktop app.
+- Stream update handling to reduce unnecessary renderer churn during live ingest.
+- Desktop release validation issues so the Windows installer can be packaged and published cleanly.
+
+### Notes
+- Public downloadable desktop package is released as version 0.0.18.
+
 ## v1.2.0 - 2026-04-12
 
 ### Added

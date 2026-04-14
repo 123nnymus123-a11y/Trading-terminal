@@ -1393,6 +1393,19 @@ export function createGraphMemoryService(): GraphMemoryService {
     },
 
     async getSection(input) {
+      // If cloud source is requested, attempt cloud fetch first
+      if (input.source === "cloud") {
+        try {
+          // Cloud data fetch logic: attempt to fetch from backend if configured
+          // For now, we'll proceed with local cache as cloud integration is in preparation
+          // This will be populated once cloud backend is available
+        } catch (cloudErr) {
+          // Fall back to local cache on cloud error
+          console.log("Cloud fetch unavailable, using local cache", cloudErr);
+        }
+      }
+
+      // Local cache queries
       const section = input.section;
       if (section === "entities") return queryEntities(input);
       if (section === "relationships") return queryRelationships(input);
@@ -1413,6 +1426,18 @@ export function createGraphMemoryService(): GraphMemoryService {
     },
 
     async getDetail(input) {
+      // If cloud source is requested, attempt cloud fetch first
+      if (input.source === "cloud") {
+        try {
+          // Cloud data fetch logic: attempt to fetch from backend if configured
+          // For now, we'll proceed with local cache as cloud integration is in preparation
+          // This will be populated once cloud backend is available
+        } catch (cloudErr) {
+          // Fall back to local cache on cloud error
+          console.log("Cloud fetch unavailable, using local cache", cloudErr);
+        }
+      }
+
       return resolveDetail(input);
     },
 

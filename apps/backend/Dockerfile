@@ -18,5 +18,6 @@ RUN pnpm -C apps/backend build --noEmitOnError false
 ENV NODE_ENV=production
 WORKDIR /app/apps/backend
 EXPOSE 8787
+USER node
 
 CMD ["node", "dist/index.js"]

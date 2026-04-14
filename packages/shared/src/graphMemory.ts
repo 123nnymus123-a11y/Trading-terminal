@@ -28,6 +28,7 @@ export type GraphMemorySectionQuery = {
   sortBy?: string;
   sortDirection?: GraphMemorySortDirection;
   filters?: GraphMemoryFilters;
+  source?: "cloud" | "device";
 };
 
 export type GraphMemoryEntityRow = {
@@ -208,6 +209,7 @@ export type GraphMemoryDetailRequest = {
   section: GraphMemorySection;
   id: string;
   recordType?: "entity" | "edge";
+  source?: "cloud" | "device";
 };
 
 export type GraphMemoryDetail = {

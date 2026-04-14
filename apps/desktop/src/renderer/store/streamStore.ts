@@ -31,37 +31,76 @@ export const useStreamStore = create<StreamState>((set, get) => ({
   ingest: (events) => {
     if (!events.length) return;
 
-    const nextPrices = { ...get().lastPrices };
-    let nextHb = get().lastHeartbeat;
-    let nextSource = get().source;
-    let nextReplay = get().replay;
+    const state = get();
+    let nextPrices = state.lastPrices;
+    let nextHb = state.lastHeartbeat;
+    let nextSource = state.source;
+    let nextReplay = state.replay;
+    let pricesChanged = false;
+    let heartbeatChanged = false;
+    let sourceChanged = false;
+    let replayChanged = false;
 
     for (const e of events) {
       if (e.type === "system.heartbeat") {
-        nextHb = { seq: e.seq, ts: e.ts };
-        nextSource = (e.source as any) ?? nextSource;
+        if (!nextHb || nextHb.seq !== e.seq || nextHb.ts !== e.ts) {
+          nextHb = { seq: e.seq, ts: e.ts };
+          heartbeatChanged = true;
+        }
+        const hbSource = (e.source as any) ?? nextSource;
+        if (hbSource !== nextSource) {
+          nextSource = hbSource;
+          sourceChanged = true;
+        }
       }
 
       if (e.type === "market.print") {
-        nextPrices[e.symbol] = {
+        const current = nextPrices[e.symbol];
+        const next = {
           price: e.price,
           ts: e.ts,
           source: (e.source as any) ?? "demo",
         };
-        nextSource = (e.source as any) ?? nextSource;
+        if (
+          !current ||
+          current.price !== next.price ||
+          current.ts !== next.ts ||
+          current.source !== next.source
+        ) {
+          if (!pricesChanged) {
+            nextPrices = { ...nextPrices };
+            pricesChanged = true;
+          }
+          nextPrices[e.symbol] = next;
+        }
+        const printSource = (e.source as any) ?? nextSource;
+        if (printSource !== nextSource) {
+          nextSource = printSource;
+          sourceChanged = true;
+        }
       }
 
       if (e.type === "system.replay.state") {
-        nextReplay = e.state;
-        nextSource = "replay";
+        if (nextReplay !== e.state) {
+          nextReplay = e.state;
+          replayChanged = true;
+        }
+        if (nextSource !== "replay") {
+          nextSource = "replay";
+          sourceChanged = true;
+        }
       }
     }
 
+    if (!pricesChanged && !heartbeatChanged && !sourceChanged && !replayChanged) {
+      return;
+    }
+
     set({
-      lastHeartbeat: nextHb,
-      lastPrices: nextPrices,
-      source: nextSource,
-      replay: nextReplay,
+      ...(heartbeatChanged ? { lastHeartbeat: nextHb } : {}),
+      ...(pricesChanged ? { lastPrices: nextPrices } : {}),
+      ...(sourceChanged ? { source: nextSource } : {}),
+      ...(replayChanged ? { replay: nextReplay } : {}),
     });
   },
 }));

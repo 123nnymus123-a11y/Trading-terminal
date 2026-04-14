@@ -155,6 +155,7 @@ export function createServer(
   infra: BackendInfra,
 ) {
   const app = express();
+  app.disable("x-powered-by");
   const corsOriginRaw = env.CORS_ORIGIN.trim();
   if (env.NODE_ENV === "production" && corsOriginRaw === "*") {
     throw new Error("CORS_ORIGIN cannot be '*' in production");
@@ -578,8 +579,15 @@ export function createServer(
   app.use((req: Request, res: Response, next) => {
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("X-Frame-Options", "DENY");
+    res.setHeader("X-DNS-Prefetch-Control", "off");
     res.setHeader("Referrer-Policy", "no-referrer");
+    res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
+    res.setHeader("Cross-Origin-Resource-Policy", "same-site");
     res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+    res.setHeader(
+      "Content-Security-Policy",
+      "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+    );
     if (env.NODE_ENV === "production") {
       res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
     }

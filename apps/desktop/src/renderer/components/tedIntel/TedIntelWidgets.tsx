@@ -666,55 +666,26 @@ export function TedEntityResolutionPanel({ windowDays = "90d" }: { windowDays?: 
 // ─── Panel: Data Vault ────────────────────────────────────────────────────────
 
 export function TedDataVaultPanel({ windowDays = "90d" }: { windowDays?: TedIntelTimeWindow }) {
-  const { snapshot, loading, error } = useTedIntel(windowDays);
-
-  const zoneCounts = useMemo(() => {
-    if (!snapshot) return { raw: 0, candidate: 0, validated: 0, production: 0 };
-    return snapshot.vaultRecords.reduce((acc, r) => { acc[r.zone] = (acc[r.zone] ?? 0) + 1; return acc; }, { raw: 0, candidate: 0, validated: 0, production: 0 } as Record<TedIntelVaultRecord["zone"], number>);
-  }, [snapshot]);
-
   return (
-    <div style={shellStyle}>
-      <PanelHeader title="TED Vault Layer" subtitle="Four-zone data lifecycle: raw → candidate → validated → production" badge={windowDays.toUpperCase()} snapshot={snapshot} />
-      {loading && !snapshot ? <LoadingState label="Loading vault lineage..." /> : null}
-      {error ? <ErrorState error={error} /> : null}
-
-      {snapshot ? (
-        <div style={{ display: "grid", gap: 14 }}>
-          <LiveDataBanner />
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 10 }}>
-            {(["raw", "candidate", "validated", "production"] as const).map((zone) => (
-              <div key={zone} style={{ ...cardStyle, borderTop: `3px solid ${zoneColor(zone)}`, textAlign: "center" }}>
-                <div style={{ fontSize: 20, fontWeight: 800, color: zoneColor(zone) }}>{zoneCounts[zone]}</div>
-                <div style={{ marginTop: 3, fontSize: 10, textTransform: "uppercase", letterSpacing: 0.7, color: zoneColor(zone) }}>{zone}</div>
-              </div>
-            ))}
-          </div>
-
-          <div style={cardStyle}>
-            <SectionLabel text="Audit Trail" />
-            <div style={{ display: "grid", gap: 5 }}>
-              {snapshot.dataVault.auditTrail.map((item) => <div key={item} style={{ fontSize: 11, opacity: 0.78, lineHeight: 1.45 }}>{item}</div>)}
-            </div>
-          </div>
-
-          <div>
-            <SectionLabel text="Notice Records" />
-            <div style={{ display: "grid", gap: 6 }}>
-              {snapshot.vaultRecords.map((record) => (
-                <div key={record.noticeId} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 11, padding: "6px 0", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
-                  <div style={{ opacity: 0.75 }}>{record.noticeId}</div>
-                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                    <VaultZoneBadge zone={record.zone} />
-                    {record.exportEligible && <span style={{ fontSize: 9, color: "#4ade80", opacity: 0.7 }}>✓ export</span>}
-                    {record.revalidatable && <span style={{ fontSize: 9, color: "#93c5fd", opacity: 0.6 }}>↺ revalidatable</span>}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      ) : null}
+    <div style={{ ...cardStyle, display: "flex", alignItems: "center", justifyContent: "space-between", minHeight: 40 }}>
+      <div>
+        <div style={{ fontSize: 12, fontWeight: 700 }}>TED Vault Layer</div>
+        <div style={{ fontSize: 10, opacity: 0.6, marginTop: 2 }}>Cloud-based data lifecycle management</div>
+      </div>
+      <div style={{
+        fontSize: 10,
+        padding: "3px 8px",
+        borderRadius: 5,
+        background: "rgba(251, 191, 36, 0.15)",
+        color: "#fbbf24",
+        border: "1px solid rgba(251, 191, 36, 0.3)",
+        textTransform: "uppercase",
+        letterSpacing: 0.5,
+        fontWeight: 700,
+        whiteSpace: "nowrap"
+      }}>
+        🚧 Under Construction
+      </div>
     </div>
   );
 }

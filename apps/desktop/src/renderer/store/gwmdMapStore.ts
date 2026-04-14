@@ -20,17 +20,6 @@ type GwmdAiModelSelection =
   | null
   | undefined;
 
-type GwmdAiModelSelection =
-  | string
-  | {
-      provider?: string;
-      model?: string;
-      temperature?: number;
-      maxTokens?: number;
-    }
-  | null
-  | undefined;
-
 const isGwmdDebugEnabled = () => {
   if (!import.meta.env.DEV || typeof window === "undefined") return false;
   return window.sessionStorage.getItem("gwmd:debug") === "1";
@@ -1536,11 +1525,7 @@ export const useGwmdMapStore = create<GwmdMapState>((set, get) => ({
             initialCompanyCount > 0 &&
             (initialCompanyCount <= 4 || initialEdgeCount <= 3);
 
-          if (
-            looksSuspiciouslySmall &&
-            sourceMode !== "fresh" &&
-            sourceMode !== "cache_only"
-          ) {
+          if (looksSuspiciouslySmall && sourceMode === "hybrid") {
             const retryHops = Math.max(3, requestedHops);
             gwmdDebugLog(
               `[gwmdMapStore] Thin GWMD graph detected (${initialCompanyCount} companies, ${initialEdgeCount} edges) for ${normalizedTicker}; retrying with fresh mode at ${retryHops} hops`,

@@ -205,7 +205,7 @@ export default function GlobalMapView(props: Props) {
   const nodeTypes = useMemo(
     () => ({
       supplyChainNode: (nodeProps: NodeProps) => (
-        <SupplyChainNode data={nodeProps.data as SupplyChainNodeData} selected={nodeProps.selected} />
+        <SupplyChainNode data={nodeProps.data as unknown as SupplyChainNodeData} selected={nodeProps.selected} />
       ),
     }),
     []

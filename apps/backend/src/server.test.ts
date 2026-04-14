@@ -209,6 +209,20 @@ describe("backend auth + ws", () => {
     expect(authorizedMetrics.status).toBe(200);
   });
 
+  it("sets baseline security headers on API responses", async () => {
+    const response = await request(app).get("/health");
+
+    expect(response.status).toBe(200);
+    expect(response.headers["x-content-type-options"]).toBe("nosniff");
+    expect(response.headers["x-frame-options"]).toBe("DENY");
+    expect(response.headers["x-dns-prefetch-control"]).toBe("off");
+    expect(response.headers["referrer-policy"]).toBe("no-referrer");
+    expect(response.headers["cross-origin-opener-policy"]).toBe("same-origin");
+    expect(response.headers["cross-origin-resource-policy"]).toBe("same-site");
+    expect(response.headers["content-security-policy"]).toContain("default-src 'none'");
+    expect(response.headers["x-powered-by"]).toBeUndefined();
+  });
+
   it("locks account temporarily after repeated login failures", async () => {
     for (let i = 0; i < env.AUTH_LOGIN_MAX_ATTEMPTS - 1; i += 1) {
       const response = await request(app).post("/api/auth/login").send({

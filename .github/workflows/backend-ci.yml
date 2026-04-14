@@ -11,6 +11,11 @@ on:
       - "package.json"
       - "tsconfig.base.json"
       - ".github/workflows/backend-ci.yml"
+
+permissions:
+  contents: read
+  attestations: write
+  id-token: write
   push:
     branches:
       - main
@@ -72,3 +77,10 @@ jobs:
           name: backend-sbom
           path: sbom-backend.json
           if-no-files-found: error
+
+      - name: Attest backend build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            apps/backend/dist/**
+            sbom-backend.json

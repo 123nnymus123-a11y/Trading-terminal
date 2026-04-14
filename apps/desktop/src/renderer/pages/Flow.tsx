@@ -161,7 +161,6 @@ function TimelineView(props: { payload: EdgarFlowIntelPayload; filter: string })
               background: item.filing_url ? "rgba(59,130,246,0.08)" : "rgba(0,0,0,0.2)",
               cursor: item.filing_url ? "pointer" : "default",
               transition: "all 0.2s ease",
-              "&:hover": item.filing_url ? { borderColor: "rgba(96,165,250,0.8)", background: "rgba(59,130,246,0.14)" } : {},
             }}
             onMouseEnter={(e) => {
               if (item.filing_url) {

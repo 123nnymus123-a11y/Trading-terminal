@@ -8,17 +8,17 @@ const BASELINE_SCHEMA_VERSION = 0;
 const LATEST_SCHEMA_VERSION = 5;
 
 let db: Database.Database | null = null;
-let databaseCtor: typeof import("better-sqlite3")["default"] | null = null;
+let databaseCtor: typeof import("better-sqlite3") | null = null;
 
-function resolveDatabaseCtor(): typeof import("better-sqlite3")["default"] {
+function resolveDatabaseCtor(): typeof import("better-sqlite3") {
   if (databaseCtor) {
     return databaseCtor;
   }
 
   try {
     const loaded = require("better-sqlite3") as
-      | typeof import("better-sqlite3")["default"]
-      | { default?: typeof import("better-sqlite3")["default"] };
+      | typeof import("better-sqlite3")
+      | { default?: typeof import("better-sqlite3") };
     const ctor =
       typeof loaded === "function"
         ? loaded

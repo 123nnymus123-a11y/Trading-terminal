@@ -3,11 +3,10 @@
  * Animated supply chain edge with gradient stroke, direction arrows, and flow indicators
  */
 
-import React, { useMemo } from 'react';
+import React from 'react';
 import {
   EdgeProps,
   getBezierPath,
-  MarkerType,
 } from '@xyflow/react';
 import {
   RelationColors,
@@ -120,14 +119,6 @@ export const EdgeLine: React.FC<EdgeLineProps> = ({
         />
       )}
 
-      {/* Arrow marker (if provided) */}
-      {markerEnd && (
-        <MarkerType.ArrowClosed
-          id={`${id}-arrow`}
-          color={baseColor}
-          strokeWidth={strokeWidth}
-        />
-      )}
     </>
   );
 };

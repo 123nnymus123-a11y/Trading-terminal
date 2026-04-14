@@ -212,8 +212,16 @@ export default function DataVault() {
     confidenceBand: "all",
     freshnessBand: "all",
   });
+  const [debouncedSearch, setDebouncedSearch] = useState("");
 
   const cloud = dashboard?.cloud;
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedSearch((filters.search ?? "").trim());
+    }, 220);
+    return () => window.clearTimeout(timer);
+  }, [filters.search]);
 
   const fetchDashboard = async () => {
     const res = await window.cockpit?.graphMemory?.getDashboard?.();
@@ -230,13 +238,19 @@ export default function DataVault() {
       return;
     }
 
+    const sectionFilters: GraphMemoryFilters = {
+      ...filters,
+      search: debouncedSearch,
+    };
+
     const payload: GraphMemorySectionQuery = {
       section: activeSection,
       page,
       pageSize,
       sortBy: sort.sortBy,
       sortDirection: sort.sortDirection,
-      filters,
+      filters: sectionFilters,
+      source: "cloud",
     };
 
     const res = await window.cockpit?.graphMemory?.getSection?.(payload);
@@ -261,9 +275,6 @@ export default function DataVault() {
       setError(null);
       try {
         await fetchDashboard();
-        if (!cancelled) {
-          await fetchSection();
-        }
       } catch (err) {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : String(err));
@@ -280,7 +291,37 @@ export default function DataVault() {
     return () => {
       cancelled = true;
     };
-  }, [activeSection, page, pageSize, sort.sortBy, sort.sortDirection, filters.search, filters.zone, filters.status, filters.type, filters.sourceType, filters.confidenceBand, filters.freshnessBand]);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const run = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        if (activeSection === "overview") {
+          await fetchDashboard();
+          return;
+        }
+        await fetchSection();
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : String(err));
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    };
+
+    void run();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeSection, page, pageSize, sort.sortBy, sort.sortDirection, debouncedSearch, filters.zone, filters.status, filters.type, filters.sourceType, filters.confidenceBand, filters.freshnessBand]);
 
   const onRowSelect = async (row: Record<string, unknown>) => {
     setSelectedRow(row);
@@ -303,6 +344,7 @@ export default function DataVault() {
       const res = await window.cockpit?.graphMemory?.getDetail?.({
         section: activeSection,
         id: idCandidate,
+        source: "cloud",
         ...(recordType ? { recordType } : {}),
       });
 
@@ -779,6 +821,15 @@ function OverviewBlock(props: {
   title: string;
   rows: Array<Record<string, unknown>>;
 }) {
+  const displayRows = useMemo(
+    () =>
+      props.rows.slice(0, 10).map((row) => ({
+        row,
+        summary: JSON.stringify(row).replace(/[{}\[\]"]/g, ""),
+      })),
+    [props.rows],
+  );
+
   return (
     <div style={{
       border: "1px solid rgba(120, 147, 183, 0.2)",
@@ -788,11 +839,11 @@ function OverviewBlock(props: {
       minHeight: 140,
     }}>
       <div style={{ fontSize: 11, letterSpacing: 0.5, textTransform: "uppercase", color: "#93aecd", marginBottom: 7 }}>{props.title}</div>
-      {props.rows.length === 0 ? (
+      {displayRows.length === 0 ? (
         <div style={{ color: "#7f97b6", fontSize: 12 }}>No data available.</div>
       ) : (
         <div style={{ display: "grid", gap: 6 }}>
-          {props.rows.slice(0, 10).map((row, index) => (
+          {displayRows.map(({ row, summary }, index) => (
             <div key={`${props.title}-${index}`} style={{
               borderBottom: "1px dashed rgba(130, 154, 188, 0.24)",
               paddingBottom: 5,
@@ -800,7 +851,7 @@ function OverviewBlock(props: {
               gridTemplateColumns: "1fr auto",
               gap: 7,
             }}>
-              <span style={{ color: "#d3e1f6", fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{JSON.stringify(row).replace(/[{}\[\]"]/g, "")}</span>
+              <span style={{ color: "#d3e1f6", fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{summary}</span>
               {typeof row.count === "number" ? <span style={{ color: "#9bc3f6", fontWeight: 700 }}>{row.count}</span> : null}
             </div>
           ))}

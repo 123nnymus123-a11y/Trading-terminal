@@ -9,6 +9,7 @@
       "vite/client"
     ],
     "strict": false,
+    "ignoreDeprecations": "6.0",
     "exactOptionalPropertyTypes": false,
     "noUncheckedIndexedAccess": false,
     "allowImportingTsExtensions": true,
