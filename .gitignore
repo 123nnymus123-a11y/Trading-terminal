@@ -6,10 +6,8 @@ dist/
 build/
 *.asar
 
-# Installer artifacts — published as GitHub Releases, never committed
+# Installer artifacts for the public desktop download repo
 release/
-*.exe
-*.blockmap
 *.zip
 *.tar.gz
 builder-debug.yml
@@ -33,3 +31,5 @@ Thumbs.db
 
 # Tauri build artefacts
 src-tauri/target/
+
+win-unpacked/

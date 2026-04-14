@@ -1,17 +1,11 @@
 # Trading Terminal Desktop Installer
 
-This repository contains the desktop application installer for Trading Terminal.
+This repository contains the public Windows release artifacts for Trading Terminal.
 
-## Installation
+## Download
 
-To install Trading Terminal on Windows, download and run:
+Download the latest installer directly from this repository:
 
+- Trading-Terminal-Setup-0.0.18.exe
 
-GO TO LATEST RELEASE AND DOWNLOAD
-**Trading Terminal Setup 0.0.14.exe**
-
-The installer will guide you through the setup process.
-
-
-
-For more information, visit the project website or documentation.
+The latest auto-update metadata is also included in latest.yml.
