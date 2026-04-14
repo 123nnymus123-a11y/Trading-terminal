@@ -1,8 +1,8 @@
-version: 0.0.19
+version: 0.0.20
 files:
-  - url: Trading-Terminal-Setup-0.0.19.exe
-    sha512: Gmrkm6fgyPHGayFNE/iBG0PvghZpRbdaC/RKbp2XMjvCxPDu3FgXphQF6/d1CbcZpWJ6EchfeJv8sOMuRsTVsQ==
-    size: 88938605
-path: Trading-Terminal-Setup-0.0.19.exe
-sha512: Gmrkm6fgyPHGayFNE/iBG0PvghZpRbdaC/RKbp2XMjvCxPDu3FgXphQF6/d1CbcZpWJ6EchfeJv8sOMuRsTVsQ==
-releaseDate: '2026-04-14T19:11:43.906Z'
+  - url: Trading-Terminal-Setup-0.0.20.exe
+    sha512: cA22KPKUbd9CjI0tWKvvBEauJj7RtcoubzxYABbsj+OveqbqPcxNyzRQ2/eoDcwXqRsoyVcaVzbbGElfb/kfgA==
+    size: 89134552
+path: Trading-Terminal-Setup-0.0.20.exe
+sha512: cA22KPKUbd9CjI0tWKvvBEauJj7RtcoubzxYABbsj+OveqbqPcxNyzRQ2/eoDcwXqRsoyVcaVzbbGElfb/kfgA==
+releaseDate: '2026-04-14T20:05:48.285Z'
