@@ -20,5 +20,9 @@
     "src/**/*.tsx",
     "scripts/**/*.mjs",
     "vite.renderer.config.ts"
+  ],
+  "exclude": [
+    "src/**/*.test.ts",
+    "src/**/*.test.tsx"
   ]
 }

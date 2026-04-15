@@ -220,9 +220,22 @@ function saveLocalAiConfig(next: AiConfig): void {
 
 async function checkRuntimeViaHttp(): Promise<AiRuntimeStatus> {
   try {
-    // Route through main process instead of calling localhost directly
-    const result = await window.cockpit.aiResearch.checkRuntime();
-    return result as AiRuntimeStatus;
+    const result = await authGet<{ models?: string[] }>("/api/ai/models");
+    const models = Array.isArray(result?.models)
+      ? result.models.filter(
+          (model): model is string =>
+            typeof model === "string" && model.trim().length > 0,
+        )
+      : [];
+    return {
+      available: models.length > 0,
+      message:
+        models.length > 0
+          ? `Detected ${models.length} AI model(s)`
+          : "No AI models detected",
+      version: "backend-http",
+      cloudModelsAvailable: models.length,
+    };
   } catch (err) {
     return {
       available: false,

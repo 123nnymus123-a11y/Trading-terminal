@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
+import { DEFAULT_BACKEND_URL } from "../shared/backendConfig";
 
 console.log("[preload] starting to load");
 
@@ -113,7 +114,7 @@ function normalizeBackendWsSymbols(symbols: string[]): string[] {
 async function resolveBackendWsEndpoint(token?: string): Promise<string> {
   const backendUrl = await ipcRenderer.invoke("cockpit:config:backendUrl:get");
   const parsed = new URL(
-    typeof backendUrl === "string" ? backendUrl : "http://localhost:8787",
+    typeof backendUrl === "string" ? backendUrl : DEFAULT_BACKEND_URL,
   );
   parsed.protocol = parsed.protocol === "https:" ? "wss:" : "ws:";
   parsed.pathname = "/ws";

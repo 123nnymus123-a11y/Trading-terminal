@@ -543,16 +543,16 @@ export class CompanyRelationshipService {
       } catch (err) {
         const cachedCompanyCount = cachedSnapshot?.companies.length ?? 0;
         const cachedEdgeCount = cachedSnapshot?.edges.length ?? 0;
-        const cacheHasMeaningfulBreadth =
-          cachedCompanyCount >= 6 || cachedEdgeCount >= 6;
-        if (
-          cachedSnapshot &&
-          cacheHasMeaningfulBreadth &&
-          (cachedSnapshot.companies.length > 0 ||
-            cachedSnapshot.edges.length > 0)
-        ) {
+        const cacheHasUsableContext =
+          !!cachedSnapshot &&
+          (cachedSnapshot.companies.some(
+            (company) => this.normalizeTicker(company.ticker) === normalizedTicker,
+          ) ||
+            cachedSnapshot.companies.length > 0 ||
+            cachedSnapshot.edges.length > 0);
+        if (cacheHasUsableContext && cachedSnapshot) {
           console.warn(
-            `[CompanyRelationshipService] AI call failed, returning cached results for ${normalizedTicker}`,
+            `[CompanyRelationshipService] AI call failed, returning cached results for ${normalizedTicker} (${cachedCompanyCount} companies / ${cachedEdgeCount} edges)`,
           );
           return {
             ...cachedSnapshot,
@@ -570,16 +570,11 @@ export class CompanyRelationshipService {
               primaryRelationshipCount: 0,
               hop2SeedCount: 0,
               requestedHops,
-              expandedTickerCount: 0,
+              expandedTickerCount: Math.max(0, cachedSnapshot.companies.length - 1),
             },
           };
         }
 
-        if (cachedSnapshot && !cacheHasMeaningfulBreadth) {
-          console.warn(
-            `[CompanyRelationshipService] AI call failed and scoped cache is too small (${cachedCompanyCount} companies / ${cachedEdgeCount} edges) for ${normalizedTicker}; refusing degraded cache fallback`,
-          );
-        }
         throw err;
       }
 

@@ -1799,6 +1799,36 @@ export const useGwmdMapStore = create<GwmdMapState>((set, get) => ({
         }
       }
 
+      if (!result.success && gwmdSearch) {
+        gwmdDebugLog(
+          `[gwmdMapStore] IPC search failed for ${normalizedTicker}; attempting backend HTTP fallback`,
+          result.error,
+        );
+        set({
+          searchTrace: {
+            ticker: normalizedTicker,
+            phase: "http_fallback",
+            source: "http",
+            message: "IPC failed, retrying via backend HTTP mode",
+            updatedAt: Date.now(),
+          },
+        });
+
+        const httpFallbackResult = await callBackendGenerate();
+        if (httpFallbackResult.success) {
+          result = httpFallbackResult;
+          set({
+            searchTrace: {
+              ticker: normalizedTicker,
+              phase: "success",
+              source: "http",
+              message: "Recovered via backend HTTP fallback",
+              updatedAt: Date.now(),
+            },
+          });
+        }
+      }
+
       set({
         runStatus: result.status ?? (result.success ? "ok" : "error"),
         runMeta: result.meta ?? null,

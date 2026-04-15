@@ -63,6 +63,9 @@ import {
   type LocalStrategyVersionRecord,
 } from "./persistence/strategyResearchRepo";
 
+// Build-time backend URL injected by Vite
+declare const __TC_BUILD_BACKEND_URL__: string | undefined;
+
 function formatMainProcessError(error: unknown): string {
   if (error instanceof Error) {
     return `${error.name}: ${error.message}`;
@@ -132,18 +135,41 @@ process.on("unhandledRejection", (reason) => {
   reportMainProcessError("Unhandled Rejection", reason);
 });
 
+function loadDesktopEnvFiles(): void {
+  const candidateDirs = new Set<string>();
+
+  const addDir = (value: string | undefined | null) => {
+    if (typeof value === "string" && value.trim()) {
+      candidateDirs.add(value);
+    }
+  };
+
+  addDir(process.cwd());
+  addDir(path.resolve(process.cwd(), "apps/desktop"));
+
+  try {
+    addDir(app.getAppPath());
+    addDir(process.resourcesPath);
+    addDir(path.dirname(app.getPath("exe")));
+    addDir(app.getPath("userData"));
+  } catch {
+    // Ignore path discovery issues and continue with known locations.
+  }
+
+  for (const dir of candidateDirs) {
+    loadEnv({ path: path.resolve(dir, ".env") });
+    loadEnv({ path: path.resolve(dir, ".env.local"), override: true });
+  }
+}
+
+loadDesktopEnvFiles();
+
 const isDev =
   !app.isPackaged &&
   (!!process.env.VITE_DEV_SERVER_URL || process.env.NODE_ENV === "development");
 
 // Reduce GPU/driver-related startup crashes on some Windows installations.
 app.disableHardwareAcceleration();
-
-if (isDev) {
-  // Load .env first, then .env.local so local overrides take precedence.
-  loadEnv({ path: path.resolve(process.cwd(), ".env") });
-  loadEnv({ path: path.resolve(process.cwd(), ".env.local"), override: true });
-}
 
 let mainWindow: BrowserWindow | null = null;
 let aiManager: AiResearchManager | null = null;
@@ -539,11 +565,18 @@ function ensurePersistedBackendUrl(): string {
 }
 
 function getConfiguredDefaultBackendUrl(): string {
+  // Include build-time backend URL from vite config in the resolution candidates
+  const buildTimeCandidate =
+    typeof __TC_BUILD_BACKEND_URL__ === "string" && __TC_BUILD_BACKEND_URL__.trim()
+      ? __TC_BUILD_BACKEND_URL__.trim()
+      : undefined;
+
   return resolveBackendUrl([
     process.env.BACKEND_URL,
     process.env.TC_BACKEND_URL,
     process.env.VITE_BACKEND_URL,
     process.env.VITE_TC_BACKEND_URL,
+    buildTimeCandidate,
   ]);
 }
 

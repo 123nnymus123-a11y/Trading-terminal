@@ -7,6 +7,13 @@ const desktopPackageJson = JSON.parse(
   fs.readFileSync(path.resolve(__dirname, "package.json"), "utf8"),
 ) as { version?: string };
 
+const buildTimeBackendUrl =
+  process.env.BACKEND_URL ??
+  process.env.TC_BACKEND_URL ??
+  process.env.VITE_BACKEND_URL ??
+  process.env.VITE_TC_BACKEND_URL ??
+  "";
+
 export default defineConfig({
   // IMPORTANT: Make Vite serve apps/desktop/src/renderer as the app root
   root: path.resolve(__dirname, "src/renderer"),
@@ -64,5 +71,6 @@ export default defineConfig({
   define: {
     "process.env": JSON.stringify(process.env),
     __APP_VERSION__: JSON.stringify(desktopPackageJson.version ?? "dev"),
+    __TC_BUILD_BACKEND_URL__: JSON.stringify(buildTimeBackendUrl),
   },
 });

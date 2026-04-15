@@ -17,6 +17,12 @@ const outWorkerFile = path.join(outMainDir, "compute/worker.cjs");
 const outAiWorkerFile = path.join(outMainDir, "workers/aiResearchWorker.cjs");
 
 const isWatch = process.argv.includes("--watch");
+const buildTimeBackendUrl =
+  process.env.BACKEND_URL ||
+  process.env.TC_BACKEND_URL ||
+  process.env.VITE_BACKEND_URL ||
+  process.env.VITE_TC_BACKEND_URL ||
+  "";
 
 const shared = {
   bundle: true,
@@ -24,6 +30,9 @@ const shared = {
   platform: "node",
   target: "node20",
   logLevel: "info",
+  define: {
+    __TC_BUILD_BACKEND_URL__: JSON.stringify(buildTimeBackendUrl),
+  },
 };
 
 async function buildAll() {

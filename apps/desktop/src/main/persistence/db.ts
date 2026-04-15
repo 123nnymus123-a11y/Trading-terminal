@@ -1,6 +1,7 @@
 import type Database from "better-sqlite3";
 import path from "node:path";
 import fs from "node:fs";
+import os from "node:os";
 import { app } from "electron";
 import { DEFAULT_BACKEND_URL } from "../../shared/backendConfig";
 
@@ -38,10 +39,22 @@ function resolveDatabaseCtor(): typeof import("better-sqlite3") {
   }
 }
 
+function resolveUserDataPath(): string {
+  try {
+    if (app && typeof app.getPath === "function") {
+      return app.getPath("userData");
+    }
+  } catch {
+    // Fall back below for tests and headless runs.
+  }
+
+  return path.join(os.tmpdir(), "trading-terminal-desktop");
+}
+
 export function getDb(): Database.Database {
   if (db) return db;
 
-  const userData = app.getPath("userData");
+  const userData = resolveUserDataPath();
   const dbDir = path.join(userData, "data");
   const dbPath = path.join(dbDir, "app.db");
 
