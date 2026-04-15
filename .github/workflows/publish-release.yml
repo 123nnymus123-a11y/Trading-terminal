@@ -25,4 +25,5 @@ jobs:
           files: |
             Trading-Terminal-Setup-*.exe
             Trading-Terminal-Setup-*.exe.blockmap
+            SHA256SUMS.txt
             latest.yml
