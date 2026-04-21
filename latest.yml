@@ -1,8 +1,8 @@
-version: 0.0.27
+version: 0.0.33
 files:
-  - url: Trading-Terminal-Setup-0.0.27.exe
-    sha512: 59iuKGNCASwMgkBWHrqarB60M4RHtFM1qJKYYdOw5NE8/r90PO0iFfGSU+iyiz/bNd+s1T+0/l1fSGUpqjSCcA==
-    size: 88954986
-path: Trading-Terminal-Setup-0.0.27.exe
-sha512: 59iuKGNCASwMgkBWHrqarB60M4RHtFM1qJKYYdOw5NE8/r90PO0iFfGSU+iyiz/bNd+s1T+0/l1fSGUpqjSCcA==
-releaseDate: '2026-04-17T10:41:06.496Z'
+  - url: Trading-Terminal-Setup-0.0.33.exe
+    sha512: OuRV9AP6d6LhQRdWPbUh8Jym+uTxlpRlvr7kADXDuhVHh/aloRaw+P8uVoxui9w1zInaEe92Gm2KBU5kwbfhfw==
+    size: 89107491
+path: Trading-Terminal-Setup-0.0.33.exe
+sha512: OuRV9AP6d6LhQRdWPbUh8Jym+uTxlpRlvr7kADXDuhVHh/aloRaw+P8uVoxui9w1zInaEe92Gm2KBU5kwbfhfw==
+releaseDate: '2026-04-21T18:53:13.383Z'
